@@ -1,0 +1,57 @@
+version: "1.0"
+name: "sample-flat-pipeline"
+type: flat
+description: "샘플 Flat 모드 파이프라인 (Vector 호환)"
+
+sources:
+  demo_source:
+    type: demo
+    interval: 1s
+
+  # kafka_source:
+  #   type: kafka
+  #   brokers:
+  #     - "localhost:9092"
+  #   topics:
+  #     - "logs"
+  #   group_id: "conduix"
+
+transforms:
+  parse_logs:
+    type: remap
+    inputs:
+      - demo_source
+    source: |
+      . = parse_json!(.message)
+      .processed_at = now()
+
+  filter_errors:
+    type: filter
+    inputs:
+      - parse_logs
+    condition: '.level == "error"'
+
+sinks:
+  console_output:
+    type: console
+    inputs:
+      - filter_errors
+
+  # elasticsearch_output:
+  #   type: elasticsearch
+  #   inputs:
+  #     - filter_errors
+  #   endpoints:
+  #     - "http://localhost:9200"
+  #   index: "logs-%Y-%m-%d"
+
+checkpoint:
+  enabled: true
+  storage: redis
+  interval: 10s
+
+metrics:
+  enabled: true
+  export:
+    prometheus:
+      port: 9090

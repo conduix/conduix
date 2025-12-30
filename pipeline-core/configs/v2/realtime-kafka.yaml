@@ -1,0 +1,65 @@
+# 실시간 파이프라인 예시: Kafka 소스
+# Kafka에서 이벤트를 실시간으로 처리하는 파이프라인
+# 중복 제거 및 Upsert 로직 포함
+
+name: realtime-kafka-events
+type: realtime
+
+source:
+  type: kafka
+  brokers:
+    - "kafka-1:9092"
+    - "kafka-2:9092"
+    - "kafka-3:9092"
+  topics:
+    - "user-events"
+    - "order-events"
+  group_id: "pipeline-consumer-group"
+  start_offset: latest  # earliest, latest
+
+# 실시간 파이프라인 전용 설정
+realtime:
+  # 중복 제거용 이벤트 ID 필드
+  id_field: "event_id"
+
+  # 이벤트 타입 필드 (CREATE, UPDATE, DELETE)
+  event_type_field: "event_type"
+
+  # 엔티티 ID 필드 (Upsert 로직용)
+  entity_id_field: "entity_id"
+
+  # 중복 ID 저장소 (memory 또는 redis)
+  dedup_storage: redis
+
+  # 중복 ID 보관 기간
+  dedup_ttl: "24h"
+
+steps:
+  - name: parse-event
+    transform: |
+      event_type = .event_type
+      entity_id = .entity_id
+      payload = .data
+
+  - name: filter-valid
+    filter: ".entity_id exists"
+
+  - name: select-output
+    select:
+      - event_id
+      - event_type
+      - entity_id
+      - payload
+      - timestamp
+
+output:
+  type: stub
+  log_level: info
+  log_format: json
+  metrics:
+    enabled: true
+    prefix: "realtime_events"
+  # 처리 완료 콜백 (선택사항)
+  callback:
+    enabled: true
+    url: "http://callback-service:8080/pipeline/complete"

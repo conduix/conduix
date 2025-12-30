@@ -1,0 +1,68 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "conduix.fullname" . }}-migration
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Never
+      initContainers:
+        # MySQL이 준비될 때까지 대기
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for MySQL to be ready..."
+              until nc -z {{ .Release.Name }}-mysql 3306; do
+                echo "MySQL is not ready yet..."
+                sleep 5
+              done
+              echo "MySQL is ready!"
+      containers:
+        - name: migration
+          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
+          imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          command:
+            - /app/control-plane
+            - -migrate
+          env:
+            - name: DB_HOST
+              value: "{{ .Release.Name }}-mysql"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USER
+              value: "{{ .Values.mysql.auth.username }}"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-mysql
+                  key: mysql-password
+            - name: DB_NAME
+              value: "{{ .Values.mysql.auth.database }}"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+{{- end }}

@@ -1,0 +1,159 @@
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Control Plane
+controlPlane:
+  replicaCount: 2
+  image:
+    repository: conduix/control-plane
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # OAuth2 설정
+  oauth2:
+    github:
+      enabled: false
+      clientId: ""
+      clientSecret: ""
+      redirectUrl: "https://your-domain.com/api/v1/auth/callback"
+    google:
+      enabled: false
+      clientId: ""
+      clientSecret: ""
+      redirectUrl: "https://your-domain.com/api/v1/auth/callback"
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+# DB 마이그레이션 (초기 설치 시 테이블 생성)
+migration:
+  enabled: true
+
+# Pipeline Agent
+agent:
+  replicaCount: 3
+  image:
+    repository: conduix/agent
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8081
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  env:
+    HEARTBEAT_INTERVAL: "10s"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+
+# Web UI
+webUI:
+  replicaCount: 2
+  image:
+    repository: conduix/web-ui
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Ingress
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+  hosts:
+    - host: conduix.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: web-ui
+        - path: /api
+          pathType: Prefix
+          service: control-plane
+  tls: []
+
+# MySQL
+mysql:
+  enabled: true
+  auth:
+    rootPassword: "rootpassword"
+    database: "conduix"
+    username: "conduixuser"
+    password: "conduixpassword"
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+# Redis
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod Security Context
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Secrets
+secrets:
+  create: true
+  # JWT Secret (자동 생성되지만, 직접 설정 권장)
+  jwtSecret: ""
+  # OAuth2 클라이언트 시크릿
+  oauth2ClientSecret: ""

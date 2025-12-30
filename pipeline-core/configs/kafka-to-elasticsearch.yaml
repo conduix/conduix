@@ -1,0 +1,89 @@
+# Kafka → Elasticsearch 파이프라인
+# 로그 수집 및 검색 엔진 저장 예시
+
+version: "1.0"
+name: "kafka-to-elasticsearch"
+type: flat
+description: "Kafka에서 로그를 읽어 Elasticsearch에 저장"
+
+sources:
+  kafka_logs:
+    type: kafka
+    brokers:
+      - "kafka-1:9092"
+      - "kafka-2:9092"
+      - "kafka-3:9092"
+    topics:
+      - "application-logs"
+      - "system-logs"
+    group_id: "log-processor"
+    # Bento 추가 옵션
+    start_from_oldest: true
+
+transforms:
+  parse_json:
+    type: remap
+    inputs:
+      - kafka_logs
+    source: |
+      # JSON 파싱
+      root = this.parse_json()
+
+      # 타임스탬프 정규화
+      root.@timestamp = now()
+      root.processed_at = now()
+
+      # 필드 추가
+      root.pipeline = "kafka-to-elasticsearch"
+
+  add_metadata:
+    type: remap
+    inputs:
+      - parse_json
+    source: |
+      # 메타데이터 추가
+      root = this
+      root.environment = env("ENVIRONMENT").or("production")
+      root.hostname = env("HOSTNAME").or("unknown")
+
+  filter_health_checks:
+    type: filter
+    inputs:
+      - add_metadata
+    # 헬스체크 로그 제외
+    condition: '.path != "/health" && .path != "/ready"'
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs:
+      - filter_health_checks
+    endpoints:
+      - "http://elasticsearch:9200"
+    index: "logs-${!timestamp_unix_nano()}"
+    # 배치 설정
+    buffer:
+      max_events: 5000
+      timeout: 10s
+
+  # 에러 로그는 별도 인덱스에도 저장
+  elasticsearch_errors:
+    type: elasticsearch
+    inputs:
+      - filter_health_checks
+    endpoints:
+      - "http://elasticsearch:9200"
+    index: "errors-${!timestamp_unix_nano()}"
+    # 에러만 필터링 (Bloblang 조건)
+    # condition: 'this.level == "error"'
+
+checkpoint:
+  enabled: true
+  storage: redis
+  interval: 10s
+
+metrics:
+  enabled: true
+  export:
+    prometheus:
+      port: 9090

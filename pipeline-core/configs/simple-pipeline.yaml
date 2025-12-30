@@ -1,0 +1,41 @@
+# 단순화된 파이프라인 설정
+# 읽기 → 처리 → 처리 → 처리 ...
+
+version: "2.0"
+name: "log-processor"
+
+# 1. 읽기 (어디서 데이터를 가져올지)
+input:
+  type: kafka
+  brokers: ["kafka:9092"]
+  topics: ["logs"]
+  group_id: "my-pipeline"
+
+# 2. 처리 단계들 (순서대로 실행)
+steps:
+  # 단계 1: JSON 파싱
+  - name: parse
+    transform: |
+      root = this.parse_json()
+      root.processed_at = now()
+
+  # 단계 2: 필터링 (에러만)
+  - name: filter_errors
+    filter: '.level == "error"'
+
+  # 단계 3: 필드 추가 + Elasticsearch 저장
+  - name: enrich_and_save
+    transform: |
+      root = this
+      root.alert = true
+    save:
+      type: elasticsearch
+      url: "http://elasticsearch:9200"
+      index: "errors"
+
+  # 단계 4: 알림 전송
+  - name: alert
+    save:
+      type: http
+      url: "http://alert-service/notify"
+      method: POST

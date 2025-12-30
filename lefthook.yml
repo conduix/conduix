@@ -1,0 +1,23 @@
+# Lefthook configuration
+# https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    lint-web-ui:
+      glob: "web-ui/**/*.{ts,tsx}"
+      run: cd web-ui && npm run lint
+    lint-control-plane:
+      glob: "control-plane/**/*.go"
+      run: cd control-plane && golangci-lint run --fix
+    lint-pipeline-agent:
+      glob: "pipeline-agent/**/*.go"
+      run: cd pipeline-agent && golangci-lint run --fix
+    lint-pipeline-core:
+      glob: "pipeline-core/**/*.go"
+      run: cd pipeline-core && golangci-lint run --fix
+
+pre-push:
+  commands:
+    build-web-ui:
+      run: cd web-ui && npm run build

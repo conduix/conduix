@@ -1,0 +1,103 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "conduix.fullname" . }}-agent-config
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+data:
+  # 샘플 파이프라인 설정 - 필요에 따라 수정
+  sample-pipeline.yaml: |
+    version: "1.0"
+    name: "sample-pipeline"
+    type: flat
+
+    sources:
+      demo_logs:
+        type: demo
+        interval: 1s
+        format: "apache_common"
+
+    transforms:
+      parse:
+        type: remap
+        inputs: ["demo_logs"]
+        source: |
+          . = parse_common_log!(.message)
+
+    sinks:
+      console:
+        type: console
+        inputs: ["parse"]
+        encoding: json
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "conduix.fullname" . }}-nginx-config
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-ui
+data:
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Gzip 압축
+        gzip on;
+        gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+        gzip_min_length 1000;
+
+        # API 프록시
+        location /api/ {
+            proxy_pass http://{{ include "conduix.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}/api/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # WebSocket 지원 (실시간 업데이트용)
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+
+            # 타임아웃 설정
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        # OAuth 콜백 프록시
+        location /auth/ {
+            proxy_pass http://{{ include "conduix.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}/auth/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # 헬스체크
+        location /health {
+            access_log off;
+            return 200 "OK";
+            add_header Content-Type text/plain;
+        }
+
+        # SPA 라우팅 - 모든 경로를 index.html로
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # 정적 파일 캐싱
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }

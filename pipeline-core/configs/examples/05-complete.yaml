@@ -1,0 +1,71 @@
+# 완전한 예제: 모든 옵션 포함
+
+name: "complete-example"
+
+# 1. 읽기: 어디서 데이터를 가져올지
+input:
+  type: kafka                    # kafka | http_server | file | generate | stdin
+  brokers:
+    - "kafka-1:9092"
+    - "kafka-2:9092"
+  topics:
+    - "events"
+    - "logs"
+  group_id: "my-pipeline"
+
+# 2. 처리 단계들: 순서대로 실행
+steps:
+  # 변환: Bloblang 표현식으로 데이터 가공
+  - name: parse_json
+    transform: |
+      root = this.parse_json()
+      root.processed_at = now()
+
+  # 필터: 조건을 만족하는 데이터만 통과
+  - name: filter_valid
+    filter: '.user_id != null && .event_type != null'
+
+  # 변환 + 저장: 가공 후 저장
+  - name: enrich
+    transform: |
+      root = this
+      root.environment = "production"
+    save:
+      type: elasticsearch
+      url: "http://es:9200"
+      index: "events"
+      buffer:
+        max_events: 1000
+        timeout: "5s"
+
+  # 필터: 에러만
+  - name: filter_errors
+    filter: '.level == "error"'
+
+  # 저장만: 에러를 Kafka로 전송
+  - name: forward_errors
+    save:
+      type: kafka
+      brokers: ["kafka:9092"]
+      topic: "error-events"
+
+  # 필터: 심각한 에러만
+  - name: filter_critical
+    filter: '.severity == "critical"'
+
+  # 저장: 알림 전송
+  - name: alert
+    save:
+      type: http
+      url: "http://alert-service/webhook"
+      method: POST
+
+# 선택적 설정
+checkpoint:
+  enabled: true
+  storage: redis
+  interval: "10s"
+
+metrics:
+  enabled: true
+  port: 9090

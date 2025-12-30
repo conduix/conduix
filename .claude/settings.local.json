@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(pushd:*)",
+      "Bash(golangci-lint run:*)",
+      "Bash(popd)"
+    ]
+  }
+}

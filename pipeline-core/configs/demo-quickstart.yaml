@@ -1,0 +1,74 @@
+# 빠른 시작 데모 파이프라인
+# 외부 의존성 없이 로컬에서 바로 테스트 가능
+
+version: "1.0"
+name: "demo-quickstart"
+type: flat
+description: "외부 의존성 없이 바로 실행 가능한 데모 파이프라인"
+
+sources:
+  # 테스트 데이터 자동 생성
+  demo_generator:
+    type: generate
+    interval: "1s"
+    mapping: |
+      root.id = uuid_v4()
+      root.timestamp = now()
+      root.level = ["info", "warn", "error"].index(random_int() % 3)
+      root.service = ["api", "web", "worker"].index(random_int() % 3)
+      root.message = "Sample log message " + random_int().string()
+      root.latency_ms = random_int() % 1000
+      root.user_id = "user_" + (random_int() % 100).string()
+
+transforms:
+  # JSON 구조화
+  structure_log:
+    type: remap
+    inputs:
+      - demo_generator
+    source: |
+      root = this
+      root.processed_at = now()
+      root.pipeline_name = "demo-quickstart"
+
+  # 레벨별 필터
+  filter_errors:
+    type: filter
+    inputs:
+      - structure_log
+    condition: '.level == "error"'
+
+  filter_warnings:
+    type: filter
+    inputs:
+      - structure_log
+    condition: '.level == "warn"'
+
+  # 고지연 요청 필터
+  filter_slow:
+    type: filter
+    inputs:
+      - structure_log
+    condition: '.latency_ms > 500'
+
+sinks:
+  # 전체 로그 출력
+  all_logs:
+    type: stdout
+    inputs:
+      - structure_log
+
+  # 에러만 별도 출력 (실제로는 알림 시스템으로 전송)
+  # error_output:
+  #   type: stdout
+  #   inputs:
+  #     - filter_errors
+
+checkpoint:
+  enabled: false  # 데모에서는 체크포인트 비활성화
+
+metrics:
+  enabled: true
+  export:
+    prometheus:
+      port: 9090

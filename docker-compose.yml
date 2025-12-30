@@ -1,0 +1,150 @@
+version: '3.8'
+
+services:
+  # MySQL 데이터베이스
+  mysql:
+    image: mysql:8.0
+    container_name: conduix-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: conduix
+      MYSQL_USER: conduixuser
+      MYSQL_PASSWORD: conduixpassword
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./deploy/docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - conduix-network
+
+  # Redis
+  redis:
+    image: redis:7.0-alpine
+    container_name: conduix-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - conduix-network
+
+  # Control Plane (API Server)
+  control-plane:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.control-plane
+    container_name: conduix-control-plane
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=conduixuser
+      - DB_PASSWORD=conduixpassword
+      - DB_NAME=conduix
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=your-secret-key-change-in-production
+      - OAUTH2_CLIENT_ID=${OAUTH2_CLIENT_ID:-}
+      - OAUTH2_CLIENT_SECRET=${OAUTH2_CLIENT_SECRET:-}
+      - OIDC_ISSUER_URL=${OIDC_ISSUER_URL:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - conduix-network
+
+  # Pipeline Agent
+  agent:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.agent
+    container_name: conduix-agent
+    environment:
+      - CONTROL_PLANE_URL=http://control-plane:8080
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AGENT_ID=agent-1
+    depends_on:
+      - control-plane
+      - redis
+    volumes:
+      - ./configs:/app/configs
+    networks:
+      - conduix-network
+
+  # Web UI
+  web-ui:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.web-ui
+    container_name: conduix-web-ui
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    ports:
+      - "3000:80"
+    depends_on:
+      - control-plane
+    networks:
+      - conduix-network
+
+  # 개발용 Kafka (선택적)
+  kafka:
+    image: bitnami/kafka:3.6
+    container_name: conduix-kafka
+    environment:
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    networks:
+      - conduix-network
+    profiles:
+      - with-kafka
+
+  # 개발용 Elasticsearch (선택적)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: conduix-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - conduix-network
+    profiles:
+      - with-elk
+
+volumes:
+  mysql_data:
+  redis_data:
+  kafka_data:
+  es_data:
+
+networks:
+  conduix-network:
+    driver: bridge

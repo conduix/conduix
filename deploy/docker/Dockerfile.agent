@@ -1,0 +1,41 @@
+# Build stage
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# 의존성 설치
+RUN apk add --no-cache git
+
+# Go 모듈 복사 및 다운로드
+COPY shared/go.mod shared/go.sum ./shared/
+COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
+COPY pipeline-agent/go.mod pipeline-agent/go.sum ./pipeline-agent/
+
+WORKDIR /app/pipeline-agent
+RUN go mod download
+
+# 소스 코드 복사
+WORKDIR /app
+COPY shared ./shared
+COPY pipeline-core ./pipeline-core
+COPY pipeline-agent ./pipeline-agent
+
+# 빌드
+WORKDIR /app/pipeline-agent
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/agent ./cmd/agent
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /app
+
+COPY --from=builder /app/agent .
+
+# 설정 파일 디렉토리
+RUN mkdir -p /app/configs
+
+EXPOSE 8081
+
+ENTRYPOINT ["./agent"]

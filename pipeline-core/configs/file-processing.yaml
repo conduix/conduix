@@ -1,0 +1,62 @@
+# 파일 처리 파이프라인
+# 로그 파일을 읽어 가공 후 다른 파일로 저장
+
+version: "1.0"
+name: "file-processing"
+type: flat
+description: "로그 파일을 읽어 JSON으로 변환하여 저장"
+
+sources:
+  log_files:
+    type: file
+    paths:
+      - "/var/log/app/*.log"
+      - "/var/log/nginx/access.log"
+    # 파일 끝까지 읽은 후 새 데이터 감시
+    # codec: lines
+
+transforms:
+  # 라인별 파싱
+  parse_log_line:
+    type: remap
+    inputs:
+      - log_files
+    source: |
+      # Apache/Nginx 로그 형식 파싱 시도
+      # 실패 시 raw 메시지로 유지
+      root.raw = this
+      root.timestamp = now()
+      root.source_file = this._meta_path
+
+  # 에러 로그 필터링
+  filter_errors:
+    type: filter
+    inputs:
+      - parse_log_line
+    condition: '.raw.contains("ERROR") || .raw.contains("error")'
+
+  # 샘플링 (전체 로그)
+  sample_all:
+    type: sample
+    inputs:
+      - parse_log_line
+    rate: 0.01  # 1% 샘플링
+
+sinks:
+  # 에러 로그 → 별도 파일
+  error_file:
+    type: file
+    inputs:
+      - filter_errors
+    path: "/var/log/processed/errors-${!timestamp_unix()}.json"
+
+  # 샘플 로그 → 콘솔 (디버깅)
+  console:
+    type: stdout
+    inputs:
+      - sample_all
+
+checkpoint:
+  enabled: true
+  storage: redis
+  interval: 30s

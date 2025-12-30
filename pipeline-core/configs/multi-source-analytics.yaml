@@ -1,0 +1,237 @@
+# 멀티소스 분석 파이프라인 (Actor 모드)
+# 여러 소스에서 데이터를 수집하여 분석 및 저장
+
+version: "1.0"
+name: "multi-source-analytics"
+type: actor
+description: "여러 소스의 이벤트를 통합 분석하는 계층적 Actor 파이프라인"
+
+actor_system:
+  dispatcher:
+    type: fork-join
+    parallelism: 16          # CPU 코어 수에 맞게 조정
+  mailbox:
+    capacity: 50000          # 대용량 처리를 위해 증가
+    overflow_strategy: backpressure
+
+pipeline:
+  name: "AnalyticsPipeline"
+  type: supervisor
+  supervision:
+    strategy: one_for_one    # 실패한 Actor만 재시작
+    max_restarts: 10
+    within_seconds: 60
+
+  children:
+    #--------------------------------------------------
+    # 소스 레이어: 여러 데이터 소스에서 수집
+    #--------------------------------------------------
+    - name: "SourceLayer"
+      type: supervisor
+      supervision:
+        strategy: one_for_all  # 소스 중 하나 실패 시 모두 재시작
+        max_restarts: 5
+      children:
+        # Kafka 이벤트 소스
+        - name: "KafkaEventSource"
+          type: source
+          config:
+            type: kafka
+            brokers:
+              - "kafka:9092"
+            topics:
+              - "user-events"
+              - "transaction-events"
+            group_id: "analytics-pipeline"
+          outputs:
+            - "ProcessingLayer"
+
+        # HTTP 웹훅 소스
+        - name: "WebhookSource"
+          type: source
+          config:
+            type: http_server
+            address: "0.0.0.0:8080"
+            path: "/events"
+          outputs:
+            - "ProcessingLayer"
+
+        # 파일 소스 (배치 데이터)
+        - name: "FileSource"
+          type: source
+          config:
+            type: file
+            paths:
+              - "/data/batch/*.json"
+          outputs:
+            - "ProcessingLayer"
+
+    #--------------------------------------------------
+    # 처리 레이어: 파싱, 검증, 라우팅
+    #--------------------------------------------------
+    - name: "ProcessingLayer"
+      type: supervisor
+      children:
+        # JSON 파싱 (병렬 처리)
+        - name: "JsonParser"
+          type: transform
+          parallelism: 4       # 4개 워커로 병렬 처리
+          config:
+            type: remap
+            source: |
+              root = this.parse_json()
+              root.pipeline_ts = now()
+          outputs:
+            - "EventRouter"
+
+        # 이벤트 타입별 라우팅
+        - name: "EventRouter"
+          type: router
+          config:
+            routing:
+              - condition: '.event_type == "user_action"'
+                output: "UserAnalytics"
+              - condition: '.event_type == "transaction"'
+                output: "TransactionAnalytics"
+              - condition: '.event_type == "error"'
+                output: "ErrorHandler"
+              - condition: "true"
+                output: "DefaultHandler"
+
+    #--------------------------------------------------
+    # 분석 레이어: 이벤트 타입별 처리
+    #--------------------------------------------------
+    - name: "AnalyticsLayer"
+      type: supervisor
+      children:
+        # 사용자 행동 분석
+        - name: "UserAnalytics"
+          type: supervisor
+          children:
+            - name: "UserEnricher"
+              type: transform
+              config:
+                type: remap
+                source: |
+                  root = this
+                  root.user_segment = if this.user_id.contains("premium") { "premium" } else { "standard" }
+              outputs:
+                - "UserSink"
+
+            - name: "UserSink"
+              type: sink
+              config:
+                type: elasticsearch
+                endpoints:
+                  - "http://elasticsearch:9200"
+                index: "user-analytics"
+                buffer:
+                  max_events: 1000
+                  timeout: 5s
+
+        # 거래 분석
+        - name: "TransactionAnalytics"
+          type: supervisor
+          children:
+            - name: "TransactionValidator"
+              type: transform
+              config:
+                type: filter
+                condition: '.amount > 0'
+              outputs:
+                - "TransactionAggregator"
+
+            - name: "TransactionAggregator"
+              type: transform
+              config:
+                type: remap
+                source: |
+                  root = this
+                  root.amount_category = if this.amount > 1000 { "high" } else if this.amount > 100 { "medium" } else { "low" }
+              outputs:
+                - "TransactionSink"
+
+            - name: "TransactionSink"
+              type: sink
+              config:
+                type: kafka
+                brokers:
+                  - "kafka:9092"
+                topic: "processed-transactions"
+                buffer:
+                  max_events: 500
+                  timeout: 3s
+
+        # 에러 처리
+        - name: "ErrorHandler"
+          type: supervisor
+          supervision:
+            strategy: one_for_one
+            max_restarts: 20     # 에러 핸들러는 더 많은 재시작 허용
+          children:
+            - name: "ErrorEnricher"
+              type: transform
+              config:
+                type: remap
+                source: |
+                  root = this
+                  root.severity = "critical"
+                  root.alert_required = true
+              outputs:
+                - "ErrorSink"
+                - "AlertSink"
+
+            - name: "ErrorSink"
+              type: sink
+              config:
+                type: elasticsearch
+                endpoints:
+                  - "http://elasticsearch:9200"
+                index: "errors"
+
+            - name: "AlertSink"
+              type: sink
+              config:
+                type: http_client
+                url: "http://alerting-service:8080/alerts"
+                verb: "POST"
+
+        # 기본 처리 (분류되지 않은 이벤트)
+        - name: "DefaultHandler"
+          type: transform
+          config:
+            type: sample
+            rate: 0.1            # 10% 샘플링
+          outputs:
+            - "ArchiveSink"
+
+    #--------------------------------------------------
+    # 아카이브 레이어: 장기 저장
+    #--------------------------------------------------
+    - name: "ArchiveLayer"
+      type: supervisor
+      children:
+        - name: "ArchiveSink"
+          type: sink
+          config:
+            type: aws_s3
+            bucket: "analytics-archive"
+            prefix: "events/"
+            compression: gzip
+            buffer:
+              max_events: 10000
+              timeout: 60s
+
+checkpoint:
+  enabled: true
+  storage: redis
+  interval: 10s
+  on_failure: restore_latest
+
+metrics:
+  enabled: true
+  export:
+    prometheus:
+      port: 9090
+    internal:
+      interval: 5s

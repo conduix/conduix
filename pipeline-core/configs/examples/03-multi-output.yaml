@@ -1,0 +1,43 @@
+# 여러 곳에 저장하는 예제
+
+name: "log-distributor"
+
+input:
+  type: http_server
+  address: "0.0.0.0:8080"
+  path: "/logs"
+
+steps:
+  - name: parse
+    transform: |
+      root = this.parse_json()
+      root.received_at = now()
+
+  # 모든 로그를 S3에 아카이브
+  - name: archive
+    save:
+      type: s3
+      bucket: "log-archive"
+      prefix: "raw/"
+
+  # 에러만 필터링
+  - name: filter_errors
+    filter: '.level == "error"'
+
+  # 에러를 ES에 저장
+  - name: save_errors
+    save:
+      type: elasticsearch
+      url: "http://es:9200"
+      index: "errors"
+
+  # 심각한 에러만 필터링
+  - name: filter_critical
+    filter: '.severity == "critical"'
+
+  # 알림 전송
+  - name: alert
+    save:
+      type: http
+      url: "http://slack-webhook/alert"
+      method: POST

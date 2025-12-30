@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "conduix.fullname" . }}-web-ui
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web-ui
+spec:
+  replicas: {{ .Values.webUI.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "conduix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web-ui
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web-ui
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "conduix.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: web-ui
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.webUI.image.repository }}:{{ .Values.webUI.image.tag }}"
+          imagePullPolicy: {{ .Values.webUI.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: API_URL
+              value: "http://{{ include "conduix.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}"
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: nginx.conf
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.webUI.resources | nindent 12 }}
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: {{ include "conduix.fullname" . }}-nginx-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

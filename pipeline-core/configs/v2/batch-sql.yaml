@@ -1,0 +1,34 @@
+# 배치 파이프라인 예시: SQL 소스
+# 데이터베이스에서 데이터를 읽어 처리하는 배치 파이프라인
+
+name: batch-sql-example
+type: batch
+
+source:
+  type: sql
+  driver: mysql  # mysql, postgres
+  dsn: "${DB_USER}:${DB_PASSWORD}@tcp(${DB_HOST}:3306)/${DB_NAME}"
+  query: |
+    SELECT id, name, email, status, created_at, updated_at
+    FROM users
+    WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+  # 증분 처리 (선택사항)
+  # incremental:
+  #   column: updated_at
+  #   state_key: users_last_updated
+
+steps:
+  - name: exclude-sensitive
+    exclude:
+      - password
+      - ssn
+
+  - name: transform
+    transform: |
+      full_name = .name
+      contact = .email
+
+output:
+  type: stub
+  log_level: info
+  log_format: pretty

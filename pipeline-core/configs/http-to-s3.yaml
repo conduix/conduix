@@ -1,0 +1,78 @@
+# HTTP → S3 파이프라인
+# 웹훅 수신 후 S3에 아카이빙
+
+version: "1.0"
+name: "http-to-s3-archive"
+type: flat
+description: "HTTP 웹훅을 받아 S3에 저장 (이벤트 아카이빙)"
+
+sources:
+  webhook_receiver:
+    type: http_server
+    address: "0.0.0.0:8080"
+    path: "/webhook"
+    # 인증 설정
+    # basic_auth:
+    #   username: "${WEBHOOK_USER}"
+    #   password: "${WEBHOOK_PASS}"
+
+transforms:
+  validate_and_enrich:
+    type: remap
+    inputs:
+      - webhook_receiver
+    source: |
+      # 요청 본문 파싱
+      root = this.parse_json()
+
+      # 필수 필드 검증
+      if this.event_type == null {
+        throw("missing event_type")
+      }
+
+      # 메타데이터 추가
+      root.received_at = now()
+      root.source_ip = this._meta_client_ip
+
+      # 날짜별 파티션 키 생성
+      root._partition_date = now().format("2006-01-02")
+      root._partition_hour = now().format("15")
+
+  # 이벤트 타입별 라우팅
+  route_by_type:
+    type: filter
+    inputs:
+      - validate_and_enrich
+    condition: '.event_type != "ping"'  # ping 이벤트 제외
+
+sinks:
+  s3_archive:
+    type: aws_s3
+    inputs:
+      - route_by_type
+    bucket: "my-event-archive"
+    prefix: "events/${!json(\"_partition_date\")}/${!json(\"_partition_hour\")}/"
+    # 압축
+    compression: gzip
+    # 배치 설정
+    buffer:
+      max_events: 10000
+      max_bytes: 100mb
+      timeout: 60s
+
+  # 실시간 모니터링용 콘솔 출력 (개발 환경)
+  console_debug:
+    type: stdout
+    inputs:
+      - route_by_type
+
+checkpoint:
+  enabled: true
+  storage: redis
+  interval: 30s
+
+metrics:
+  enabled: true
+  export:
+    prometheus:
+      port: 9091

@@ -1,0 +1,71 @@
+# Conduix Go Linter Configuration
+# https://golangci-lint.run/usage/configuration/
+# golangci-lint v2
+
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  enable:
+    - misspell       # 오타 검사
+    - unconvert      # 불필요한 타입 변환 검사
+
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net.Conn).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*github.com/redis/go-redis/v9.PubSub).Close
+        - (*gorm.io/gorm.DB).Close
+
+    govet:
+      disable:
+        - shadow
+
+    misspell:
+      locale: US
+
+issues:
+  exclude-rules:
+    # 테스트 파일에서는 규칙 완화
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gocritic
+        - unused
+
+    # main.go에서 defer 에러 무시
+    - path: cmd/.*/main\.go
+      linters:
+        - errcheck
+
+    # defer 문에서 Close 에러 무시
+    - linters:
+        - errcheck
+      source: "defer .+\\.(Close|Stop|Disconnect)\\("
+
+    # type assertion 에러 무시
+    - linters:
+        - errcheck
+      source: "\\.(\\(string\\)|\\(int\\)|\\(float64\\)|\\(bool\\))"
+
+  max-issues-per-linter: 50
+  max-same-issues: 5
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/conduix/conduix

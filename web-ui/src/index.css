@@ -1,0 +1,53 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Ant Design 커스텀 스타일 */
+.ant-layout-sider {
+  background: #001529;
+}
+
+.ant-menu-dark {
+  background: transparent;
+}
+
+/* 코드 블록 스타일 */
+pre {
+  font-family: 'Fira Code', 'Monaco', 'Menlo', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 테이블 스타일 */
+.ant-table-thead > tr > th {
+  font-weight: 600;
+}
+
+/* 카드 스타일 */
+.ant-card {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03),
+              0 1px 6px -1px rgba(0, 0, 0, 0.02),
+              0 2px 4px 0 rgba(0, 0, 0, 0.02);
+}
+
+/* 버튼 스타일 */
+.ant-btn-text {
+  padding: 4px 8px;
+}
+
+/* 태그 스타일 */
+.ant-tag {
+  font-weight: 500;
+}

@@ -1,0 +1,50 @@
+# 배치 파이프라인 예시: HTTP 소스 (페이지네이션 + OAuth2)
+# REST API에서 페이지별로 데이터를 읽어오는 배치 파이프라인
+
+name: batch-http-paginated
+type: batch
+
+source:
+  type: http
+  url: "https://api.example.com/v1/users"
+  method: GET
+  headers:
+    Accept: "application/json"
+    X-API-Version: "2024-01"
+
+  # OAuth2 인증
+  auth:
+    type: oauth2
+    client_id: "${OAUTH_CLIENT_ID}"
+    client_secret: "${OAUTH_CLIENT_SECRET}"
+    token_url: "https://auth.example.com/oauth/token"
+    scopes:
+      - read:users
+      - read:profile
+
+  # 페이지네이션 설정
+  pagination:
+    type: next_url
+    next_field: "links.next"   # 응답에서 다음 페이지 URL 필드
+    data_field: "data"         # 실제 데이터가 담긴 필드
+    max_pages: 50              # 최대 페이지 수
+
+steps:
+  - name: select-user-fields
+    select:
+      - id
+      - username
+      - email
+      - profile
+      - created_at
+
+  - name: filter-verified
+    filter: ".verified == true"
+
+output:
+  type: stub
+  log_level: info
+  log_format: json
+  metrics:
+    enabled: true
+    prefix: "http_users"

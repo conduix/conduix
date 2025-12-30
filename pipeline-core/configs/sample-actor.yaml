@@ -1,0 +1,114 @@
+version: "1.0"
+name: "sample-actor-pipeline"
+type: actor
+description: "샘플 Actor 모드 파이프라인 (계층적 구조)"
+
+actor_system:
+  dispatcher:
+    type: fork-join
+    parallelism: 8
+  mailbox:
+    capacity: 10000
+    overflow_strategy: backpressure
+
+pipeline:
+  name: "RootSupervisor"
+  type: supervisor
+  supervision:
+    strategy: one_for_one
+    max_restarts: 3
+    within_seconds: 60
+
+  children:
+    - name: "SourceSupervisor"
+      type: supervisor
+      supervision:
+        strategy: one_for_one
+        max_restarts: 5
+      children:
+        - name: "DemoSource"
+          type: source
+          config:
+            source_type: demo
+            interval: 1s
+          outputs:
+            - "TransformSupervisor"
+
+    - name: "TransformSupervisor"
+      type: supervisor
+      children:
+        - name: "ParseActor"
+          type: transform
+          parallelism: 2
+          config:
+            transform_type: remap
+            source: |
+              . = parse_json!(.message)
+              .processed_at = now()
+          outputs:
+            - "RouteActor"
+
+        - name: "RouteActor"
+          type: router
+          config:
+            routing:
+              - condition: '.level == "error"'
+                output: "ErrorHandler"
+              - condition: '.level == "warn"'
+                output: "WarningHandler"
+              - condition: "true"
+                output: "DefaultHandler"
+
+        - name: "ErrorHandler"
+          type: supervisor
+          children:
+            - name: "EnrichError"
+              type: transform
+              config:
+                transform_type: enrich
+                lookup_table: "error_codes"
+              outputs:
+                - "ConsoleSink"
+
+        - name: "WarningHandler"
+          type: transform
+          config:
+            transform_type: passthrough
+          outputs:
+            - "ConsoleSink"
+
+        - name: "DefaultHandler"
+          type: transform
+          config:
+            transform_type: sample
+            rate: 0.1
+          outputs:
+            - "ConsoleSink"
+
+    - name: "SinkSupervisor"
+      type: supervisor
+      supervision:
+        strategy: one_for_one
+        max_restarts: 10
+      children:
+        - name: "ConsoleSink"
+          type: sink
+          config:
+            sink_type: console
+            buffer:
+              max_events: 100
+              timeout: 5s
+
+checkpoint:
+  enabled: true
+  storage: redis
+  interval: 10s
+  on_failure: restore_latest
+
+metrics:
+  enabled: true
+  export:
+    prometheus:
+      port: 9090
+    internal:
+      interval: 5s

@@ -1,0 +1,21 @@
+# Conduix User Configuration
+#
+# This file defines initial admin users who will automatically receive admin role
+# when they first login via OAuth2.
+#
+# To add yourself as admin:
+# 1. Add your email to the admin_emails list below
+# 2. Restart the control-plane server
+#
+# Role hierarchy:
+# - admin: Full access (manage users, pipelines, agents, settings)
+# - operator: Can manage pipelines and view agents
+# - viewer: Read-only access (default for new users)
+
+admin_emails:
+  - herohyohwan@gmail.com
+  - herohyohwan@users.noreply.github.com
+
+# Optional: operator role users
+# operator_emails:
+#   - operator@example.com

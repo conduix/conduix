@@ -1,0 +1,149 @@
+# 필터 설정 예시
+# YAML 에디터와 GUI 드래그앤드롭 모두 지원
+
+name: filter-examples
+type: batch
+
+source:
+  type: file
+  path: "./data/users.json"
+  format: json
+
+steps:
+  # ==========================================
+  # 방법 1: 문자열 표현식 (YAML 에디터용)
+  # - 간단하고 빠르게 작성 가능
+  # - 개발자가 익숙한 형식
+  # ==========================================
+  - name: filter-by-expression
+    filter: ".status == 'active' && .age >= 18"
+
+  # 복잡한 조건도 문자열로 표현 가능
+  - name: complex-expression
+    filter: |
+      (.role == 'admin' || .role == 'moderator')
+      && .verified == true
+      && .login_count >= 10
+
+  # ==========================================
+  # 방법 2: 구조화된 형식 (GUI 드래그앤드롭용)
+  # - GUI에서 시각적으로 편집 가능
+  # - API를 통해 자동 생성/변환 가능
+  # ==========================================
+  - name: filter-by-structured
+    filter:
+      root:
+        type: group
+        group:
+          operator: and
+          conditions:
+            - type: condition
+              condition:
+                field: status
+                op: eq
+                value: active
+            - type: condition
+              condition:
+                field: age
+                op: gte
+                value: 18
+
+  # 중첩된 그룹 예시 (OR 안에 AND)
+  - name: nested-groups
+    filter:
+      root:
+        type: group
+        group:
+          operator: or
+          conditions:
+            # 첫 번째 조건 그룹: 관리자 권한
+            - type: group
+              group:
+                operator: and
+                conditions:
+                  - type: condition
+                    condition:
+                      field: role
+                      op: eq
+                      value: admin
+                  - type: condition
+                    condition:
+                      field: verified
+                      op: eq
+                      value: true
+
+            # 두 번째 조건 그룹: 프리미엄 사용자
+            - type: group
+              group:
+                operator: and
+                conditions:
+                  - type: condition
+                    condition:
+                      field: subscription
+                      op: eq
+                      value: premium
+                  - type: condition
+                    condition:
+                      field: payment_status
+                      op: eq
+                      value: active
+
+  # ==========================================
+  # 연산자 예시
+  # ==========================================
+
+  # 존재 여부 체크
+  - name: check-existence
+    filter:
+      root:
+        type: condition
+        condition:
+          field: email
+          op: exists
+
+  # 정규식 매칭
+  - name: regex-match
+    filter:
+      root:
+        type: condition
+        condition:
+          field: email
+          op: regex
+          value: "^[a-z]+@company\\.com$"
+
+  # 목록 포함 여부
+  - name: in-list
+    filter:
+      root:
+        type: condition
+        condition:
+          field: country
+          op: in
+          value:
+            - KR
+            - US
+            - JP
+
+  # 문자열 시작/포함
+  - name: string-operations
+    filter:
+      root:
+        type: group
+        group:
+          operator: and
+          conditions:
+            - type: condition
+              condition:
+                field: name
+                op: startswith
+                value: "김"
+            - type: condition
+              condition:
+                field: bio
+                op: contains
+                value: "개발자"
+
+output:
+  type: stub
+  log_level: info
+  log_format: pretty

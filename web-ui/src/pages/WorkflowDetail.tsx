@@ -1,0 +1,630 @@
+import { useEffect, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import {
+  Card,
+  Descriptions,
+  Tag,
+  Button,
+  Space,
+  message,
+  Spin,
+  Typography,
+  Tabs,
+  Table,
+  Empty,
+  Breadcrumb,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Popconfirm,
+} from 'antd'
+import {
+  ArrowLeftOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  PlusOutlined,
+  PlayCircleOutlined,
+  PauseCircleOutlined,
+  BranchesOutlined,
+} from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
+import { api } from '../services/api'
+import type { WorkflowPipeline } from '../types/pipeline'
+
+const { Title, Text } = Typography
+
+interface Workflow {
+  id: string
+  project_id: string
+  name: string
+  slug: string
+  description?: string
+  type: 'batch' | 'realtime'
+  execution_mode: string
+  status: string
+  schedule_enabled: boolean
+  pipelines_config?: string
+  created_at: string
+  updated_at: string
+  project?: {
+    id: string
+    name: string
+    alias: string
+  }
+}
+
+interface DataType {
+  id: string
+  name: string
+  display_name: string
+  parent_id?: string | null
+}
+
+export default function WorkflowDetailPage() {
+  const { t } = useTranslation()
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const [workflow, setWorkflow] = useState<Workflow | null>(null)
+  const [pipelines, setPipelines] = useState<WorkflowPipeline[]>([])
+  const [dataTypes, setDataTypes] = useState<DataType[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Pipeline modal states
+  const [pipelineModalVisible, setPipelineModalVisible] = useState(false)
+  const [editingPipeline, setEditingPipeline] = useState<WorkflowPipeline | null>(null)
+  const [pipelineForm] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const [selectedParentPipeline, setSelectedParentPipeline] = useState<string | undefined>()
+
+  useEffect(() => {
+    if (id) {
+      fetchWorkflowData()
+    }
+  }, [id])
+
+  const fetchWorkflowData = async () => {
+    try {
+      setLoading(true)
+      const workflowRes = await api.getWorkflow(id!)
+      if (workflowRes.success && workflowRes.data) {
+        setWorkflow(workflowRes.data)
+        // Parse pipelines from JSON
+        if (workflowRes.data.pipelines_config) {
+          try {
+            const parsed = JSON.parse(workflowRes.data.pipelines_config)
+            setPipelines(parsed || [])
+          } catch {
+            setPipelines([])
+          }
+        }
+        // Fetch project's data types for expansion configuration
+        if (workflowRes.data.project_id) {
+          const dataTypesRes = await api.getProjectDataTypes(workflowRes.data.project_id)
+          if (dataTypesRes.success) {
+            setDataTypes(dataTypesRes.data || [])
+          }
+        }
+      }
+    } catch (error) {
+      message.error(t('workflow.loadError'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCreatePipeline = () => {
+    setEditingPipeline(null)
+    setSelectedParentPipeline(undefined)
+    pipelineForm.resetFields()
+    pipelineForm.setFieldsValue({
+      priority: pipelines.length,
+      expansion_mode: 'none',
+      source: { type: 'rest_api', name: '', config: {} },
+      sinks: [{ type: 'elasticsearch', name: '', config: {} }],
+    })
+    setPipelineModalVisible(true)
+  }
+
+  const handleEditPipeline = (pipeline: WorkflowPipeline) => {
+    setEditingPipeline(pipeline)
+    setSelectedParentPipeline(pipeline.parent_pipeline_id || undefined)
+    pipelineForm.setFieldsValue({
+      name: pipeline.name,
+      description: pipeline.description,
+      priority: pipeline.priority,
+      parent_pipeline_id: pipeline.parent_pipeline_id || undefined,
+      target_data_type_id: pipeline.target_data_type_id || undefined,
+      expansion_mode: pipeline.expansion_mode || 'none',
+      parameter_bindings: pipeline.parameter_bindings || [],
+    })
+    setPipelineModalVisible(true)
+  }
+
+  const handleDeletePipeline = async (pipelineId: string) => {
+    // Check if pipeline has children
+    const hasChildren = pipelines.some(p => p.parent_pipeline_id === pipelineId)
+    if (hasChildren) {
+      message.error(t('pipeline.cannotDeleteHasChildren'))
+      return
+    }
+
+    const newPipelines = pipelines.filter(p => p.id !== pipelineId)
+    await savePipelines(newPipelines)
+  }
+
+  const handlePipelineSubmit = async () => {
+    try {
+      const values = await pipelineForm.validateFields()
+      setSaving(true)
+
+      const pipelineData: WorkflowPipeline = {
+        id: editingPipeline?.id || crypto.randomUUID(),
+        name: values.name,
+        description: values.description,
+        priority: values.priority,
+        source: editingPipeline?.source || { type: 'rest_api', name: values.name, config: {} },
+        sinks: editingPipeline?.sinks || [{ type: 'elasticsearch', name: values.name, config: {} }],
+        parent_pipeline_id: values.parent_pipeline_id || null,
+        target_data_type_id: values.target_data_type_id || null,
+        expansion_mode: values.expansion_mode || 'none',
+        parameter_bindings: values.parameter_bindings || [],
+      }
+
+      let newPipelines: WorkflowPipeline[]
+      if (editingPipeline) {
+        newPipelines = pipelines.map(p => p.id === editingPipeline.id ? pipelineData : p)
+      } else {
+        newPipelines = [...pipelines, pipelineData]
+      }
+
+      await savePipelines(newPipelines)
+      setPipelineModalVisible(false)
+    } catch (error) {
+      message.error(t('common.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const savePipelines = async (newPipelines: WorkflowPipeline[]) => {
+    try {
+      const response = await api.updateWorkflow(id!, {
+        pipelines_config: JSON.stringify(newPipelines),
+      })
+      if (response.success) {
+        setPipelines(newPipelines)
+        message.success(t('common.saveSuccess'))
+      } else {
+        message.error(response.error || t('common.saveError'))
+      }
+    } catch (error) {
+      message.error(t('common.saveError'))
+    }
+  }
+
+  const handleParentPipelineChange = (parentId: string | undefined) => {
+    setSelectedParentPipeline(parentId)
+    if (parentId) {
+      // Find parent pipeline's target DataType
+      const parentPipeline = pipelines.find(p => p.id === parentId)
+      if (parentPipeline?.target_data_type_id) {
+        pipelineForm.setFieldsValue({
+          target_data_type_id: parentPipeline.target_data_type_id,
+          expansion_mode: 'for_each_record',
+        })
+      }
+    } else {
+      pipelineForm.setFieldsValue({
+        expansion_mode: 'none',
+        parameter_bindings: [],
+      })
+    }
+  }
+
+  const getStatusConfig = (status: string) => {
+    const configs: Record<string, { color: string; text: string }> = {
+      idle: { color: 'default', text: t('pipeline.status.idle') },
+      running: { color: 'green', text: t('pipeline.status.running') },
+      paused: { color: 'orange', text: t('pipeline.status.paused') },
+      stopped: { color: 'default', text: t('pipeline.status.stopped') },
+      error: { color: 'red', text: t('pipeline.status.error') },
+      completed: { color: 'blue', text: t('pipeline.status.completed') },
+    }
+    return configs[status] || { color: 'default', text: status }
+  }
+
+  // Pipeline depth calculation
+  const getPipelineDepth = (pipeline: WorkflowPipeline): number => {
+    let depth = 0
+    let currentParentId = pipeline.parent_pipeline_id
+    while (currentParentId) {
+      depth++
+      const parent = pipelines.find(p => p.id === currentParentId)
+      currentParentId = parent?.parent_pipeline_id || null
+    }
+    return depth
+  }
+
+  // Sort pipelines hierarchically
+  const getHierarchicalPipelines = (): WorkflowPipeline[] => {
+    const result: WorkflowPipeline[] = []
+    const addWithChildren = (parentId: string | null) => {
+      const children = pipelines
+        .filter(p => (p.parent_pipeline_id || null) === parentId)
+        .sort((a, b) => a.priority - b.priority)
+      for (const child of children) {
+        result.push(child)
+        addWithChildren(child.id)
+      }
+    }
+    addWithChildren(null)
+    return result
+  }
+
+  const hierarchicalPipelines = getHierarchicalPipelines()
+
+  const pipelineColumns = [
+    {
+      title: t('pipeline.name'),
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string, record: WorkflowPipeline) => {
+        const depth = getPipelineDepth(record)
+        const targetDataType = dataTypes.find(dt => dt.id === record.target_data_type_id)
+        return (
+          <div style={{ paddingLeft: depth * 24 }}>
+            <Space size={4}>
+              {depth > 0 && (
+                <span style={{ color: '#999', fontSize: 12 }}>└─</span>
+              )}
+              <span>{name}</span>
+              {record.expansion_mode === 'for_each_record' && (
+                <Tag color="purple" icon={<BranchesOutlined />}>
+                  {t('pipeline.expansion')}
+                </Tag>
+              )}
+            </Space>
+            {targetDataType && (
+              <div style={{ fontSize: 12, color: '#999', paddingLeft: depth > 0 ? 20 : 0 }}>
+                {t('pipeline.targetDataType')}: <code>{targetDataType.display_name}</code>
+              </div>
+            )}
+          </div>
+        )
+      },
+    },
+    {
+      title: t('pipeline.source'),
+      dataIndex: ['source', 'type'],
+      key: 'source',
+      width: 120,
+      render: (type: string) => <Tag>{type}</Tag>,
+    },
+    {
+      title: t('pipeline.sink'),
+      key: 'sinks',
+      width: 120,
+      render: (_: unknown, record: WorkflowPipeline) => (
+        <Space>
+          {record.sinks?.slice(0, 2).map((sink, i) => (
+            <Tag key={i}>{sink.type}</Tag>
+          ))}
+          {record.sinks?.length > 2 && <Tag>+{record.sinks.length - 2}</Tag>}
+        </Space>
+      ),
+    },
+    {
+      title: t('pipeline.priority'),
+      dataIndex: 'priority',
+      key: 'priority',
+      width: 80,
+      render: (priority: number) => priority,
+    },
+    {
+      title: t('common.actions'),
+      key: 'actions',
+      width: 120,
+      render: (_: unknown, record: WorkflowPipeline) => {
+        const hasChildren = pipelines.some(p => p.parent_pipeline_id === record.id)
+        return (
+          <Space>
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleEditPipeline(record)}
+            />
+            {!hasChildren && (
+              <Popconfirm
+                title={t('pipeline.deleteConfirm')}
+                onConfirm={() => handleDeletePipeline(record.id)}
+                okText={t('common.delete')}
+                cancelText={t('common.cancel')}
+              >
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            )}
+          </Space>
+        )
+      },
+    },
+  ]
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 400 }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  if (!workflow) {
+    return (
+      <Empty description={t('workflow.notFound')}>
+        <Button type="primary" onClick={() => navigate(-1)}>
+          {t('common.back')}
+        </Button>
+      </Empty>
+    )
+  }
+
+  const statusConfig = getStatusConfig(workflow.status)
+
+  return (
+    <div>
+      <Breadcrumb
+        style={{ marginBottom: 16 }}
+        items={[
+          { title: <a onClick={() => navigate('/projects')}>{t('project.title')}</a> },
+          ...(workflow.project ? [
+            { title: <a onClick={() => navigate(`/projects/${workflow.project_id}`)}>{workflow.project.name}</a> },
+          ] : []),
+          { title: workflow.name },
+        ]}
+      />
+
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Space>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
+            {t('common.back')}
+          </Button>
+          <Title level={4} style={{ margin: 0 }}>
+            {workflow.name}
+          </Title>
+          <Tag color={workflow.type === 'realtime' ? 'blue' : 'purple'}>
+            {workflow.type === 'realtime' ? t('workflow.realtime') : t('workflow.batch')}
+          </Tag>
+          <Tag color={statusConfig.color}>{statusConfig.text}</Tag>
+        </Space>
+        <Space>
+          {workflow.status === 'running' ? (
+            <Button icon={<PauseCircleOutlined />}>
+              {t('workflow.pause')}
+            </Button>
+          ) : (
+            <Button type="primary" icon={<PlayCircleOutlined />}>
+              {t('workflow.start')}
+            </Button>
+          )}
+        </Space>
+      </div>
+
+      <Tabs
+        defaultActiveKey="pipelines"
+        items={[
+          {
+            key: 'overview',
+            label: t('project.overview'),
+            children: (
+              <Card>
+                <Descriptions bordered column={2}>
+                  <Descriptions.Item label={t('workflow.name')}>
+                    {workflow.name}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('workflow.slug')}>
+                    <code>{workflow.slug}</code>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('workflow.type')}>
+                    <Tag color={workflow.type === 'realtime' ? 'blue' : 'purple'}>
+                      {workflow.type === 'realtime' ? t('workflow.realtime') : t('workflow.batch')}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('workflow.executionMode')}>
+                    <Tag>{workflow.execution_mode}</Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('common.status')}>
+                    <Tag color={statusConfig.color}>{statusConfig.text}</Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('workflow.enabled')}>
+                    <Tag color={workflow.schedule_enabled ? 'green' : 'default'}>
+                      {workflow.schedule_enabled ? t('workflow.on') : t('workflow.off')}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('common.description')} span={2}>
+                    {workflow.description || '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('common.createdAt')}>
+                    {new Date(workflow.created_at).toLocaleString()}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('common.updatedAt')}>
+                    {new Date(workflow.updated_at).toLocaleString()}
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            ),
+          },
+          {
+            key: 'pipelines',
+            label: (
+              <span>
+                <BranchesOutlined />
+                {t('pipeline.title')} ({pipelines.length})
+              </span>
+            ),
+            children: (
+              <Card
+                title={t('pipeline.title')}
+                extra={
+                  <Button type="primary" icon={<PlusOutlined />} onClick={handleCreatePipeline}>
+                    {t('pipeline.new')}
+                  </Button>
+                }
+              >
+                <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                  {t('pipeline.hierarchyHelp')}
+                </Text>
+                {pipelines.length > 0 ? (
+                  <Table
+                    dataSource={hierarchicalPipelines}
+                    columns={pipelineColumns}
+                    rowKey="id"
+                    pagination={false}
+                  />
+                ) : (
+                  <Empty description={t('pipeline.noPipelines')}>
+                    <Button type="primary" onClick={handleCreatePipeline}>
+                      {t('pipeline.new')}
+                    </Button>
+                  </Empty>
+                )}
+              </Card>
+            ),
+          },
+        ]}
+      />
+
+      {/* Pipeline Create/Edit Modal */}
+      <Modal
+        title={editingPipeline ? t('pipeline.edit') : t('pipeline.new')}
+        open={pipelineModalVisible}
+        onOk={handlePipelineSubmit}
+        onCancel={() => setPipelineModalVisible(false)}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
+        confirmLoading={saving}
+        width={600}
+      >
+        <Form form={pipelineForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label={t('pipeline.name')}
+            rules={[{ required: true, message: t('pipeline.nameRequired') }]}
+          >
+            <Input placeholder={t('pipeline.namePlaceholder')} />
+          </Form.Item>
+
+          <Form.Item name="description" label={t('common.description')}>
+            <Input.TextArea rows={2} />
+          </Form.Item>
+
+          <Form.Item
+            name="priority"
+            label={t('pipeline.priority')}
+            extra={t('pipeline.priorityHelp')}
+          >
+            <Input type="number" min={0} />
+          </Form.Item>
+
+          <Form.Item
+            name="parent_pipeline_id"
+            label={t('pipeline.parentPipeline')}
+            extra={t('pipeline.parentPipelineHelp')}
+          >
+            <Select
+              allowClear
+              placeholder={t('pipeline.parentPipelinePlaceholder')}
+              onChange={handleParentPipelineChange}
+            >
+              {pipelines
+                .filter(p => p.id !== editingPipeline?.id)
+                .map(p => {
+                  const depth = getPipelineDepth(p)
+                  return (
+                    <Select.Option key={p.id} value={p.id}>
+                      <span style={{ paddingLeft: depth * 12 }}>
+                        {depth > 0 && '└─ '}
+                        {p.name}
+                      </span>
+                    </Select.Option>
+                  )
+                })}
+            </Select>
+          </Form.Item>
+
+          {selectedParentPipeline && (
+            <>
+              <Form.Item
+                name="target_data_type_id"
+                label={t('pipeline.targetDataType')}
+                extra={t('pipeline.targetDataTypeHelp')}
+              >
+                <Select placeholder={t('pipeline.targetDataTypePlaceholder')}>
+                  {dataTypes.map(dt => (
+                    <Select.Option key={dt.id} value={dt.id}>
+                      {dt.display_name}
+                      <span style={{ marginLeft: 8, color: '#999' }}>({dt.name})</span>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              <Form.Item
+                name="expansion_mode"
+                label={t('pipeline.expansionMode')}
+                extra={t('pipeline.expansionModeHelp')}
+              >
+                <Select>
+                  <Select.Option value="none">
+                    <Tag>{t('pipeline.expansionNone')}</Tag>
+                    <span style={{ marginLeft: 8, color: '#666' }}>{t('pipeline.expansionNoneDesc')}</span>
+                  </Select.Option>
+                  <Select.Option value="for_each_record">
+                    <Tag color="purple">{t('pipeline.expansionForEachRecord')}</Tag>
+                    <span style={{ marginLeft: 8, color: '#666' }}>{t('pipeline.expansionForEachRecordDesc')}</span>
+                  </Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.List name="parameter_bindings">
+                {(fields, { add, remove }) => (
+                  <Form.Item
+                    label={t('pipeline.parameterBindings')}
+                    extra={t('pipeline.parameterBindingsHelp')}
+                  >
+                    {fields.map((field) => (
+                      <Space key={field.key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                        <Form.Item
+                          {...field}
+                          name={[field.name, 'parent_field']}
+                          rules={[{ required: true, message: t('pipeline.parentFieldRequired') }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Input placeholder={t('pipeline.parentFieldPlaceholder')} style={{ width: 150 }} />
+                        </Form.Item>
+                        <span style={{ margin: '0 8px' }}>→</span>
+                        <Form.Item
+                          {...field}
+                          name={[field.name, 'child_param']}
+                          rules={[{ required: true, message: t('pipeline.childParamRequired') }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <Input placeholder={t('pipeline.childParamPlaceholder')} style={{ width: 150 }} />
+                        </Form.Item>
+                        <Button type="link" danger onClick={() => remove(field.name)}>
+                          {t('common.delete')}
+                        </Button>
+                      </Space>
+                    ))}
+                    <Button type="dashed" onClick={() => add({ parent_field: 'id', child_param: '' })} block>
+                      <PlusOutlined /> {t('pipeline.addBinding')}
+                    </Button>
+                  </Form.Item>
+                )}
+              </Form.List>
+            </>
+          )}
+        </Form>
+      </Modal>
+    </div>
+  )
+}

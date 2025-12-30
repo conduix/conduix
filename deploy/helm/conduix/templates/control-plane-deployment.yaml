@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "conduix.fullname" . }}-control-plane
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  replicas: {{ .Values.controlPlane.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "conduix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: control-plane
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "conduix.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: control-plane
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
+          imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DB_HOST
+              value: "{{ .Release.Name }}-mysql"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USER
+              value: "{{ .Values.mysql.auth.username }}"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-mysql
+                  key: mysql-password
+            - name: DB_NAME
+              value: "{{ .Values.mysql.auth.database }}"
+            - name: REDIS_ADDR
+              value: "{{ .Release.Name }}-redis-master:6379"
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-redis
+                  key: redis-password
+            {{- end }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "conduix.fullname" . }}-secrets
+                  key: jwt-secret
+            {{- if .Values.controlPlane.oauth2.github.enabled }}
+            - name: GITHUB_CLIENT_ID
+              value: "{{ .Values.controlPlane.oauth2.github.clientId }}"
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "conduix.fullname" . }}-secrets
+                  key: github-client-secret
+            - name: GITHUB_REDIRECT_URL
+              value: "{{ .Values.controlPlane.oauth2.github.redirectUrl }}"
+            {{- end }}
+            {{- if .Values.controlPlane.oauth2.google.enabled }}
+            - name: GOOGLE_CLIENT_ID
+              value: "{{ .Values.controlPlane.oauth2.google.clientId }}"
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "conduix.fullname" . }}-secrets
+                  key: google-client-secret
+            - name: GOOGLE_REDIRECT_URL
+              value: "{{ .Values.controlPlane.oauth2.google.redirectUrl }}"
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

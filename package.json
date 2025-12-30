@@ -1,0 +1,6 @@
+{
+  "scripts": {
+    "lint:web-ui": "cd web-ui && npm run lint",
+    "build:web-ui": "cd web-ui && npm run build"
+  }
+}

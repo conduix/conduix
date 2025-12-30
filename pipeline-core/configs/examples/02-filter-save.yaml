@@ -1,0 +1,29 @@
+# 필터링 후 저장 예제
+
+name: "error-collector"
+
+input:
+  type: kafka
+  brokers: ["kafka:9092"]
+  topics: ["app-logs"]
+  group_id: "error-collector"
+
+steps:
+  - name: parse
+    transform: |
+      root = this.parse_json()
+
+  - name: errors_only
+    filter: '.level == "error"'
+
+  - name: add_metadata
+    transform: |
+      root = this
+      root.collected_at = now()
+      root.pipeline = "error-collector"
+
+  - name: save_to_es
+    save:
+      type: elasticsearch
+      url: "http://es:9200"
+      index: "errors-${!now().format(\"2006-01-02\")}"

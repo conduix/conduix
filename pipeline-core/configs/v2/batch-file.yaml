@@ -1,0 +1,28 @@
+# 배치 파이프라인 예시: 파일 소스
+# 파일에서 데이터를 읽어 처리하는 배치 파이프라인
+
+name: batch-file-example
+type: batch
+
+source:
+  type: file
+  path: "./data/input.json"
+  format: json  # json, csv, lines
+
+steps:
+  - name: select-fields
+    select:
+      - id
+      - name
+      - email
+      - created_at
+
+  - name: filter-active
+    filter: ".status == 'active'"
+
+output:
+  type: stub
+  log_level: info
+  log_format: json
+  metrics:
+    enabled: true

@@ -32,6 +32,10 @@ import {
   MergeCellsOutlined,
   SplitCellsOutlined,
   LockOutlined,
+  CopyOutlined,
+  FieldNumberOutlined,
+  FieldStringOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
@@ -63,6 +67,10 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
   merge: { color: 'cyan', icon: <MergeCellsOutlined />, label: 'Merge' },
   split: { color: 'magenta', icon: <SplitCellsOutlined />, label: 'Split' },
   encrypt: { color: 'gold', icon: <LockOutlined />, label: 'Encrypt' },
+  dedupe: { color: 'volcano', icon: <CopyOutlined />, label: 'Dedupe' },
+  default: { color: 'geekblue', icon: <FieldStringOutlined />, label: 'Default' },
+  cast: { color: 'lime', icon: <FieldNumberOutlined />, label: 'Cast' },
+  timestamp: { color: 'pink', icon: <ClockCircleOutlined />, label: 'Timestamp' },
   validate: { color: 'orange', icon: <CheckCircleOutlined />, label: 'Validate' },
   sink: { color: 'purple', icon: <ExportOutlined />, label: 'Sink' },
 }
@@ -312,6 +320,25 @@ export default function StageEditorPage() {
       encrypt_mask_char: stage.config?.mask_char || '*',
       encrypt_mask_keep_first: stage.config?.mask_keep_first || 0,
       encrypt_mask_keep_last: stage.config?.mask_keep_last || 0,
+      // dedupe
+      dedupe_key_fields: (stage.config?.key_fields as string[])?.join(', ') || '',
+      dedupe_strategy: stage.config?.strategy || 'keep_first',
+      dedupe_window: stage.config?.window || '',
+      dedupe_timestamp_field: stage.config?.timestamp_field || '',
+      // default
+      default_values: stage.config?.defaults ? JSON.stringify(stage.config.defaults, null, 2) : '',
+      default_only_null: stage.config?.only_null ?? true,
+      // cast
+      cast_mappings: stage.config?.casts ? JSON.stringify(stage.config.casts, null, 2) : '',
+      cast_date_format: stage.config?.date_format || '',
+      cast_error_action: stage.config?.error_action || 'null',
+      // timestamp
+      timestamp_action: stage.config?.action || 'add',
+      timestamp_target_field: stage.config?.target_field || '',
+      timestamp_source_field: stage.config?.source_field || '',
+      timestamp_timezone: stage.config?.timezone || 'UTC',
+      timestamp_input_format: stage.config?.input_format || '',
+      timestamp_output_format: stage.config?.output_format || '',
       // validate
       schema: stage.config?.schema ? JSON.stringify(stage.config.schema, null, 2) : '',
       drop_on_fail: stage.config?.drop_on_fail || false,
@@ -379,6 +406,47 @@ export default function StageEditorPage() {
             mask_char: values.encrypt_mask_char || '*',
             mask_keep_first: values.encrypt_mask_keep_first || 0,
             mask_keep_last: values.encrypt_mask_keep_last || 0,
+          }
+          break
+        case 'dedupe':
+          config = {
+            key_fields: values.dedupe_key_fields
+              ? values.dedupe_key_fields.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+            strategy: values.dedupe_strategy || 'keep_first',
+            window: values.dedupe_window ? Number(values.dedupe_window) : undefined,
+            timestamp_field: values.dedupe_timestamp_field || undefined,
+          }
+          break
+        case 'default':
+          try {
+            config = {
+              defaults: values.default_values ? JSON.parse(values.default_values) : {},
+              only_null: values.default_only_null ?? true,
+            }
+          } catch {
+            config = { defaults: {} }
+          }
+          break
+        case 'cast':
+          try {
+            config = {
+              casts: values.cast_mappings ? JSON.parse(values.cast_mappings) : {},
+              date_format: values.cast_date_format || undefined,
+              error_action: values.cast_error_action || 'null',
+            }
+          } catch {
+            config = { casts: {} }
+          }
+          break
+        case 'timestamp':
+          config = {
+            action: values.timestamp_action || 'add',
+            target_field: values.timestamp_target_field || '',
+            source_field: values.timestamp_source_field || undefined,
+            timezone: values.timestamp_timezone || 'UTC',
+            input_format: values.timestamp_input_format || undefined,
+            output_format: values.timestamp_output_format || undefined,
           }
           break
         case 'validate':
@@ -478,6 +546,48 @@ export default function StageEditorPage() {
             {encFields.slice(0, 3).join(', ')}{encFields.length > 3 ? '...' : ''} ({method})
           </Text>
         ) : null
+      }
+      case 'dedupe': {
+        const keyFields = stage.config?.key_fields as string[] | undefined
+        const strategy = stage.config?.strategy as string | undefined
+        return keyFields?.length ? (
+          <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+            {keyFields.join(', ')} ({strategy})
+          </Text>
+        ) : null
+      }
+      case 'default': {
+        const defaults = stage.config?.defaults as Record<string, unknown> | undefined
+        if (defaults) {
+          const keys = Object.keys(defaults).slice(0, 3)
+          return (
+            <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+              {keys.join(', ')}{Object.keys(defaults).length > 3 ? '...' : ''}
+            </Text>
+          )
+        }
+        return null
+      }
+      case 'cast': {
+        const casts = stage.config?.casts as Record<string, string> | undefined
+        if (casts) {
+          const entries = Object.entries(casts).slice(0, 3)
+          return (
+            <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+              {entries.map(([k, v]) => `${k}:${v}`).join(', ')}{Object.keys(casts).length > 3 ? '...' : ''}
+            </Text>
+          )
+        }
+        return null
+      }
+      case 'timestamp': {
+        const action = stage.config?.action as string | undefined
+        const targetField = stage.config?.target_field as string | undefined
+        return (
+          <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+            {action} → {targetField}
+          </Text>
+        )
       }
       case 'validate':
         return <Text type="secondary">Schema validation</Text>
@@ -683,6 +793,170 @@ export default function StageEditorPage() {
                   <Input type="number" min={0} placeholder="0" style={{ width: 100 }} />
                 </Form.Item>
               </>
+            )}
+          </>
+        )
+      case 'dedupe':
+        return (
+          <>
+            <Form.Item
+              name="dedupe_key_fields"
+              label={t('stage.dedupeKeyFields')}
+              extra={t('stage.dedupeKeyFieldsHelp')}
+              rules={[{ required: true, message: t('stage.dedupeKeyFieldsRequired') }]}
+            >
+              <Input
+                placeholder="order_id, product_id"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="dedupe_strategy"
+              label={t('stage.dedupeStrategy')}
+              rules={[{ required: true }]}
+            >
+              <Select>
+                <Select.Option value="keep_first">{t('stage.dedupeKeepFirst')}</Select.Option>
+                <Select.Option value="keep_last">{t('stage.dedupeKeepLast')}</Select.Option>
+                <Select.Option value="keep_latest">{t('stage.dedupeKeepLatest')}</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="dedupe_window"
+              label={t('stage.dedupeWindow')}
+              extra={t('stage.dedupeWindowHelp')}
+            >
+              <Input type="number" min={0} placeholder="300" suffix="sec" style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item
+              name="dedupe_timestamp_field"
+              label={t('stage.dedupeTimestampField')}
+              extra={t('stage.dedupeTimestampFieldHelp')}
+            >
+              <Input placeholder="updated_at" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+          </>
+        )
+      case 'default':
+        return (
+          <>
+            <Form.Item
+              name="default_values"
+              label={t('stage.defaultValues')}
+              extra={t('stage.defaultValuesHelp')}
+              rules={[{ required: true, message: t('stage.defaultValuesRequired') }]}
+            >
+              <Input.TextArea
+                rows={5}
+                placeholder='{"status": "pending", "count": 0, "tags": []}'
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="default_only_null"
+              label={t('stage.defaultOnlyNull')}
+              extra={t('stage.defaultOnlyNullHelp')}
+            >
+              <Select>
+                <Select.Option value={true}>{t('stage.defaultOnlyNullYes')}</Select.Option>
+                <Select.Option value={false}>{t('stage.defaultOnlyNullNo')}</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )
+      case 'cast':
+        return (
+          <>
+            <Form.Item
+              name="cast_mappings"
+              label={t('stage.castMappings')}
+              extra={t('stage.castMappingsHelp')}
+              rules={[{ required: true, message: t('stage.castMappingsRequired') }]}
+            >
+              <Input.TextArea
+                rows={5}
+                placeholder='{"age": "int", "price": "float", "is_active": "bool", "created_at": "date"}'
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="cast_date_format"
+              label={t('stage.castDateFormat')}
+              extra={t('stage.castDateFormatHelp')}
+            >
+              <Input placeholder="2006-01-02T15:04:05Z07:00" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+            <Form.Item
+              name="cast_error_action"
+              label={t('stage.castErrorAction')}
+            >
+              <Select>
+                <Select.Option value="null">{t('stage.castErrorNull')}</Select.Option>
+                <Select.Option value="drop">{t('stage.castErrorDrop')}</Select.Option>
+                <Select.Option value="keep">{t('stage.castErrorKeep')}</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )
+      case 'timestamp':
+        return (
+          <>
+            <Form.Item
+              name="timestamp_action"
+              label={t('stage.timestampAction')}
+              rules={[{ required: true }]}
+            >
+              <Select>
+                <Select.Option value="add">{t('stage.timestampAdd')}</Select.Option>
+                <Select.Option value="convert">{t('stage.timestampConvert')}</Select.Option>
+                <Select.Option value="format">{t('stage.timestampFormat')}</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="timestamp_target_field"
+              label={t('stage.timestampTargetField')}
+              rules={[{ required: true, message: t('stage.timestampTargetFieldRequired') }]}
+            >
+              <Input placeholder="processed_at" style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+            {watchedStageType === 'timestamp' && stageForm.getFieldValue('timestamp_action') !== 'add' && (
+              <Form.Item
+                name="timestamp_source_field"
+                label={t('stage.timestampSourceField')}
+              >
+                <Input placeholder="created_at" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+            )}
+            <Form.Item
+              name="timestamp_timezone"
+              label={t('stage.timestampTimezone')}
+            >
+              <Select showSearch placeholder="UTC">
+                <Select.Option value="UTC">UTC</Select.Option>
+                <Select.Option value="Asia/Seoul">Asia/Seoul</Select.Option>
+                <Select.Option value="Asia/Tokyo">Asia/Tokyo</Select.Option>
+                <Select.Option value="America/New_York">America/New_York</Select.Option>
+                <Select.Option value="America/Los_Angeles">America/Los_Angeles</Select.Option>
+                <Select.Option value="Europe/London">Europe/London</Select.Option>
+              </Select>
+            </Form.Item>
+            {watchedStageType === 'timestamp' && stageForm.getFieldValue('timestamp_action') === 'convert' && (
+              <Form.Item
+                name="timestamp_input_format"
+                label={t('stage.timestampInputFormat')}
+                extra={t('stage.timestampInputFormatHelp')}
+              >
+                <Input placeholder="2006-01-02 15:04:05" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+            )}
+            {watchedStageType === 'timestamp' && stageForm.getFieldValue('timestamp_action') === 'format' && (
+              <Form.Item
+                name="timestamp_output_format"
+                label={t('stage.timestampOutputFormat')}
+                extra={t('stage.timestampOutputFormatHelp')}
+              >
+                <Input placeholder="2006-01-02" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
             )}
           </>
         )
@@ -957,6 +1231,30 @@ export default function StageEditorPage() {
                 <Space>
                   <LockOutlined style={{ color: '#faad14' }} />
                   {t('stage.types.encrypt')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="dedupe">
+                <Space>
+                  <CopyOutlined style={{ color: '#fa541c' }} />
+                  {t('stage.types.dedupe')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="default">
+                <Space>
+                  <FieldStringOutlined style={{ color: '#2f54eb' }} />
+                  {t('stage.types.default')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="cast">
+                <Space>
+                  <FieldNumberOutlined style={{ color: '#a0d911' }} />
+                  {t('stage.types.cast')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="timestamp">
+                <Space>
+                  <ClockCircleOutlined style={{ color: '#eb2f96' }} />
+                  {t('stage.types.timestamp')}
                 </Space>
               </Select.Option>
               <Select.Option value="validate">

@@ -31,6 +31,10 @@ export type StageType =
   | 'merge'     // 여러 필드를 하나로 합치기
   | 'split'     // 정규식으로 필드 분리
   | 'encrypt'   // 필드 암호화
+  | 'dedupe'    // 중복 제거
+  | 'default'   // 기본값 설정
+  | 'cast'      // 타입 변환
+  | 'timestamp' // 타임스탬프 처리
   | 'validate'  // 스키마 검증
   | 'sink'      // 추가 출력
 
@@ -77,6 +81,33 @@ export interface EncryptStageConfig {
   mask_char?: string        // 마스킹 문자 (mask용, 기본: "*")
   mask_keep_first?: number  // 앞에서 유지할 문자 수
   mask_keep_last?: number   // 뒤에서 유지할 문자 수
+}
+
+export interface DedupeStageConfig {
+  key_fields: string[]      // 중복 판단 키 필드들
+  strategy: 'keep_first' | 'keep_last' | 'keep_latest'  // 중복 시 유지 전략
+  window?: number           // 시간 윈도우 (초, 실시간용)
+  timestamp_field?: string  // keep_latest용 타임스탬프 필드
+}
+
+export interface DefaultStageConfig {
+  defaults: Record<string, unknown>  // 필드별 기본값 { field: default_value }
+  only_null?: boolean       // true: null만, false: null과 빈 문자열 모두
+}
+
+export interface CastStageConfig {
+  casts: Record<string, string>  // 필드별 타입 { field: "int" | "float" | "string" | "bool" | "date" }
+  date_format?: string      // 날짜 파싱 포맷 (예: "2006-01-02T15:04:05Z07:00")
+  error_action?: 'drop' | 'null' | 'keep'  // 변환 실패 시 처리
+}
+
+export interface TimestampStageConfig {
+  action: 'add' | 'convert' | 'format'  // 동작 유형
+  target_field: string      // 결과 필드
+  source_field?: string     // 변환/포맷 시 소스 필드
+  timezone?: string         // 타임존 (예: "Asia/Seoul", "UTC")
+  input_format?: string     // 입력 포맷 (convert용)
+  output_format?: string    // 출력 포맷 (format용)
 }
 
 export interface ValidateStageConfig {

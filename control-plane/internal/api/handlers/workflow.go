@@ -1,14 +1,17 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -16,12 +19,19 @@ import (
 
 // WorkflowHandler 워크플로우 API 핸들러
 type WorkflowHandler struct {
-	db *database.DB
+	db           *database.DB
+	kafkaService *services.KafkaService
+	logger       *slog.Logger
 }
 
 // NewWorkflowHandler 핸들러 생성
 func NewWorkflowHandler(db *database.DB) *WorkflowHandler {
-	return &WorkflowHandler{db: db}
+	logger := slog.Default()
+	return &WorkflowHandler{
+		db:           db,
+		kafkaService: services.NewKafkaService(&services.KafkaServiceConfig{Logger: logger}),
+		logger:       logger,
+	}
 }
 
 // CreateWorkflowRequest 워크플로우 생성 요청
@@ -275,6 +285,12 @@ func (h *WorkflowHandler) UpdateWorkflow(c *gin.Context) {
 		return
 	}
 
+	// 기존 파이프라인 로드 (Kafka 토픽 관리용)
+	var oldPipelines []types.GroupedPipeline
+	if workflow.PipelinesConfig != "" {
+		_ = json.Unmarshal([]byte(workflow.PipelinesConfig), &oldPipelines)
+	}
+
 	// 업데이트
 	if req.Name != "" {
 		workflow.Name = req.Name
@@ -285,10 +301,27 @@ func (h *WorkflowHandler) UpdateWorkflow(c *gin.Context) {
 	if req.ExecutionMode != "" {
 		workflow.ExecutionMode = string(req.ExecutionMode)
 	}
+
+	// 파이프라인 업데이트 시 Kafka 토픽 관리
 	if req.Pipelines != nil {
-		pipelinesJSON, _ := json.Marshal(req.Pipelines)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+		defer cancel()
+
+		// 부모-자식 관계 변경에 따른 Kafka 토픽 관리
+		updatedPipelines, err := h.managePipelineKafkaTopics(ctx, workflow.Slug, oldPipelines, req.Pipelines)
+		if err != nil {
+			h.logger.Error("Failed to manage Kafka topics", "workflow_id", workflowID, "error", err)
+			c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to manage Kafka topics: %v", err),
+			})
+			return
+		}
+
+		pipelinesJSON, _ := json.Marshal(updatedPipelines)
 		workflow.PipelinesConfig = string(pipelinesJSON)
 	}
+
 	if req.FailurePolicy != nil {
 		failurePolicyJSON, _ := json.Marshal(req.FailurePolicy)
 		workflow.FailurePolicy = string(failurePolicyJSON)
@@ -716,4 +749,160 @@ func (h *WorkflowHandler) RemovePipelineFromWorkflow(c *gin.Context) {
 		Success: true,
 		Message: "Pipeline removed from workflow",
 	})
+}
+
+// managePipelineKafkaTopics 부모-자식 파이프라인 간 Kafka 토픽 관리
+// 새 자식 파이프라인에 Kafka 토픽 생성하고, 부모에 Kafka sink 추가
+// 삭제된 자식 파이프라인의 Kafka 토픽 삭제하고, 부모에서 sink 제거
+func (h *WorkflowHandler) managePipelineKafkaTopics(
+	ctx context.Context,
+	workflowSlug string,
+	oldPipelines []types.GroupedPipeline,
+	newPipelines []types.GroupedPipeline,
+) ([]types.GroupedPipeline, error) {
+	// 파이프라인 맵 생성
+	oldPipelineMap := make(map[string]*types.GroupedPipeline)
+	for i := range oldPipelines {
+		oldPipelineMap[oldPipelines[i].ID] = &oldPipelines[i]
+	}
+
+	newPipelineMap := make(map[string]*types.GroupedPipeline)
+	for i := range newPipelines {
+		newPipelineMap[newPipelines[i].ID] = &newPipelines[i]
+	}
+
+	// 1. 새로 추가된 자식 파이프라인 찾기 (parent_pipeline_id가 새로 설정된 경우)
+	for i := range newPipelines {
+		p := &newPipelines[i]
+		if p.ParentPipelineID == nil || *p.ParentPipelineID == "" {
+			continue
+		}
+
+		// 이전에 부모가 없었거나, 부모가 변경된 경우
+		oldP, existed := oldPipelineMap[p.ID]
+		isNewChild := !existed || oldP.ParentPipelineID == nil || *oldP.ParentPipelineID != *p.ParentPipelineID
+
+		if isNewChild {
+			parentPipeline, ok := newPipelineMap[*p.ParentPipelineID]
+			if !ok {
+				h.logger.Warn("Parent pipeline not found", "child_id", p.ID, "parent_id", *p.ParentPipelineID)
+				continue
+			}
+
+			// Kafka 토픽 생성
+			topicName := h.kafkaService.GenerateTopicName(workflowSlug, parentPipeline.Name, p.Name)
+			if err := h.kafkaService.CreateTopic(ctx, topicName); err != nil {
+				h.logger.Error("Failed to create Kafka topic", "topic", topicName, "error", err)
+				return nil, fmt.Errorf("failed to create Kafka topic '%s': %w", topicName, err)
+			}
+
+			// 부모 파이프라인에 Kafka sink 추가
+			h.addKafkaSinkToParent(parentPipeline, p.Name, topicName)
+
+			// 자식 파이프라인에 Kafka source 설정
+			h.setKafkaSourceToChild(p, topicName)
+
+			h.logger.Info("Created Kafka topic for parent-child pipeline",
+				"topic", topicName,
+				"parent", parentPipeline.Name,
+				"child", p.Name)
+		}
+	}
+
+	// 2. 삭제된 자식 파이프라인 또는 부모 관계가 해제된 파이프라인 찾기
+	for oldID, oldP := range oldPipelineMap {
+		if oldP.ParentPipelineID == nil || *oldP.ParentPipelineID == "" {
+			continue
+		}
+
+		newP, stillExists := newPipelineMap[oldID]
+		// 파이프라인이 삭제되었거나, 부모 관계가 해제된 경우
+		isRemoved := !stillExists || newP.ParentPipelineID == nil || *newP.ParentPipelineID == ""
+		isParentChanged := stillExists && newP.ParentPipelineID != nil && *newP.ParentPipelineID != *oldP.ParentPipelineID
+
+		if isRemoved || isParentChanged {
+			oldParent, ok := oldPipelineMap[*oldP.ParentPipelineID]
+			if !ok {
+				continue
+			}
+
+			// 토픽 이름 생성
+			topicName := h.kafkaService.GenerateTopicName(workflowSlug, oldParent.Name, oldP.Name)
+
+			// Kafka 토픽 삭제 (비동기로 처리, 실패해도 계속 진행)
+			go func(topic string) {
+				deleteCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := h.kafkaService.DeleteTopic(deleteCtx, topic); err != nil {
+					h.logger.Warn("Failed to delete Kafka topic (will be cleaned up later)", "topic", topic, "error", err)
+				}
+			}(topicName)
+
+			// 새 파이프라인 목록에서 부모 파이프라인의 sink 제거
+			if newParent, ok := newPipelineMap[*oldP.ParentPipelineID]; ok {
+				h.removeKafkaSinkFromParent(newParent, oldP.Name)
+			}
+
+			h.logger.Info("Cleaned up Kafka topic for removed parent-child relationship",
+				"topic", topicName,
+				"old_parent", oldParent.Name,
+				"old_child", oldP.Name)
+		}
+	}
+
+	// 수정된 파이프라인 목록 반환
+	result := make([]types.GroupedPipeline, 0, len(newPipelines))
+	for _, p := range newPipelines {
+		result = append(result, *newPipelineMap[p.ID])
+	}
+	return result, nil
+}
+
+// addKafkaSinkToParent 부모 파이프라인에 Kafka sink 추가
+func (h *WorkflowHandler) addKafkaSinkToParent(parent *types.GroupedPipeline, childName, topicName string) {
+	sinkName := fmt.Sprintf("kafka_to_%s", childName)
+
+	// 이미 존재하는지 확인
+	for _, sink := range parent.Sinks {
+		if sink.Name == sinkName {
+			return
+		}
+	}
+
+	kafkaSink := types.WorkflowSink{
+		Type: "kafka",
+		Name: sinkName,
+		Config: map[string]any{
+			"brokers": h.kafkaService.GetBrokers(),
+			"topic":   topicName,
+		},
+	}
+
+	parent.Sinks = append(parent.Sinks, kafkaSink)
+}
+
+// removeKafkaSinkFromParent 부모 파이프라인에서 Kafka sink 제거
+func (h *WorkflowHandler) removeKafkaSinkFromParent(parent *types.GroupedPipeline, childName string) {
+	sinkName := fmt.Sprintf("kafka_to_%s", childName)
+
+	newSinks := make([]types.WorkflowSink, 0, len(parent.Sinks))
+	for _, sink := range parent.Sinks {
+		if sink.Name != sinkName {
+			newSinks = append(newSinks, sink)
+		}
+	}
+	parent.Sinks = newSinks
+}
+
+// setKafkaSourceToChild 자식 파이프라인에 Kafka source 설정
+func (h *WorkflowHandler) setKafkaSourceToChild(child *types.GroupedPipeline, topicName string) {
+	child.Source = types.WorkflowSource{
+		Type: "kafka",
+		Name: fmt.Sprintf("from_parent_%s", topicName),
+		Config: map[string]any{
+			"brokers":        h.kafkaService.GetBrokers(),
+			"topic":          topicName,
+			"consumer_group": fmt.Sprintf("%s_consumer", child.Name),
+		},
+	}
 }

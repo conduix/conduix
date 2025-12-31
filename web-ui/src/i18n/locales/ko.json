@@ -301,5 +301,41 @@
     "updateError": "데이터 타입 수정에 실패했습니다",
     "deleteError": "데이터 타입 삭제에 실패했습니다",
     "noDataTypes": "이 프로젝트에 데이터 타입이 없습니다"
+  },
+  "stage": {
+    "title": "Stage 편집기",
+    "editStages": "Stage 편집",
+    "add": "Stage 추가",
+    "edit": "Stage 수정",
+    "delete": "Stage 삭제",
+    "deleteConfirm": "정말 이 Stage를 삭제하시겠습니까?",
+    "noStages": "설정된 Stage가 없습니다",
+    "types": {
+      "filter": "필터",
+      "remap": "필드 매핑",
+      "validate": "유효성 검사",
+      "sink": "싱크"
+    },
+    "visual": "비주얼",
+    "yaml": "YAML",
+    "name": "Stage 이름",
+    "nameRequired": "Stage 이름을 입력하세요",
+    "type": "Stage 타입",
+    "typeRequired": "Stage 타입을 선택하세요",
+    "typePlaceholder": "Stage 타입 선택",
+    "config": "설정",
+    "condition": "조건식",
+    "conditionHelp": "VRL 조건식 (예: .status == \"active\")",
+    "mappings": "필드 매핑",
+    "mappingsHelp": "소스 필드를 대상 필드로 매핑하는 JSON 객체",
+    "schema": "JSON 스키마",
+    "schemaHelp": "유효성 검사를 위한 JSON 스키마",
+    "dropOnFail": "검증 실패 시 삭제",
+    "sinkType": "싱크 타입",
+    "sinkTypePlaceholder": "싱크 타입 선택",
+    "sinkConfig": "싱크 설정",
+    "saveSuccess": "Stage가 저장되었습니다",
+    "saveError": "Stage 저장에 실패했습니다",
+    "yamlParseError": "잘못된 YAML 형식입니다"
   }
 }

@@ -301,5 +301,41 @@
     "updateError": "Failed to update data type",
     "deleteError": "Failed to delete data type",
     "noDataTypes": "No data types in this project"
+  },
+  "stage": {
+    "title": "Stage Editor",
+    "editStages": "Edit Stages",
+    "add": "Add Stage",
+    "edit": "Edit Stage",
+    "delete": "Delete Stage",
+    "deleteConfirm": "Are you sure you want to delete this stage?",
+    "noStages": "No stages configured",
+    "types": {
+      "filter": "Filter",
+      "remap": "Remap",
+      "validate": "Validate",
+      "sink": "Sink"
+    },
+    "visual": "Visual",
+    "yaml": "YAML",
+    "name": "Stage Name",
+    "nameRequired": "Please enter stage name",
+    "type": "Stage Type",
+    "typeRequired": "Please select stage type",
+    "typePlaceholder": "Select stage type",
+    "config": "Configuration",
+    "condition": "Condition",
+    "conditionHelp": "VRL condition expression (e.g., .status == \"active\")",
+    "mappings": "Field Mappings",
+    "mappingsHelp": "JSON object mapping source fields to target fields",
+    "schema": "JSON Schema",
+    "schemaHelp": "JSON Schema for validation",
+    "dropOnFail": "Drop on validation failure",
+    "sinkType": "Sink Type",
+    "sinkTypePlaceholder": "Select sink type",
+    "sinkConfig": "Sink Configuration",
+    "saveSuccess": "Stages saved successfully",
+    "saveError": "Failed to save stages",
+    "yamlParseError": "Invalid YAML format"
   }
 }

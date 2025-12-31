@@ -16,10 +16,41 @@ export interface WorkflowSource {
   config: Record<string, unknown>
 }
 
-// 변환 단계
+// 변환 단계 (레거시, Stage로 대체)
 export interface TransformStep {
   name: string
   type: string // remap, filter, sample, aggregate
+  config: Record<string, unknown>
+}
+
+// Stage 타입 정의
+export type StageType = 'filter' | 'remap' | 'validate' | 'sink'
+
+// Stage 인터페이스
+export interface Stage {
+  id: string           // 프론트엔드용 고유 ID
+  name: string
+  type: StageType
+  config: Record<string, unknown>
+}
+
+// Stage 타입별 설정 스키마
+export interface FilterStageConfig {
+  condition: string    // VRL 조건식
+}
+
+export interface RemapStageConfig {
+  mappings: Record<string, string>  // source_field -> target_field
+  drop_unmapped?: boolean
+}
+
+export interface ValidateStageConfig {
+  schema: Record<string, unknown>
+  drop_on_fail?: boolean
+}
+
+export interface SinkStageConfig {
+  type: string         // elasticsearch, kafka, etc.
   config: Record<string, unknown>
 }
 
@@ -39,7 +70,8 @@ export interface WorkflowPipeline {
   priority: number
   depends_on?: string[]
   source: WorkflowSource
-  transforms?: TransformStep[]
+  transforms?: TransformStep[]  // 레거시
+  stages?: Stage[]              // 새로운 Stage 배열
   sinks: WorkflowSink[]
   weight?: number
 

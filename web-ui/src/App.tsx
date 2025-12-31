@@ -17,6 +17,7 @@ import UsersPage from './pages/Users'
 import ProjectsPage from './pages/Projects'
 import ProjectDetailPage from './pages/ProjectDetail'
 import WorkflowDetailPage from './pages/WorkflowDetail'
+import StageEditorPage from './pages/StageEditor'
 
 const antdLocales: Record<string, typeof enUS> = {
   en: enUS,
@@ -63,6 +64,7 @@ function App() {
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="projects/:id" element={<ProjectDetailPage />} />
             <Route path="workflows/:id" element={<WorkflowDetailPage />} />
+            <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/stages" element={<StageEditorPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

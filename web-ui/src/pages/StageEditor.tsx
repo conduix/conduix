@@ -28,6 +28,10 @@ import {
   SwapOutlined,
   CheckCircleOutlined,
   ExportOutlined,
+  MinusCircleOutlined,
+  MergeCellsOutlined,
+  SplitCellsOutlined,
+  LockOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
@@ -55,6 +59,10 @@ interface Workflow {
 const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode; label: string }> = {
   filter: { color: 'blue', icon: <FilterOutlined />, label: 'Filter' },
   remap: { color: 'green', icon: <SwapOutlined />, label: 'Remap' },
+  drop: { color: 'red', icon: <MinusCircleOutlined />, label: 'Drop' },
+  merge: { color: 'cyan', icon: <MergeCellsOutlined />, label: 'Merge' },
+  split: { color: 'magenta', icon: <SplitCellsOutlined />, label: 'Split' },
+  encrypt: { color: 'gold', icon: <LockOutlined />, label: 'Encrypt' },
   validate: { color: 'orange', icon: <CheckCircleOutlined />, label: 'Validate' },
   sink: { color: 'purple', icon: <ExportOutlined />, label: 'Sink' },
 }
@@ -281,9 +289,33 @@ export default function StageEditorPage() {
     stageForm.setFieldsValue({
       name: stage.name,
       type: stage.type,
+      // filter
       condition: stage.config?.condition || '',
+      // remap
       mappings: stage.config?.mappings ? JSON.stringify(stage.config.mappings, null, 2) : '',
+      // drop
+      drop_fields: (stage.config?.fields as string[])?.join(', ') || '',
+      // merge
+      merge_source_fields: (stage.config?.source_fields as string[])?.join(', ') || '',
+      merge_target_field: stage.config?.target_field || '',
+      merge_delimiter: stage.config?.delimiter || ' ',
+      merge_template: stage.config?.template || '',
+      // split
+      split_source_field: stage.config?.source_field || '',
+      split_pattern: stage.config?.pattern || '',
+      split_target_fields: (stage.config?.target_fields as string[])?.join(', ') || '',
+      split_keep_original: stage.config?.keep_original || false,
+      // encrypt
+      encrypt_fields: (stage.config?.fields as string[])?.join(', ') || '',
+      encrypt_method: stage.config?.method || 'sha256',
+      encrypt_key_env: stage.config?.key_env || '',
+      encrypt_mask_char: stage.config?.mask_char || '*',
+      encrypt_mask_keep_first: stage.config?.mask_keep_first || 0,
+      encrypt_mask_keep_last: stage.config?.mask_keep_last || 0,
+      // validate
       schema: stage.config?.schema ? JSON.stringify(stage.config.schema, null, 2) : '',
+      drop_on_fail: stage.config?.drop_on_fail || false,
+      // sink
       sink_type: stage.config?.type || '',
       sink_config: stage.config?.config ? JSON.stringify(stage.config.config, null, 2) : '',
     })
@@ -308,6 +340,45 @@ export default function StageEditorPage() {
             config = { mappings: values.mappings ? JSON.parse(values.mappings) : {} }
           } catch {
             config = { mappings: {} }
+          }
+          break
+        case 'drop':
+          config = {
+            fields: values.drop_fields
+              ? values.drop_fields.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+          }
+          break
+        case 'merge':
+          config = {
+            source_fields: values.merge_source_fields
+              ? values.merge_source_fields.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+            target_field: values.merge_target_field || '',
+            delimiter: values.merge_delimiter || ' ',
+            template: values.merge_template || undefined,
+          }
+          break
+        case 'split':
+          config = {
+            source_field: values.split_source_field || '',
+            pattern: values.split_pattern || '',
+            target_fields: values.split_target_fields
+              ? values.split_target_fields.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+            keep_original: values.split_keep_original || false,
+          }
+          break
+        case 'encrypt':
+          config = {
+            fields: values.encrypt_fields
+              ? values.encrypt_fields.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+            method: values.encrypt_method || 'sha256',
+            key_env: values.encrypt_key_env || undefined,
+            mask_char: values.encrypt_mask_char || '*',
+            mask_keep_first: values.encrypt_mask_keep_first || 0,
+            mask_keep_last: values.encrypt_mask_keep_last || 0,
           }
           break
         case 'validate':
@@ -373,6 +444,41 @@ export default function StageEditorPage() {
         }
         return null
       }
+      case 'drop': {
+        const fields = stage.config?.fields as string[] | undefined
+        return fields?.length ? (
+          <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+            {fields.slice(0, 5).join(', ')}{fields.length > 5 ? '...' : ''}
+          </Text>
+        ) : null
+      }
+      case 'merge': {
+        const sourceFields = stage.config?.source_fields as string[] | undefined
+        const targetField = stage.config?.target_field as string | undefined
+        return sourceFields?.length && targetField ? (
+          <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+            {sourceFields.join(' + ')} → {targetField}
+          </Text>
+        ) : null
+      }
+      case 'split': {
+        const sourceField = stage.config?.source_field as string | undefined
+        const targetFields = stage.config?.target_fields as string[] | undefined
+        return sourceField && targetFields?.length ? (
+          <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+            {sourceField} → {targetFields.join(', ')}
+          </Text>
+        ) : null
+      }
+      case 'encrypt': {
+        const encFields = stage.config?.fields as string[] | undefined
+        const method = stage.config?.method as string | undefined
+        return encFields?.length ? (
+          <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+            {encFields.slice(0, 3).join(', ')}{encFields.length > 3 ? '...' : ''} ({method})
+          </Text>
+        ) : null
+      }
       case 'validate':
         return <Text type="secondary">Schema validation</Text>
       case 'sink':
@@ -416,6 +522,169 @@ export default function StageEditorPage() {
               style={{ fontFamily: 'monospace' }}
             />
           </Form.Item>
+        )
+      case 'drop':
+        return (
+          <Form.Item
+            name="drop_fields"
+            label={t('stage.dropFields')}
+            extra={t('stage.dropFieldsHelp')}
+            rules={[{ required: true, message: t('stage.dropFieldsRequired') }]}
+          >
+            <Input
+              placeholder="password, secret_key, internal_id"
+              style={{ fontFamily: 'monospace' }}
+            />
+          </Form.Item>
+        )
+      case 'merge':
+        return (
+          <>
+            <Form.Item
+              name="merge_source_fields"
+              label={t('stage.mergeSourceFields')}
+              extra={t('stage.mergeSourceFieldsHelp')}
+              rules={[{ required: true, message: t('stage.mergeSourceFieldsRequired') }]}
+            >
+              <Input
+                placeholder="first_name, last_name"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="merge_target_field"
+              label={t('stage.mergeTargetField')}
+              rules={[{ required: true, message: t('stage.mergeTargetFieldRequired') }]}
+            >
+              <Input
+                placeholder="full_name"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="merge_delimiter"
+              label={t('stage.mergeDelimiter')}
+              extra={t('stage.mergeDelimiterHelp')}
+            >
+              <Input placeholder=" " style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+            <Form.Item
+              name="merge_template"
+              label={t('stage.mergeTemplate')}
+              extra={t('stage.mergeTemplateHelp')}
+            >
+              <Input
+                placeholder="{{first_name}} {{last_name}}"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+          </>
+        )
+      case 'split':
+        return (
+          <>
+            <Form.Item
+              name="split_source_field"
+              label={t('stage.splitSourceField')}
+              rules={[{ required: true, message: t('stage.splitSourceFieldRequired') }]}
+            >
+              <Input
+                placeholder="full_name"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="split_pattern"
+              label={t('stage.splitPattern')}
+              extra={t('stage.splitPatternHelp')}
+              rules={[{ required: true, message: t('stage.splitPatternRequired') }]}
+            >
+              <Input
+                placeholder="^(\w+)\s+(\w+)$"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="split_target_fields"
+              label={t('stage.splitTargetFields')}
+              extra={t('stage.splitTargetFieldsHelp')}
+              rules={[{ required: true, message: t('stage.splitTargetFieldsRequired') }]}
+            >
+              <Input
+                placeholder="first_name, last_name"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="split_keep_original"
+              label={t('stage.splitKeepOriginal')}
+            >
+              <Select>
+                <Select.Option value={true}>{t('common.yes')}</Select.Option>
+                <Select.Option value={false}>{t('common.no')}</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )
+      case 'encrypt':
+        return (
+          <>
+            <Form.Item
+              name="encrypt_fields"
+              label={t('stage.encryptFields')}
+              extra={t('stage.encryptFieldsHelp')}
+              rules={[{ required: true, message: t('stage.encryptFieldsRequired') }]}
+            >
+              <Input
+                placeholder="password, ssn, credit_card"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="encrypt_method"
+              label={t('stage.encryptMethod')}
+              rules={[{ required: true }]}
+            >
+              <Select>
+                <Select.Option value="sha256">SHA-256 (Hash)</Select.Option>
+                <Select.Option value="sha512">SHA-512 (Hash)</Select.Option>
+                <Select.Option value="aes256">AES-256 (Encryption)</Select.Option>
+                <Select.Option value="bcrypt">bcrypt (Password)</Select.Option>
+                <Select.Option value="mask">Mask (****)</Select.Option>
+              </Select>
+            </Form.Item>
+            {watchedStageType === 'encrypt' && stageForm.getFieldValue('encrypt_method') === 'aes256' && (
+              <Form.Item
+                name="encrypt_key_env"
+                label={t('stage.encryptKeyEnv')}
+                extra={t('stage.encryptKeyEnvHelp')}
+              >
+                <Input placeholder="ENCRYPTION_KEY" style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+            )}
+            {watchedStageType === 'encrypt' && stageForm.getFieldValue('encrypt_method') === 'mask' && (
+              <>
+                <Form.Item
+                  name="encrypt_mask_char"
+                  label={t('stage.encryptMaskChar')}
+                >
+                  <Input placeholder="*" maxLength={1} style={{ width: 60 }} />
+                </Form.Item>
+                <Form.Item
+                  name="encrypt_mask_keep_first"
+                  label={t('stage.encryptMaskKeepFirst')}
+                >
+                  <Input type="number" min={0} placeholder="0" style={{ width: 100 }} />
+                </Form.Item>
+                <Form.Item
+                  name="encrypt_mask_keep_last"
+                  label={t('stage.encryptMaskKeepLast')}
+                >
+                  <Input type="number" min={0} placeholder="0" style={{ width: 100 }} />
+                </Form.Item>
+              </>
+            )}
+          </>
         )
       case 'validate':
         return (
@@ -657,25 +926,49 @@ export default function StageEditorPage() {
               <Select.Option value="filter">
                 <Space>
                   <FilterOutlined style={{ color: '#1890ff' }} />
-                  Filter
+                  {t('stage.types.filter')}
                 </Space>
               </Select.Option>
               <Select.Option value="remap">
                 <Space>
                   <SwapOutlined style={{ color: '#52c41a' }} />
-                  Remap
+                  {t('stage.types.remap')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="drop">
+                <Space>
+                  <MinusCircleOutlined style={{ color: '#ff4d4f' }} />
+                  {t('stage.types.drop')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="merge">
+                <Space>
+                  <MergeCellsOutlined style={{ color: '#13c2c2' }} />
+                  {t('stage.types.merge')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="split">
+                <Space>
+                  <SplitCellsOutlined style={{ color: '#eb2f96' }} />
+                  {t('stage.types.split')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="encrypt">
+                <Space>
+                  <LockOutlined style={{ color: '#faad14' }} />
+                  {t('stage.types.encrypt')}
                 </Space>
               </Select.Option>
               <Select.Option value="validate">
                 <Space>
                   <CheckCircleOutlined style={{ color: '#fa8c16' }} />
-                  Validate
+                  {t('stage.types.validate')}
                 </Space>
               </Select.Option>
               <Select.Option value="sink">
                 <Space>
                   <ExportOutlined style={{ color: '#722ed1' }} />
-                  Sink
+                  {t('stage.types.sink')}
                 </Space>
               </Select.Option>
             </Select>

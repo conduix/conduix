@@ -24,7 +24,15 @@ export interface TransformStep {
 }
 
 // Stage 타입 정의
-export type StageType = 'filter' | 'remap' | 'validate' | 'sink'
+export type StageType =
+  | 'filter'    // 조건 필터링
+  | 'remap'     // 필드 이름 변경
+  | 'drop'      // 필드 삭제
+  | 'merge'     // 여러 필드를 하나로 합치기
+  | 'split'     // 정규식으로 필드 분리
+  | 'encrypt'   // 필드 암호화
+  | 'validate'  // 스키마 검증
+  | 'sink'      // 추가 출력
 
 // Stage 인터페이스
 export interface Stage {
@@ -42,6 +50,33 @@ export interface FilterStageConfig {
 export interface RemapStageConfig {
   mappings: Record<string, string>  // source_field -> target_field
   drop_unmapped?: boolean
+}
+
+export interface DropStageConfig {
+  fields: string[]     // 삭제할 필드 목록
+}
+
+export interface MergeStageConfig {
+  source_fields: string[]   // 합칠 필드들
+  target_field: string      // 결과 필드 이름
+  delimiter?: string        // 구분자 (기본: " ")
+  template?: string         // 템플릿 (예: "{{first_name}} {{last_name}}")
+}
+
+export interface SplitStageConfig {
+  source_field: string      // 분리할 필드
+  pattern: string           // 정규식 패턴
+  target_fields: string[]   // 결과 필드 이름들 (그룹 순서대로)
+  keep_original?: boolean   // 원본 필드 유지 여부
+}
+
+export interface EncryptStageConfig {
+  fields: string[]          // 암호화할 필드들
+  method: 'aes256' | 'sha256' | 'sha512' | 'bcrypt' | 'mask'  // 암호화 방식
+  key_env?: string          // 암호화 키 환경변수 이름 (AES용)
+  mask_char?: string        // 마스킹 문자 (mask용, 기본: "*")
+  mask_keep_first?: number  // 앞에서 유지할 문자 수
+  mask_keep_last?: number   // 뒤에서 유지할 문자 수
 }
 
 export interface ValidateStageConfig {

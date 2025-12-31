@@ -353,7 +353,21 @@ class ApiService {
     schedule_type?: string
     schedule_cron?: string
     schedule_enabled?: boolean
-    pipelines_config?: string
+    pipelines?: Array<{
+      id: string
+      name: string
+      description?: string
+      priority: number
+      depends_on?: string[]
+      source: { type: string; name: string; config: Record<string, unknown> }
+      transforms?: Array<{ name: string; type: string; config: Record<string, unknown> }>
+      sinks: Array<{ type: string; name: string; config: Record<string, unknown>; condition?: string }>
+      weight?: number
+      parent_pipeline_id?: string | null
+      target_data_type_id?: string | null
+      expansion_mode?: string
+      parameter_bindings?: Array<{ parent_field: string; child_param: string }>
+    }>
   }) {
     const response = await this.client.put(`/workflows/${id}`, data)
     return response.data

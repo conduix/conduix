@@ -45,6 +45,7 @@ interface Workflow {
   status: string
   schedule_enabled: boolean
   pipelines_config?: string
+  pipelines?: WorkflowPipeline[]
   created_at: string
   updated_at: string
   project?: {
@@ -89,8 +90,11 @@ export default function WorkflowDetailPage() {
       const workflowRes = await api.getWorkflow(id!)
       if (workflowRes.success && workflowRes.data) {
         setWorkflow(workflowRes.data)
-        // Parse pipelines from JSON
-        if (workflowRes.data.pipelines_config) {
+        // Use pipelines array directly from backend (already parsed)
+        if (workflowRes.data.pipelines) {
+          setPipelines(workflowRes.data.pipelines)
+        } else if (workflowRes.data.pipelines_config) {
+          // Fallback: parse from JSON string if pipelines not available
           try {
             const parsed = JSON.parse(workflowRes.data.pipelines_config)
             setPipelines(parsed || [])
@@ -190,7 +194,7 @@ export default function WorkflowDetailPage() {
   const savePipelines = async (newPipelines: WorkflowPipeline[]) => {
     try {
       const response = await api.updateWorkflow(id!, {
-        pipelines_config: JSON.stringify(newPipelines),
+        pipelines: newPipelines,
       })
       if (response.success) {
         setPipelines(newPipelines)

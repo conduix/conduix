@@ -526,6 +526,22 @@ export default function WorkflowDetailPage() {
           </Form.Item>
 
           <Form.Item
+            name="target_data_type_id"
+            label={t('pipeline.targetDataType')}
+            extra={t('pipeline.targetDataTypeHelp')}
+            rules={[{ required: true, message: t('pipeline.targetDataTypeRequired') }]}
+          >
+            <Select placeholder={t('pipeline.targetDataTypePlaceholder')}>
+              {dataTypes.map(dt => (
+                <Select.Option key={dt.id} value={dt.id}>
+                  {dt.display_name}
+                  <span style={{ marginLeft: 8, color: '#999' }}>({dt.name})</span>
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
             name="parent_pipeline_id"
             label={t('pipeline.parentPipeline')}
             extra={t('pipeline.parentPipelineHelp')}
@@ -553,21 +569,6 @@ export default function WorkflowDetailPage() {
 
           {selectedParentPipeline && (
             <>
-              <Form.Item
-                name="target_data_type_id"
-                label={t('pipeline.targetDataType')}
-                extra={t('pipeline.targetDataTypeHelp')}
-              >
-                <Select placeholder={t('pipeline.targetDataTypePlaceholder')}>
-                  {dataTypes.map(dt => (
-                    <Select.Option key={dt.id} value={dt.id}>
-                      {dt.display_name}
-                      <span style={{ marginLeft: 8, color: '#999' }}>({dt.name})</span>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-
               <Form.Item
                 name="expansion_mode"
                 label={t('pipeline.expansionMode')}

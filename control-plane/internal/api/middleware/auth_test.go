@@ -291,30 +291,34 @@ func TestRequestIDMiddleware_UsesExistingID(t *testing.T) {
 	}
 }
 
-func TestRandomString(t *testing.T) {
-	str1 := randomString(16)
-	str2 := randomString(16)
+func TestRequestIDGeneration(t *testing.T) {
+	router := gin.New()
+	router.Use(RequestIDMiddleware())
+	router.GET("/test", func(c *gin.Context) {
+		requestID := GetRequestID(c)
+		c.JSON(http.StatusOK, gin.H{"request_id": requestID})
+	})
 
-	if len(str1) != 16 {
-		t.Errorf("expected length 16, got %d", len(str1))
+	// Make two requests and verify they get different UUIDs
+	req1, _ := http.NewRequest("GET", "/test", nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	req2, _ := http.NewRequest("GET", "/test", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	id1 := w1.Header().Get("X-Request-ID")
+	id2 := w2.Header().Get("X-Request-ID")
+
+	// UUIDs should be different
+	if id1 == id2 {
+		t.Errorf("expected different request IDs, got same: %s", id1)
 	}
 
-	// Strings should be different (or at least the function works)
-	// Note: This is a simplified implementation, so they may be the same
-	if str1 == str2 {
-		t.Log("Note: randomString generates deterministic strings")
-	}
-}
-
-func TestGenerateRequestID(t *testing.T) {
-	id := generateRequestID()
-
-	if len(id) < 4 {
-		t.Errorf("request ID too short: %s", id)
-	}
-
-	if id[:4] != "req-" {
-		t.Errorf("request ID should start with 'req-', got %s", id)
+	// UUIDs should be valid format (36 chars with hyphens)
+	if len(id1) != 36 {
+		t.Errorf("expected UUID format (36 chars), got length %d: %s", len(id1), id1)
 	}
 }
 

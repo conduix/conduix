@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -58,10 +59,7 @@ func (h *StatsHandler) getBatchPipelineStats(c *gin.Context, pipelineID string) 
 	query = query.Limit(limit)
 
 	if err := query.Find(&stats).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to fetch pipeline stats",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch pipeline stats")
 		return
 	}
 
@@ -95,10 +93,7 @@ func (h *StatsHandler) getRealtimePipelineStats(c *gin.Context, pipelineID strin
 	}
 
 	if err := query.Find(&stats).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to fetch pipeline stats",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch pipeline stats")
 		return
 	}
 
@@ -116,10 +111,7 @@ func (h *StatsHandler) GetWorkflowStats(c *gin.Context) {
 	// 워크플로우 정보 조회
 	var workflow models.Workflow
 	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Workflow not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
 		return
 	}
 
@@ -311,10 +303,7 @@ func (h *StatsHandler) GetExecutionStats(c *gin.Context) {
 
 	var stats []models.PipelineExecutionStats
 	if err := h.db.Where("execution_id = ?", executionID).Find(&stats).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to fetch execution stats",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch execution stats")
 		return
 	}
 

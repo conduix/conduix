@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -49,10 +50,7 @@ func (h *ProvisioningHandler) GetSinkRequirement(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusNotFound, types.APIResponse[any]{
-		Success: false,
-		Error:   "Sink type not found",
-	})
+	middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Sink type not found")
 }
 
 // StartProvisioningRequest 사전작업 시작 요청
@@ -70,20 +68,14 @@ type StartProvisioningRequest struct {
 func (h *ProvisioningHandler) StartProvisioning(c *gin.Context) {
 	var req StartProvisioningRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
 	// 파이프라인 존재 확인
 	var pipeline models.Pipeline
 	if err := h.db.First(&pipeline, "id = ?", req.PipelineID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Pipeline not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Pipeline not found")
 		return
 	}
 
@@ -125,10 +117,7 @@ func (h *ProvisioningHandler) StartProvisioning(c *gin.Context) {
 	}
 
 	if err := h.db.Create(provisioningRecord).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to create provisioning request",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to create provisioning request")
 		return
 	}
 
@@ -183,30 +172,21 @@ func (h *ProvisioningHandler) CompleteProvisioning(c *gin.Context) {
 
 	var req CompleteProvisioningRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
 	// Provisioning 요청 조회
 	var provisioningRecord models.ProvisioningRequest
 	if err := h.db.First(&provisioningRecord, "id = ?", provisioningID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Provisioning request not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Provisioning request not found")
 		return
 	}
 
 	// 이미 완료된 경우
 	if provisioningRecord.Status == string(types.ProvisioningStatusCompleted) ||
 		provisioningRecord.Status == string(types.ProvisioningStatusFailed) {
-		c.JSON(http.StatusConflict, types.APIResponse[any]{
-			Success: false,
-			Error:   "Provisioning already completed",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeConflict, "Provisioning already completed")
 		return
 	}
 
@@ -233,10 +213,7 @@ func (h *ProvisioningHandler) CompleteProvisioning(c *gin.Context) {
 	}
 
 	if err := h.db.Create(resultRecord).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to save provisioning result",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to save provisioning result")
 		return
 	}
 
@@ -244,10 +221,7 @@ func (h *ProvisioningHandler) CompleteProvisioning(c *gin.Context) {
 	provisioningRecord.Status = string(req.Status)
 	provisioningRecord.UpdatedAt = now
 	if err := h.db.Save(&provisioningRecord).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to update provisioning status",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to update provisioning status")
 		return
 	}
 
@@ -270,10 +244,7 @@ func (h *ProvisioningHandler) GetProvisioningStatus(c *gin.Context) {
 
 	var provisioningRecord models.ProvisioningRequest
 	if err := h.db.First(&provisioningRecord, "id = ?", provisioningID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Provisioning request not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Provisioning request not found")
 		return
 	}
 
@@ -325,10 +296,7 @@ func (h *ProvisioningHandler) ListPipelineProvisioning(c *gin.Context) {
 	if err := h.db.Where("pipeline_id = ?", pipelineID).
 		Order("created_at DESC").
 		Find(&records).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to fetch provisioning records",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch provisioning records")
 		return
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -81,10 +82,7 @@ func (h *DataTypeHandler) ListDataTypes(c *gin.Context) {
 	}
 
 	if err := query.Order("name ASC").Find(&dataTypes).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "데이터 유형 목록 조회 실패", "Failed to load data types"),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "데이터 유형 목록 조회 실패", "Failed to load data types")
 		return
 	}
 
@@ -106,10 +104,7 @@ func (h *DataTypeHandler) GetDataType(c *gin.Context) {
 
 	var dataType models.DataType
 	if err := h.db.Preload("Preworks").Preload("Parent").First(&dataType, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "데이터 유형을 찾을 수 없습니다", "Data type not found"),
-		})
+		errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "데이터 유형을 찾을 수 없습니다", "Data type not found")
 		return
 	}
 
@@ -170,6 +165,11 @@ func getErrorMessage(c *gin.Context, ko, en string) string {
 	return ko
 }
 
+// errorResponse i18n 에러 응답 헬퍼
+func errorResponse(c *gin.Context, status int, code types.ErrorCode, ko, en string) {
+	middleware.ErrorResponseWithCode(c, status, code, getErrorMessage(c, ko, en))
+}
+
 // CreateDataType 데이터 유형 생성
 // @Summary 데이터 유형 생성
 // @Tags DataTypes
@@ -181,20 +181,14 @@ func getErrorMessage(c *gin.Context, ko, en string) string {
 func (h *DataTypeHandler) CreateDataType(c *gin.Context) {
 	var req CreateDataTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "잘못된 요청: "+err.Error(), "Invalid request: "+err.Error()),
-		})
+		errorResponse(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, "잘못된 요청: "+err.Error(), "Invalid request: "+err.Error())
 		return
 	}
 
 	// 프로젝트 존재 여부 확인 (ID 또는 Alias)
 	var project models.Project
 	if err := h.db.Where("id = ? OR alias = ?", req.ProjectID, req.ProjectID).First(&project).Error; err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "프로젝트를 찾을 수 없습니다", "Project not found"),
-		})
+		errorResponse(c, http.StatusBadRequest, types.ErrCodeNotFound, "프로젝트를 찾을 수 없습니다", "Project not found")
 		return
 	}
 
@@ -202,10 +196,7 @@ func (h *DataTypeHandler) CreateDataType(c *gin.Context) {
 	if req.ParentID != nil && *req.ParentID != "" {
 		var parentDataType models.DataType
 		if err := h.db.First(&parentDataType, "id = ? AND project_id = ?", *req.ParentID, project.ID).Error; err != nil {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   getErrorMessage(c, "부모 데이터타입을 찾을 수 없습니다", "Parent data type not found"),
-			})
+			errorResponse(c, http.StatusBadRequest, types.ErrCodeNotFound, "부모 데이터타입을 찾을 수 없습니다", "Parent data type not found")
 			return
 		}
 
@@ -213,10 +204,7 @@ func (h *DataTypeHandler) CreateDataType(c *gin.Context) {
 		maxDepth := getMaxDataTypeDepth()
 		parentDepth := h.getDataTypeDepth(*req.ParentID)
 		if parentDepth+1 > maxDepth {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   getErrorMessage(c, "최대 계층 깊이를 초과했습니다 (최대: "+strconv.Itoa(maxDepth)+")", "Maximum hierarchy depth exceeded (max: "+strconv.Itoa(maxDepth)+")"),
-			})
+			errorResponse(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "최대 계층 깊이를 초과했습니다 (최대: "+strconv.Itoa(maxDepth)+")", "Maximum hierarchy depth exceeded (max: "+strconv.Itoa(maxDepth)+")")
 			return
 		}
 	}
@@ -280,10 +268,7 @@ func (h *DataTypeHandler) CreateDataType(c *gin.Context) {
 
 	if err := tx.Create(&dataType).Error; err != nil {
 		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "데이터 유형 생성 실패: "+err.Error(), "Failed to create data type: "+err.Error()),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "데이터 유형 생성 실패: "+err.Error(), "Failed to create data type: "+err.Error())
 		return
 	}
 
@@ -312,10 +297,7 @@ func (h *DataTypeHandler) CreateDataType(c *gin.Context) {
 
 		if err := tx.Create(&prework).Error; err != nil {
 			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-				Success: false,
-				Error:   getErrorMessage(c, "사전작업 생성 실패: "+err.Error(), "Failed to create prework: "+err.Error()),
-			})
+			errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "사전작업 생성 실패: "+err.Error(), "Failed to create prework: "+err.Error())
 			return
 		}
 	}
@@ -345,19 +327,13 @@ func (h *DataTypeHandler) UpdateDataType(c *gin.Context) {
 
 	var dataType models.DataType
 	if err := h.db.First(&dataType, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "데이터 유형을 찾을 수 없습니다", "Data type not found"),
-		})
+		errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "데이터 유형을 찾을 수 없습니다", "Data type not found")
 		return
 	}
 
 	var req UpdateDataTypeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "잘못된 요청: "+err.Error(), "Invalid request: "+err.Error()),
-		})
+		errorResponse(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, "잘못된 요청: "+err.Error(), "Invalid request: "+err.Error())
 		return
 	}
 
@@ -366,10 +342,7 @@ func (h *DataTypeHandler) UpdateDataType(c *gin.Context) {
 		maxDepth := getMaxDataTypeDepth()
 		parentDepth := h.getDataTypeDepth(*req.ParentID)
 		if parentDepth+1 > maxDepth {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   getErrorMessage(c, "최대 계층 깊이를 초과했습니다 (최대: "+strconv.Itoa(maxDepth)+")", "Maximum hierarchy depth exceeded (max: "+strconv.Itoa(maxDepth)+")"),
-			})
+			errorResponse(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "최대 계층 깊이를 초과했습니다 (최대: "+strconv.Itoa(maxDepth)+")", "Maximum hierarchy depth exceeded (max: "+strconv.Itoa(maxDepth)+")")
 			return
 		}
 	}
@@ -419,10 +392,7 @@ func (h *DataTypeHandler) UpdateDataType(c *gin.Context) {
 	}
 
 	if err := h.db.Model(&dataType).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "데이터 유형 수정 실패", "Failed to update data type"),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "데이터 유형 수정 실패", "Failed to update data type")
 		return
 	}
 
@@ -449,10 +419,7 @@ func (h *DataTypeHandler) DeleteDataType(c *gin.Context) {
 	var pipelineCount int64
 	h.db.Model(&models.Pipeline{}).Where("data_type_id = ?", id).Count(&pipelineCount)
 	if pipelineCount > 0 {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "이 데이터 유형을 사용하는 파이프라인이 있어 삭제할 수 없습니다", "Cannot delete: pipelines are using this data type"),
-		})
+		errorResponse(c, http.StatusBadRequest, types.ErrCodeHasChildren, "이 데이터 유형을 사용하는 파이프라인이 있어 삭제할 수 없습니다", "Cannot delete: pipelines are using this data type")
 		return
 	}
 
@@ -461,20 +428,14 @@ func (h *DataTypeHandler) DeleteDataType(c *gin.Context) {
 	// 사전작업 삭제 (hard delete)
 	if err := tx.Unscoped().Where("data_type_id = ?", id).Delete(&models.DataTypePrework{}).Error; err != nil {
 		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "사전작업 삭제 실패", "Failed to delete prework"),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "사전작업 삭제 실패", "Failed to delete prework")
 		return
 	}
 
 	// 데이터 유형 삭제 (hard delete - 이름 재사용 가능하도록)
 	if err := tx.Unscoped().Delete(&models.DataType{}, "id = ?", id).Error; err != nil {
 		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "데이터 유형 삭제 실패", "Failed to delete data type"),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "데이터 유형 삭제 실패", "Failed to delete data type")
 		return
 	}
 
@@ -499,10 +460,7 @@ func (h *DataTypeHandler) ExecutePrework(c *gin.Context) {
 
 	var prework models.DataTypePrework
 	if err := h.db.First(&prework, "id = ? AND data_type_id = ?", preworkID, dataTypeID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "사전작업을 찾을 수 없습니다", "Prework not found"),
-		})
+		errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "사전작업을 찾을 수 없습니다", "Prework not found")
 		return
 	}
 
@@ -553,19 +511,13 @@ func (h *DataTypeHandler) AddPrework(c *gin.Context) {
 	// 데이터 유형 존재 확인
 	var dataType models.DataType
 	if err := h.db.First(&dataType, "id = ?", dataTypeID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "데이터 유형을 찾을 수 없습니다", "Data type not found"),
-		})
+		errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "데이터 유형을 찾을 수 없습니다", "Data type not found")
 		return
 	}
 
 	var req PreworkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "잘못된 요청: "+err.Error(), "Invalid request: "+err.Error()),
-		})
+		errorResponse(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, "잘못된 요청: "+err.Error(), "Invalid request: "+err.Error())
 		return
 	}
 
@@ -586,10 +538,7 @@ func (h *DataTypeHandler) AddPrework(c *gin.Context) {
 	}
 
 	if err := h.db.Create(&prework).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "사전작업 생성 실패", "Failed to create prework"),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "사전작업 생성 실패", "Failed to create prework")
 		return
 	}
 
@@ -612,10 +561,7 @@ func (h *DataTypeHandler) DeletePrework(c *gin.Context) {
 	preworkID := c.Param("preworkId")
 
 	if err := h.db.Delete(&models.DataTypePrework{}, "id = ? AND data_type_id = ?", preworkID, dataTypeID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "사전작업 삭제 실패", "Failed to delete prework"),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "사전작업 삭제 실패", "Failed to delete prework")
 		return
 	}
 
@@ -633,10 +579,7 @@ func (h *DataTypeHandler) DeletePrework(c *gin.Context) {
 func (h *DataTypeHandler) ListDeleteStrategyPresets(c *gin.Context) {
 	var presets []models.DeleteStrategyPreset
 	if err := h.db.Order("is_default DESC, name ASC").Find(&presets).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   getErrorMessage(c, "프리셋 목록 조회 실패", "Failed to load presets"),
-		})
+		errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "프리셋 목록 조회 실패", "Failed to load presets")
 		return
 	}
 

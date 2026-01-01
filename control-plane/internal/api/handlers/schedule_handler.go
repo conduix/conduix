@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -57,19 +58,13 @@ func (h *ScheduleHandler) GetSchedule(c *gin.Context) {
 
 	var workflow models.Workflow
 	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Workflow not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
 		return
 	}
 
 	// 배치 워크플로우만 스케줄 지원
 	if workflow.Type != "batch" {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "Only batch workflows support scheduling",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "Only batch workflows support scheduling")
 		return
 	}
 
@@ -103,28 +98,19 @@ func (h *ScheduleHandler) UpdateSchedule(c *gin.Context) {
 
 	var req UpdateScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
 	var workflow models.Workflow
 	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Workflow not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
 		return
 	}
 
 	// 배치 워크플로우만 스케줄 지원
 	if workflow.Type != "batch" {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "Only batch workflows support scheduling",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "Only batch workflows support scheduling")
 		return
 	}
 
@@ -145,10 +131,7 @@ func (h *ScheduleHandler) UpdateSchedule(c *gin.Context) {
 	if req.Timezone != "" {
 		// 타임존 유효성 검사
 		if _, err := time.LoadLocation(req.Timezone); err != nil {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   "Invalid timezone",
-			})
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "Invalid timezone")
 			return
 		}
 		updates["schedule_timezone"] = req.Timezone
@@ -159,10 +142,7 @@ func (h *ScheduleHandler) UpdateSchedule(c *gin.Context) {
 
 	// DB 업데이트
 	if err := h.db.Model(&workflow).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to update schedule",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to update schedule")
 		return
 	}
 
@@ -207,26 +187,17 @@ func (h *ScheduleHandler) EnableSchedule(c *gin.Context) {
 
 	var workflow models.Workflow
 	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Workflow not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
 		return
 	}
 
 	if workflow.Type != "batch" {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "Only batch workflows support scheduling",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "Only batch workflows support scheduling")
 		return
 	}
 
 	if workflow.ScheduleCron == "" {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "No cron expression configured",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "No cron expression configured")
 		return
 	}
 
@@ -251,10 +222,7 @@ func (h *ScheduleHandler) DisableSchedule(c *gin.Context) {
 
 	var workflow models.Workflow
 	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Workflow not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
 		return
 	}
 
@@ -284,19 +252,13 @@ func (h *ScheduleHandler) TriggerNow(c *gin.Context) {
 	}
 
 	if h.schedulerService == nil {
-		c.JSON(http.StatusServiceUnavailable, types.APIResponse[any]{
-			Success: false,
-			Error:   "Scheduler service is not available",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusServiceUnavailable, types.ErrCodeExternalService, "Scheduler service is not available")
 		return
 	}
 
 	execution, err := h.schedulerService.TriggerNow(workflowID, userIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeBadRequest, err.Error())
 		return
 	}
 
@@ -324,10 +286,7 @@ func (h *ScheduleHandler) ListSchedules(c *gin.Context) {
 	}
 
 	if err := query.Find(&workflows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to fetch schedules",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch schedules")
 		return
 	}
 

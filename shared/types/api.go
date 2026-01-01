@@ -2,13 +2,70 @@ package types
 
 import "time"
 
+// ErrorCode API 에러 코드
+type ErrorCode string
+
+// 공통 에러 코드
+const (
+	// 인증/인가 에러 (AUTH_*)
+	ErrCodeUnauthorized       ErrorCode = "AUTH_UNAUTHORIZED"
+	ErrCodeInvalidToken       ErrorCode = "AUTH_INVALID_TOKEN"
+	ErrCodeTokenExpired       ErrorCode = "AUTH_TOKEN_EXPIRED"
+	ErrCodeForbidden          ErrorCode = "AUTH_FORBIDDEN"
+	ErrCodeInsufficientPerms  ErrorCode = "AUTH_INSUFFICIENT_PERMISSIONS"
+
+	// 요청 에러 (REQUEST_*)
+	ErrCodeBadRequest         ErrorCode = "REQUEST_BAD_REQUEST"
+	ErrCodeValidationFailed   ErrorCode = "REQUEST_VALIDATION_FAILED"
+	ErrCodeInvalidJSON        ErrorCode = "REQUEST_INVALID_JSON"
+	ErrCodeMissingField       ErrorCode = "REQUEST_MISSING_FIELD"
+
+	// 리소스 에러 (RESOURCE_*)
+	ErrCodeNotFound           ErrorCode = "RESOURCE_NOT_FOUND"
+	ErrCodeAlreadyExists      ErrorCode = "RESOURCE_ALREADY_EXISTS"
+	ErrCodeConflict           ErrorCode = "RESOURCE_CONFLICT"
+
+	// 서버 에러 (SERVER_*)
+	ErrCodeInternalError      ErrorCode = "SERVER_INTERNAL_ERROR"
+	ErrCodeDatabaseError      ErrorCode = "SERVER_DATABASE_ERROR"
+	ErrCodeExternalService    ErrorCode = "SERVER_EXTERNAL_SERVICE_ERROR"
+
+	// 비즈니스 로직 에러 (BUSINESS_*)
+	ErrCodeWorkflowRunning    ErrorCode = "BUSINESS_WORKFLOW_RUNNING"
+	ErrCodeWorkflowNotRunning ErrorCode = "BUSINESS_WORKFLOW_NOT_RUNNING"
+	ErrCodeHasChildren        ErrorCode = "BUSINESS_HAS_CHILDREN"
+	ErrCodeInvalidState       ErrorCode = "BUSINESS_INVALID_STATE"
+)
+
+// APIError 구조화된 에러
+type APIError struct {
+	Code    ErrorCode         `json:"code"`
+	Message string            `json:"message"`
+	Details map[string]string `json:"details,omitempty"`
+}
+
+// Error implements error interface
+func (e *APIError) Error() string {
+	return e.Message
+}
+
+// NewAPIError 새 API 에러 생성
+func NewAPIError(code ErrorCode, message string) *APIError {
+	return &APIError{Code: code, Message: message}
+}
+
+// NewAPIErrorWithDetails 상세 정보 포함 API 에러 생성
+func NewAPIErrorWithDetails(code ErrorCode, message string, details map[string]string) *APIError {
+	return &APIError{Code: code, Message: message, Details: details}
+}
+
 // APIResponse 기본 API 응답
 type APIResponse[T any] struct {
-	Success   bool   `json:"success"`
-	Data      T      `json:"data,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Message   string `json:"message,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
+	Success   bool      `json:"success"`
+	Data      T         `json:"data,omitempty"`
+	Error     *APIError `json:"error,omitempty"`
+	Message   string    `json:"message,omitempty"`
+	RequestID string    `json:"request_id,omitempty"`
 }
 
 // PaginatedResponse 페이지네이션 응답

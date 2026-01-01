@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -39,10 +40,7 @@ func (h *PipelineHandler) List(c *gin.Context) {
 
 	result := h.db.Offset((page - 1) * pageSize).Limit(pageSize).Find(&pipelines)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   result.Error.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, result.Error.Error())
 		return
 	}
 
@@ -65,10 +63,7 @@ func (h *PipelineHandler) Get(c *gin.Context) {
 	var pipeline models.Pipeline
 	result := h.db.First(&pipeline, "id = ?", id)
 	if result.Error != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Pipeline not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Pipeline not found")
 		return
 	}
 
@@ -82,10 +77,7 @@ func (h *PipelineHandler) Get(c *gin.Context) {
 func (h *PipelineHandler) Create(c *gin.Context) {
 	var req types.CreatePipelineRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
@@ -104,10 +96,7 @@ func (h *PipelineHandler) Create(c *gin.Context) {
 
 	result := h.db.Create(&pipeline)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   result.Error.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, result.Error.Error())
 		return
 	}
 
@@ -123,19 +112,13 @@ func (h *PipelineHandler) Update(c *gin.Context) {
 
 	var pipeline models.Pipeline
 	if err := h.db.First(&pipeline, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Pipeline not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Pipeline not found")
 		return
 	}
 
 	var req types.UpdatePipelineRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
@@ -151,10 +134,7 @@ func (h *PipelineHandler) Update(c *gin.Context) {
 	pipeline.UpdatedAt = time.Now()
 
 	if err := h.db.Save(&pipeline).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, err.Error())
 		return
 	}
 
@@ -170,18 +150,12 @@ func (h *PipelineHandler) Delete(c *gin.Context) {
 
 	result := h.db.Delete(&models.Pipeline{}, "id = ?", id)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   result.Error.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, result.Error.Error())
 		return
 	}
 
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Pipeline not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Pipeline not found")
 		return
 	}
 
@@ -224,10 +198,7 @@ func (h *PipelineHandler) GetHistory(c *gin.Context) {
 	var runs []models.PipelineRun
 	result := h.db.Where("pipeline_id = ?", id).Order("created_at DESC").Limit(50).Find(&runs)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   result.Error.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, result.Error.Error())
 		return
 	}
 

@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -110,10 +111,7 @@ func (h *ProjectHandler) GetProject(c *gin.Context) {
 	if err := h.db.Preload("Owner").Preload("Owners.User").Preload("Workflows").
 		Where("id = ? OR alias = ?", idOrAlias, idOrAlias).
 		First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트를 찾을 수 없습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 
@@ -139,10 +137,7 @@ type CreateProjectRequest struct {
 func (h *ProjectHandler) CreateProject(c *gin.Context) {
 	var req CreateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
@@ -152,19 +147,13 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 	// 중복 프로젝트명 확인
 	var existing models.Project
 	if err := h.db.Where("name = ?", req.Name).First(&existing).Error; err == nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "이미 존재하는 프로젝트명입니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeAlreadyExists, "이미 존재하는 프로젝트명입니다")
 		return
 	}
 
 	// 중복 Alias 확인
 	if err := h.db.Where("alias = ?", req.Alias).First(&existing).Error; err == nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "이미 존재하는 Alias입니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeAlreadyExists, "이미 존재하는 Alias입니다")
 		return
 	}
 
@@ -196,10 +185,7 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 
 	if err := tx.Create(&project).Error; err != nil {
 		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트 생성에 실패했습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "프로젝트 생성에 실패했습니다")
 		return
 	}
 
@@ -223,10 +209,7 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 		}
 		if err := tx.Create(&projectOwner).Error; err != nil {
 			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-				Success: false,
-				Error:   "담당자 등록에 실패했습니다",
-			})
+			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "담당자 등록에 실패했습니다")
 			return
 		}
 	}
@@ -262,19 +245,13 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 
 	var project models.Project
 	if err := h.db.Where("id = ? OR alias = ?", idOrAlias, idOrAlias).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트를 찾을 수 없습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 
 	var req UpdateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
@@ -282,10 +259,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 	if req.Name != "" && req.Name != project.Name {
 		var existing models.Project
 		if err := h.db.Where("name = ? AND id != ?", req.Name, project.ID).First(&existing).Error; err == nil {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   "이미 존재하는 프로젝트명입니다",
-			})
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeAlreadyExists, "이미 존재하는 프로젝트명입니다")
 			return
 		}
 		project.Name = req.Name
@@ -295,10 +269,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 	if req.Alias != "" && req.Alias != project.Alias {
 		var existing models.Project
 		if err := h.db.Where("alias = ? AND id != ?", req.Alias, project.ID).First(&existing).Error; err == nil {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   "이미 존재하는 Alias입니다",
-			})
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeAlreadyExists, "이미 존재하는 Alias입니다")
 			return
 		}
 		project.Alias = req.Alias
@@ -318,10 +289,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 			}
 		}
 		if !isValid {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   "유효하지 않은 상태입니다. (active, inactive, archived)",
-			})
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "유효하지 않은 상태입니다. (active, inactive, archived)")
 			return
 		}
 		project.Status = req.Status
@@ -343,10 +311,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 
 	if err := tx.Save(&project).Error; err != nil {
 		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트 수정에 실패했습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "프로젝트 수정에 실패했습니다")
 		return
 	}
 
@@ -355,10 +320,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 		// 기존 담당자 삭제
 		if err := tx.Where("project_id = ?", project.ID).Delete(&models.ProjectOwner{}).Error; err != nil {
 			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-				Success: false,
-				Error:   "담당자 수정에 실패했습니다",
-			})
+			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "담당자 수정에 실패했습니다")
 			return
 		}
 
@@ -377,10 +339,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 			}
 			if err := tx.Create(&projectOwner).Error; err != nil {
 				tx.Rollback()
-				c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-					Success: false,
-					Error:   "담당자 등록에 실패했습니다",
-				})
+				middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "담당자 등록에 실패했습니다")
 				return
 			}
 		}
@@ -409,10 +368,7 @@ func (h *ProjectHandler) DeleteProject(c *gin.Context) {
 
 	var project models.Project
 	if err := h.db.Where("id = ? OR alias = ?", idOrAlias, idOrAlias).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트를 찾을 수 없습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 
@@ -420,19 +376,13 @@ func (h *ProjectHandler) DeleteProject(c *gin.Context) {
 	var workflowCount int64
 	h.db.Model(&models.Workflow{}).Where("project_id = ?", project.ID).Count(&workflowCount)
 	if workflowCount > 0 {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "하위 워크플로우가 존재합니다. 먼저 워크플로우를 삭제하거나 다른 프로젝트로 이동하세요.",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeHasChildren, "하위 워크플로우가 존재합니다. 먼저 워크플로우를 삭제하거나 다른 프로젝트로 이동하세요.")
 		return
 	}
 
 	// 소프트 삭제
 	if err := h.db.Delete(&project).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트 삭제에 실패했습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "프로젝트 삭제에 실패했습니다")
 		return
 	}
 
@@ -450,10 +400,7 @@ func (h *ProjectHandler) GetProjectWorkflows(c *gin.Context) {
 	// 프로젝트 존재 확인
 	var project models.Project
 	if err := h.db.Where("id = ? OR alias = ?", idOrAlias, idOrAlias).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트를 찾을 수 없습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 
@@ -473,10 +420,7 @@ func (h *ProjectHandler) GetProjectHierarchy(c *gin.Context) {
 
 	var project models.Project
 	if err := h.db.Preload("Owner").Where("id = ? OR alias = ?", idOrAlias, idOrAlias).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트를 찾을 수 없습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 
@@ -523,10 +467,7 @@ func (h *ProjectHandler) GetProjectDataTypes(c *gin.Context) {
 	// 프로젝트 존재 여부 확인 (ID 또는 Alias)
 	var project models.Project
 	if err := h.db.Where("id = ? OR alias = ?", idOrAlias, idOrAlias).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "프로젝트를 찾을 수 없습니다",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "프로젝트를 찾을 수 없습니다")
 		return
 	}
 
@@ -541,10 +482,7 @@ func (h *ProjectHandler) GetProjectDataTypes(c *gin.Context) {
 	}
 
 	if err := query.Order("name ASC").Find(&dataTypes).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "데이터 유형 목록 조회 실패",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "데이터 유형 목록 조회 실패")
 		return
 	}
 

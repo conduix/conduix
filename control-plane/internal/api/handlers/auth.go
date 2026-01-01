@@ -16,6 +16,7 @@ import (
 	"golang.org/x/oauth2/github"
 	"golang.org/x/oauth2/google"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/config"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -145,10 +146,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		Provider string `json:"provider"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
@@ -159,10 +157,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	h.mu.RUnlock()
 
 	if !exists {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   fmt.Sprintf("Provider '%s' not configured", req.Provider),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeBadRequest, fmt.Sprintf("Provider '%s' not configured", req.Provider))
 		return
 	}
 
@@ -193,16 +188,10 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 		errorMsg := c.Query("error")
 		errorDesc := c.Query("error_description")
 		if errorMsg != "" {
-			c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-				Success: false,
-				Error:   fmt.Sprintf("%s: %s", errorMsg, errorDesc),
-			})
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeBadRequest, fmt.Sprintf("%s: %s", errorMsg, errorDesc))
 			return
 		}
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "Missing authorization code",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeBadRequest, "Missing authorization code")
 		return
 	}
 
@@ -216,10 +205,7 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 	}
 
 	if providerID == "" {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "Missing provider information",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeBadRequest, "Missing provider information")
 		return
 	}
 
@@ -228,50 +214,35 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 	h.mu.RUnlock()
 
 	if !exists {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   fmt.Sprintf("Provider '%s' not configured", providerID),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeBadRequest, fmt.Sprintf("Provider '%s' not configured", providerID))
 		return
 	}
 
 	// 토큰 교환
 	token, err := provider.Config.Exchange(c.Request.Context(), code)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   fmt.Sprintf("Failed to exchange token: %v", err),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeExternalService, fmt.Sprintf("Failed to exchange token: %v", err))
 		return
 	}
 
 	// 사용자 정보 조회
 	userInfo, err := h.fetchUserInfo(c.Request.Context(), provider, token)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   fmt.Sprintf("Failed to get user info: %v", err),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeExternalService, fmt.Sprintf("Failed to get user info: %v", err))
 		return
 	}
 
 	// 사용자 조회 또는 생성
 	user, err := h.findOrCreateUser(userInfo, providerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, err.Error())
 		return
 	}
 
 	// JWT 토큰 생성
 	authToken, err := h.generateToken(user)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeInternalError, err.Error())
 		return
 	}
 
@@ -469,19 +440,13 @@ func (h *AuthHandler) generateToken(user *models.User) (*types.AuthToken, error)
 func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, types.APIResponse[any]{
-			Success: false,
-			Error:   "Not authenticated",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusUnauthorized, types.ErrCodeUnauthorized, "Not authenticated")
 		return
 	}
 
 	var user models.User
 	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "User not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "User not found")
 		return
 	}
 
@@ -538,20 +503,14 @@ type RoleInfo struct {
 func (h *AuthHandler) GetUserProfile(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, types.APIResponse[any]{
-			Success: false,
-			Error:   "Not authenticated",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusUnauthorized, types.ErrCodeUnauthorized, "Not authenticated")
 		return
 	}
 
 	// 사용자 조회
 	var user models.User
 	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "User not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "User not found")
 		return
 	}
 

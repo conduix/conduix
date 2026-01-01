@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -66,20 +67,14 @@ func (h *GraphHandler) GetPipelineGraph(c *gin.Context) {
 
 	var pipeline models.Pipeline
 	if err := h.db.First(&pipeline, "id = ?", pipelineID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Pipeline not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Pipeline not found")
 		return
 	}
 
 	// YAML 파싱
 	var config PipelineConfig
 	if err := yaml.Unmarshal([]byte(pipeline.ConfigYAML), &config); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   fmt.Sprintf("Invalid pipeline config: %v", err),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, fmt.Sprintf("Invalid pipeline config: %v", err))
 		return
 	}
 
@@ -281,29 +276,20 @@ func (h *GraphHandler) UpdatePipelineGraph(c *gin.Context) {
 
 	var req types.GraphUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
 	var pipeline models.Pipeline
 	if err := h.db.First(&pipeline, "id = ?", pipelineID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Pipeline not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Pipeline not found")
 		return
 	}
 
 	// YAML 파싱
 	var config PipelineConfig
 	if err := yaml.Unmarshal([]byte(pipeline.ConfigYAML), &config); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   fmt.Sprintf("Invalid pipeline config: %v", err),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, fmt.Sprintf("Invalid pipeline config: %v", err))
 		return
 	}
 
@@ -325,20 +311,14 @@ func (h *GraphHandler) UpdatePipelineGraph(c *gin.Context) {
 	}
 
 	if updateErr != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   updateErr.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, updateErr.Error())
 		return
 	}
 
 	// YAML 재생성
 	newYAML, err := yaml.Marshal(&config)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to generate config",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeInternalError, "Failed to generate config")
 		return
 	}
 
@@ -346,10 +326,7 @@ func (h *GraphHandler) UpdatePipelineGraph(c *gin.Context) {
 	pipeline.ConfigYAML = string(newYAML)
 	pipeline.UpdatedAt = time.Now()
 	if err := h.db.Save(&pipeline).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "Failed to save pipeline",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to save pipeline")
 		return
 	}
 
@@ -536,10 +513,7 @@ func (h *GraphHandler) GetActorMetrics(c *gin.Context) {
 	// 1. 파이프라인 존재 확인
 	var pipeline models.Pipeline
 	if err := h.db.First(&pipeline, "id = ?", pipelineID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "Pipeline not found",
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Pipeline not found")
 		return
 	}
 

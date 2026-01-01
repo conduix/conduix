@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -44,10 +45,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	// 관리자 권한 확인
 	role, _ := c.Get("user_role")
 	if role != string(types.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, types.APIResponse[any]{
-			Success: false,
-			Error:   "관리자만 접근 가능합니다",
-		})
+		h.errorResponse(c, http.StatusForbidden, types.ErrCodeForbidden, "관리자만 접근 가능합니다", "Admin access required")
 		return
 	}
 
@@ -123,10 +121,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 func (h *UserHandler) GetUser(c *gin.Context) {
 	role, _ := c.Get("user_role")
 	if role != string(types.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, types.APIResponse[any]{
-			Success: false,
-			Error:   "관리자만 접근 가능합니다",
-		})
+		h.errorResponse(c, http.StatusForbidden, types.ErrCodeForbidden, "관리자만 접근 가능합니다", "Admin access required")
 		return
 	}
 
@@ -134,10 +129,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 
 	var user models.User
 	if err := h.db.First(&user, "id = ?", userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "사용자를 찾을 수 없습니다",
-		})
+		h.errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "사용자를 찾을 수 없습니다", "User not found")
 		return
 	}
 
@@ -164,10 +156,7 @@ type UpdateUserRoleRequest struct {
 func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 	role, _ := c.Get("user_role")
 	if role != string(types.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, types.APIResponse[any]{
-			Success: false,
-			Error:   "관리자만 접근 가능합니다",
-		})
+		h.errorResponse(c, http.StatusForbidden, types.ErrCodeForbidden, "관리자만 접근 가능합니다", "Admin access required")
 		return
 	}
 
@@ -176,19 +165,13 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 
 	// 자기 자신의 역할은 수정 불가
 	if currentUserID == targetUserID {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "자기 자신의 역할은 수정할 수 없습니다",
-		})
+		h.errorResponse(c, http.StatusBadRequest, types.ErrCodeBadRequest, "자기 자신의 역할은 수정할 수 없습니다", "Cannot modify your own role")
 		return
 	}
 
 	var req UpdateUserRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
@@ -202,28 +185,19 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 		}
 	}
 	if !isValid {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "유효하지 않은 역할입니다. (admin, operator, viewer)",
-		})
+		h.errorResponse(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "유효하지 않은 역할입니다. (admin, operator, viewer)", "Invalid role. (admin, operator, viewer)")
 		return
 	}
 
 	var user models.User
 	if err := h.db.First(&user, "id = ?", targetUserID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "사용자를 찾을 수 없습니다",
-		})
+		h.errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "사용자를 찾을 수 없습니다", "User not found")
 		return
 	}
 
 	user.Role = req.Role
 	if err := h.db.Save(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "역할 수정에 실패했습니다",
-		})
+		h.errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "역할 수정에 실패했습니다", "Failed to update role")
 		return
 	}
 
@@ -235,7 +209,7 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 	c.JSON(http.StatusOK, types.APIResponse[models.User]{
 		Success: true,
 		Data:    user,
-		Message: "역할이 수정되었습니다",
+		Message: h.getErrorMessage(c, "역할이 수정되었습니다", "Role updated"),
 	})
 }
 
@@ -252,19 +226,13 @@ type CreatePermissionRequest struct {
 func (h *UserHandler) CreatePermission(c *gin.Context) {
 	role, _ := c.Get("user_role")
 	if role != string(types.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, types.APIResponse[any]{
-			Success: false,
-			Error:   "관리자만 접근 가능합니다",
-		})
+		h.errorResponse(c, http.StatusForbidden, types.ErrCodeForbidden, "관리자만 접근 가능합니다", "Admin access required")
 		return
 	}
 
 	var req CreatePermissionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   err.Error(),
-		})
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
 		return
 	}
 
@@ -278,29 +246,20 @@ func (h *UserHandler) CreatePermission(c *gin.Context) {
 		}
 	}
 	if !isValidType {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "유효하지 않은 리소스 타입입니다. (provider, group, pipeline)",
-		})
+		h.errorResponse(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "유효하지 않은 리소스 타입입니다. (provider, group, pipeline)", "Invalid resource type. (provider, group, pipeline)")
 		return
 	}
 
 	// 사용자 존재 확인
 	var user models.User
 	if err := h.db.First(&user, "id = ?", req.UserID).Error; err != nil {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "사용자를 찾을 수 없습니다",
-		})
+		h.errorResponse(c, http.StatusBadRequest, types.ErrCodeNotFound, "사용자를 찾을 수 없습니다", "User not found")
 		return
 	}
 
 	// 리소스 존재 확인
 	if !h.checkResourceExists(req.ResourceType, req.ResourceID) {
-		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
-			Success: false,
-			Error:   "리소스를 찾을 수 없습니다",
-		})
+		h.errorResponse(c, http.StatusBadRequest, types.ErrCodeNotFound, "리소스를 찾을 수 없습니다", "Resource not found")
 		return
 	}
 
@@ -312,16 +271,13 @@ func (h *UserHandler) CreatePermission(c *gin.Context) {
 		existing.Actions = req.Actions
 		existing.UpdatedAt = time.Now()
 		if err := h.db.Save(&existing).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-				Success: false,
-				Error:   "권한 수정에 실패했습니다",
-			})
+			h.errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "권한 수정에 실패했습니다", "Failed to update permission")
 			return
 		}
 		c.JSON(http.StatusOK, types.APIResponse[models.ResourcePermission]{
 			Success: true,
 			Data:    existing,
-			Message: "권한이 수정되었습니다",
+			Message: h.getErrorMessage(c, "권한이 수정되었습니다", "Permission updated"),
 		})
 		return
 	}
@@ -338,10 +294,7 @@ func (h *UserHandler) CreatePermission(c *gin.Context) {
 	}
 
 	if err := h.db.Create(&permission).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "권한 생성에 실패했습니다",
-		})
+		h.errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "권한 생성에 실패했습니다", "Failed to create permission")
 		return
 	}
 
@@ -354,7 +307,7 @@ func (h *UserHandler) CreatePermission(c *gin.Context) {
 	c.JSON(http.StatusCreated, types.APIResponse[models.ResourcePermission]{
 		Success: true,
 		Data:    permission,
-		Message: "권한이 생성되었습니다",
+		Message: h.getErrorMessage(c, "권한이 생성되었습니다", "Permission created"),
 	})
 }
 
@@ -363,10 +316,7 @@ func (h *UserHandler) CreatePermission(c *gin.Context) {
 func (h *UserHandler) DeletePermission(c *gin.Context) {
 	role, _ := c.Get("user_role")
 	if role != string(types.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, types.APIResponse[any]{
-			Success: false,
-			Error:   "관리자만 접근 가능합니다",
-		})
+		h.errorResponse(c, http.StatusForbidden, types.ErrCodeForbidden, "관리자만 접근 가능합니다", "Admin access required")
 		return
 	}
 
@@ -374,18 +324,12 @@ func (h *UserHandler) DeletePermission(c *gin.Context) {
 
 	var permission models.ResourcePermission
 	if err := h.db.First(&permission, "id = ?", permissionID).Error; err != nil {
-		c.JSON(http.StatusNotFound, types.APIResponse[any]{
-			Success: false,
-			Error:   "권한을 찾을 수 없습니다",
-		})
+		h.errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "권한을 찾을 수 없습니다", "Permission not found")
 		return
 	}
 
 	if err := h.db.Delete(&permission).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
-			Success: false,
-			Error:   "권한 삭제에 실패했습니다",
-		})
+		h.errorResponse(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "권한 삭제에 실패했습니다", "Failed to delete permission")
 		return
 	}
 
@@ -396,7 +340,7 @@ func (h *UserHandler) DeletePermission(c *gin.Context) {
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
-		Message: "권한이 삭제되었습니다",
+		Message: h.getErrorMessage(c, "권한이 삭제되었습니다", "Permission deleted"),
 	})
 }
 
@@ -405,10 +349,7 @@ func (h *UserHandler) DeletePermission(c *gin.Context) {
 func (h *UserHandler) ListPermissions(c *gin.Context) {
 	role, _ := c.Get("user_role")
 	if role != string(types.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, types.APIResponse[any]{
-			Success: false,
-			Error:   "관리자만 접근 가능합니다",
-		})
+		h.errorResponse(c, http.StatusForbidden, types.ErrCodeForbidden, "관리자만 접근 가능합니다", "Admin access required")
 		return
 	}
 
@@ -521,6 +462,20 @@ func (h *UserHandler) SearchUsers(c *gin.Context) {
 }
 
 // helper functions
+
+// getErrorMessage returns localized error message based on Accept-Language header
+func (h *UserHandler) getErrorMessage(c *gin.Context, ko, en string) string {
+	lang := c.GetHeader("Accept-Language")
+	if len(lang) >= 2 && lang[:2] == "ko" {
+		return ko
+	}
+	return en
+}
+
+// errorResponse sends an error response with localized message
+func (h *UserHandler) errorResponse(c *gin.Context, status int, code types.ErrorCode, ko, en string) {
+	middleware.ErrorResponseWithCode(c, status, code, h.getErrorMessage(c, ko, en))
+}
 
 func (h *UserHandler) checkResourceExists(resourceType, resourceID string) bool {
 	var count int64

@@ -6,19 +6,70 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 
 	"github.com/conduix/conduix/shared/types"
 )
+
+// RequestIDKey context key for request ID
+const RequestIDKey = "request_id"
+
+// GetRequestID extracts request ID from gin context
+func GetRequestID(c *gin.Context) string {
+	if id, exists := c.Get(RequestIDKey); exists {
+		return id.(string)
+	}
+	return ""
+}
+
+// ErrorResponse sends error response with request_id (simple version)
+func ErrorResponse(c *gin.Context, status int, message string) {
+	ErrorResponseWithCode(c, status, types.ErrCodeInternalError, message)
+}
+
+// ErrorResponseWithCode sends error response with error code and request_id
+func ErrorResponseWithCode(c *gin.Context, status int, code types.ErrorCode, message string) {
+	c.JSON(status, types.APIResponse[any]{
+		Success:   false,
+		Error:     types.NewAPIError(code, message),
+		RequestID: GetRequestID(c),
+	})
+}
+
+// ErrorResponseWithDetails sends error response with error code, details and request_id
+func ErrorResponseWithDetails(c *gin.Context, status int, code types.ErrorCode, message string, details map[string]string) {
+	c.JSON(status, types.APIResponse[any]{
+		Success:   false,
+		Error:     types.NewAPIErrorWithDetails(code, message, details),
+		RequestID: GetRequestID(c),
+	})
+}
+
+// SuccessResponse sends success response with request_id
+func SuccessResponse[T any](c *gin.Context, data T) {
+	c.JSON(http.StatusOK, types.APIResponse[T]{
+		Success:   true,
+		Data:      data,
+		RequestID: GetRequestID(c),
+	})
+}
+
+// SuccessResponseWithMessage sends success response with message and request_id
+func SuccessResponseWithMessage[T any](c *gin.Context, data T, message string) {
+	c.JSON(http.StatusOK, types.APIResponse[T]{
+		Success:   true,
+		Data:      data,
+		Message:   message,
+		RequestID: GetRequestID(c),
+	})
+}
 
 // AuthMiddleware JWT 인증 미들웨어
 func AuthMiddleware(jwtSecret []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, types.APIResponse[any]{
-				Success: false,
-				Error:   "Missing authorization header",
-			})
+			ErrorResponseWithCode(c, http.StatusUnauthorized, types.ErrCodeUnauthorized, "Missing authorization header")
 			c.Abort()
 			return
 		}
@@ -26,10 +77,7 @@ func AuthMiddleware(jwtSecret []byte) gin.HandlerFunc {
 		// Bearer 토큰 추출
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, types.APIResponse[any]{
-				Success: false,
-				Error:   "Invalid authorization header format",
-			})
+			ErrorResponseWithCode(c, http.StatusUnauthorized, types.ErrCodeUnauthorized, "Invalid authorization header format")
 			c.Abort()
 			return
 		}
@@ -45,10 +93,7 @@ func AuthMiddleware(jwtSecret []byte) gin.HandlerFunc {
 		})
 
 		if err != nil || !token.Valid {
-			c.JSON(http.StatusUnauthorized, types.APIResponse[any]{
-				Success: false,
-				Error:   "Invalid token",
-			})
+			ErrorResponseWithCode(c, http.StatusUnauthorized, types.ErrCodeInvalidToken, "Invalid token")
 			c.Abort()
 			return
 		}
@@ -69,10 +114,7 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role, exists := c.Get("user_role")
 		if !exists {
-			c.JSON(http.StatusForbidden, types.APIResponse[any]{
-				Success: false,
-				Error:   "Access denied",
-			})
+			ErrorResponseWithCode(c, http.StatusForbidden, types.ErrCodeForbidden, "Access denied")
 			c.Abort()
 			return
 		}
@@ -85,10 +127,7 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 			}
 		}
 
-		c.JSON(http.StatusForbidden, types.APIResponse[any]{
-			Success: false,
-			Error:   "Insufficient permissions",
-		})
+		ErrorResponseWithCode(c, http.StatusForbidden, types.ErrCodeInsufficientPerms, "Insufficient permissions")
 		c.Abort()
 	}
 }
@@ -115,26 +154,12 @@ func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetHeader("X-Request-ID")
 		if requestID == "" {
-			requestID = generateRequestID()
+			requestID = uuid.New().String()
 		}
 
-		c.Set("request_id", requestID)
+		c.Set(RequestIDKey, requestID)
 		c.Header("X-Request-ID", requestID)
 
 		c.Next()
 	}
-}
-
-func generateRequestID() string {
-	// 간단한 구현, 실제로는 UUID 사용 권장
-	return "req-" + randomString(16)
-}
-
-func randomString(n int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letters[i%len(letters)]
-	}
-	return string(b)
 }

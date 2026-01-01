@@ -1,0 +1,642 @@
+import { useEffect, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import {
+  Card,
+  Button,
+  Space,
+  message,
+  Spin,
+  Typography,
+  Tabs,
+  Breadcrumb,
+  Form,
+  Input,
+  Select,
+  InputNumber,
+  Switch,
+  Divider,
+  Tag,
+} from 'antd'
+import {
+  ArrowLeftOutlined,
+  SaveOutlined,
+  ApiOutlined,
+  DatabaseOutlined,
+  CloudServerOutlined,
+  FileOutlined,
+  ThunderboltOutlined,
+  SyncOutlined,
+} from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
+import Editor from '@monaco-editor/react'
+import yaml from 'js-yaml'
+import { api } from '../services/api'
+import type { WorkflowSource, WorkflowPipeline, RateLimitConfig } from '../types/pipeline'
+
+const { Title, Text } = Typography
+
+// Source 타입 정의
+type SourceType = 'rest_api' | 'kafka' | 'cdc' | 'sql' | 'file' | 'sql_event'
+
+interface Workflow {
+  id: string
+  name: string
+  slug: string
+  project_id: string
+  pipelines?: WorkflowPipeline[]
+  project?: {
+    id: string
+    name: string
+    alias: string
+  }
+}
+
+// Source 타입별 설정
+const sourceTypeConfig: Record<SourceType, { color: string; icon: React.ReactNode; label: string }> = {
+  rest_api: { color: 'blue', icon: <ApiOutlined />, label: 'REST API' },
+  kafka: { color: 'green', icon: <ThunderboltOutlined />, label: 'Kafka' },
+  cdc: { color: 'purple', icon: <SyncOutlined />, label: 'CDC' },
+  sql: { color: 'orange', icon: <DatabaseOutlined />, label: 'SQL' },
+  file: { color: 'cyan', icon: <FileOutlined />, label: 'File' },
+  sql_event: { color: 'magenta', icon: <CloudServerOutlined />, label: 'SQL Event' },
+}
+
+export default function SourceEditorPage() {
+  const { t } = useTranslation()
+  const { projectAlias, workflowId, pipelineId } = useParams<{
+    projectAlias: string
+    workflowId: string
+    pipelineId: string
+  }>()
+  const navigate = useNavigate()
+
+  const [workflow, setWorkflow] = useState<Workflow | null>(null)
+  const [pipeline, setPipeline] = useState<WorkflowPipeline | null>(null)
+  const [source, setSource] = useState<WorkflowSource | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  // Edit mode
+  const [editMode, setEditMode] = useState<'visual' | 'yaml'>('visual')
+  const [yamlContent, setYamlContent] = useState<string>('')
+  const [yamlError, setYamlError] = useState<string | null>(null)
+
+  const [form] = Form.useForm()
+  const watchedSourceType = Form.useWatch('type', form)
+
+  useEffect(() => {
+    if (workflowId && pipelineId) {
+      fetchData()
+    }
+  }, [workflowId, pipelineId])
+
+  const fetchData = async () => {
+    try {
+      setLoading(true)
+      const res = await api.getWorkflow(workflowId!)
+      if (res.success && res.data) {
+        setWorkflow(res.data)
+
+        const pipelines = res.data.pipelines || []
+        const found = pipelines.find((p: WorkflowPipeline) => p.id === pipelineId)
+        if (found) {
+          setPipeline(found)
+          const sourceData = found.source || createDefaultSource()
+          setSource(sourceData)
+          setYamlContent(yaml.dump(sourceData, { indent: 2 }))
+
+          // Form 초기화
+          form.setFieldsValue({
+            type: sourceData.type,
+            name: sourceData.name,
+            ...sourceData.config,
+            rate_limit_enabled: sourceData.rate_limit?.enabled || false,
+            rate_limit_rate: sourceData.rate_limit?.rate,
+            rate_limit_interval: sourceData.rate_limit?.interval || 'second',
+            rate_limit_burst: sourceData.rate_limit?.burst,
+            rate_limit_strategy: sourceData.rate_limit?.strategy || 'token_bucket',
+          })
+        }
+      }
+    } catch (error) {
+      message.error(t('source.loadError'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const createDefaultSource = (): WorkflowSource => ({
+    type: 'rest_api',
+    name: 'api_source',
+    config: {
+      url: '',
+      method: 'GET',
+      headers: {},
+    },
+  })
+
+  const handleSave = async () => {
+    try {
+      setSaving(true)
+
+      let sourceToSave: WorkflowSource
+
+      if (editMode === 'yaml') {
+        // YAML 모드에서 저장
+        try {
+          sourceToSave = yaml.load(yamlContent) as WorkflowSource
+        } catch {
+          message.error(t('source.yamlParseError'))
+          return
+        }
+      } else {
+        // Visual 모드에서 저장
+        const values = await form.validateFields()
+        sourceToSave = buildSourceFromForm(values)
+      }
+
+      // 파이프라인 업데이트
+      const updatedPipeline = { ...pipeline!, source: sourceToSave }
+      const updatedPipelines = workflow!.pipelines!.map(p =>
+        p.id === pipelineId ? updatedPipeline : p
+      )
+
+      const res = await api.updateWorkflow(workflowId!, { pipelines: updatedPipelines })
+      if (res.success) {
+        setSource(sourceToSave)
+        setPipeline(updatedPipeline)
+        message.success(t('source.saveSuccess'))
+      } else {
+        message.error(res.error || t('source.saveError'))
+      }
+    } catch (error) {
+      message.error(t('source.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const buildSourceFromForm = (values: Record<string, unknown>): WorkflowSource => {
+    const { type, name, rate_limit_enabled, rate_limit_rate, rate_limit_interval, rate_limit_burst, rate_limit_strategy, ...configFields } = values
+
+    const config: Record<string, unknown> = {}
+
+    // 타입별 config 필드 추출
+    switch (type) {
+      case 'rest_api':
+        config.url = configFields.url
+        config.method = configFields.method || 'GET'
+        config.headers = configFields.headers || {}
+        config.query_params = configFields.query_params || {}
+        config.body = configFields.body
+        config.pagination = configFields.pagination
+        break
+      case 'kafka':
+        config.brokers = configFields.brokers
+        config.topic = configFields.topic
+        config.group_id = configFields.group_id
+        config.offset = configFields.offset || 'latest'
+        break
+      case 'cdc':
+        config.connection_string = configFields.connection_string
+        config.database = configFields.database
+        config.table = configFields.table
+        config.slot_name = configFields.slot_name
+        break
+      case 'sql':
+        config.connection_string = configFields.connection_string
+        config.query = configFields.query
+        config.fetch_size = configFields.fetch_size || 1000
+        break
+      case 'file':
+        config.path = configFields.path
+        config.format = configFields.format || 'json'
+        config.delimiter = configFields.delimiter
+        break
+      case 'sql_event':
+        config.connection_string = configFields.connection_string
+        config.query = configFields.query
+        config.poll_interval = configFields.poll_interval || '1m'
+        config.watermark_column = configFields.watermark_column
+        break
+    }
+
+    const source: WorkflowSource = {
+      type: type as string,
+      name: name as string,
+      config,
+    }
+
+    // Rate limit 설정
+    if (rate_limit_enabled) {
+      source.rate_limit = {
+        enabled: true,
+        rate: rate_limit_rate as number,
+        interval: rate_limit_interval as RateLimitConfig['interval'],
+        burst: rate_limit_burst as number | undefined,
+        strategy: rate_limit_strategy as RateLimitConfig['strategy'],
+      }
+    }
+
+    return source
+  }
+
+  const handleModeChange = (mode: string) => {
+    if (mode === 'yaml' && editMode === 'visual') {
+      // Visual → YAML: 폼 값을 YAML로 변환
+      try {
+        const values = form.getFieldsValue()
+        const sourceData = buildSourceFromForm(values)
+        setYamlContent(yaml.dump(sourceData, { indent: 2 }))
+        setYamlError(null)
+      } catch {
+        // 폼 값이 없으면 현재 source 사용
+        if (source) {
+          setYamlContent(yaml.dump(source, { indent: 2 }))
+        }
+      }
+    } else if (mode === 'visual' && editMode === 'yaml') {
+      // YAML → Visual: YAML을 파싱하여 폼에 설정
+      try {
+        const parsed = yaml.load(yamlContent) as WorkflowSource
+        setSource(parsed)
+        form.setFieldsValue({
+          type: parsed.type,
+          name: parsed.name,
+          ...parsed.config,
+          rate_limit_enabled: parsed.rate_limit?.enabled || false,
+          rate_limit_rate: parsed.rate_limit?.rate,
+          rate_limit_interval: parsed.rate_limit?.interval || 'second',
+          rate_limit_burst: parsed.rate_limit?.burst,
+          rate_limit_strategy: parsed.rate_limit?.strategy || 'token_bucket',
+        })
+        setYamlError(null)
+      } catch {
+        message.error(t('source.yamlParseError'))
+        return
+      }
+    }
+    setEditMode(mode as 'visual' | 'yaml')
+  }
+
+  const handleYamlChange = (value: string | undefined) => {
+    setYamlContent(value || '')
+    try {
+      yaml.load(value || '')
+      setYamlError(null)
+    } catch (e) {
+      setYamlError((e as Error).message)
+    }
+  }
+
+  // Source 타입별 폼 필드 렌더링
+  const renderSourceConfigFields = () => {
+    switch (watchedSourceType) {
+      case 'rest_api':
+        return (
+          <>
+            <Form.Item
+              name="url"
+              label={t('source.url')}
+              rules={[{ required: true, message: t('source.urlRequired') }]}
+            >
+              <Input placeholder="https://api.example.com/data" />
+            </Form.Item>
+            <Form.Item name="method" label={t('source.method')}>
+              <Select defaultValue="GET">
+                <Select.Option value="GET">GET</Select.Option>
+                <Select.Option value="POST">POST</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="headers"
+              label={t('source.headers')}
+              extra={t('source.headersHelp')}
+            >
+              <Input.TextArea
+                rows={3}
+                placeholder='{"Authorization": "Bearer token"}'
+              />
+            </Form.Item>
+            <Form.Item
+              name="pagination"
+              label={t('source.pagination')}
+              extra={t('source.paginationHelp')}
+            >
+              <Select allowClear placeholder={t('source.paginationPlaceholder')}>
+                <Select.Option value="offset">Offset</Select.Option>
+                <Select.Option value="cursor">Cursor</Select.Option>
+                <Select.Option value="page">Page Number</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )
+
+      case 'kafka':
+        return (
+          <>
+            <Form.Item
+              name="brokers"
+              label={t('source.brokers')}
+              rules={[{ required: true, message: t('source.brokersRequired') }]}
+              extra={t('source.brokersHelp')}
+            >
+              <Input placeholder="localhost:9092,localhost:9093" />
+            </Form.Item>
+            <Form.Item
+              name="topic"
+              label={t('source.topic')}
+              rules={[{ required: true, message: t('source.topicRequired') }]}
+            >
+              <Input placeholder="my-topic" />
+            </Form.Item>
+            <Form.Item name="group_id" label={t('source.groupId')}>
+              <Input placeholder="consumer-group-1" />
+            </Form.Item>
+            <Form.Item name="offset" label={t('source.offset')}>
+              <Select defaultValue="latest">
+                <Select.Option value="latest">Latest</Select.Option>
+                <Select.Option value="earliest">Earliest</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )
+
+      case 'cdc':
+        return (
+          <>
+            <Form.Item
+              name="connection_string"
+              label={t('source.connectionString')}
+              rules={[{ required: true, message: t('source.connectionStringRequired') }]}
+            >
+              <Input.Password placeholder="postgres://user:pass@host:5432/db" />
+            </Form.Item>
+            <Form.Item
+              name="database"
+              label={t('source.database')}
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="mydb" />
+            </Form.Item>
+            <Form.Item
+              name="table"
+              label={t('source.table')}
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="users" />
+            </Form.Item>
+            <Form.Item name="slot_name" label={t('source.slotName')}>
+              <Input placeholder="cdc_slot" />
+            </Form.Item>
+          </>
+        )
+
+      case 'sql':
+        return (
+          <>
+            <Form.Item
+              name="connection_string"
+              label={t('source.connectionString')}
+              rules={[{ required: true, message: t('source.connectionStringRequired') }]}
+            >
+              <Input.Password placeholder="postgres://user:pass@host:5432/db" />
+            </Form.Item>
+            <Form.Item
+              name="query"
+              label={t('source.query')}
+              rules={[{ required: true }]}
+            >
+              <Input.TextArea rows={4} placeholder="SELECT * FROM users WHERE updated_at > :last_sync" />
+            </Form.Item>
+            <Form.Item name="fetch_size" label={t('source.fetchSize')}>
+              <InputNumber min={100} max={100000} defaultValue={1000} />
+            </Form.Item>
+          </>
+        )
+
+      case 'file':
+        return (
+          <>
+            <Form.Item
+              name="path"
+              label={t('source.path')}
+              rules={[{ required: true }]}
+            >
+              <Input placeholder="/data/input/*.json" />
+            </Form.Item>
+            <Form.Item name="format" label={t('source.format')}>
+              <Select defaultValue="json">
+                <Select.Option value="json">JSON</Select.Option>
+                <Select.Option value="csv">CSV</Select.Option>
+                <Select.Option value="parquet">Parquet</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item name="delimiter" label={t('source.delimiter')}>
+              <Input placeholder="," style={{ width: 100 }} />
+            </Form.Item>
+          </>
+        )
+
+      case 'sql_event':
+        return (
+          <>
+            <Form.Item
+              name="connection_string"
+              label={t('source.connectionString')}
+              rules={[{ required: true, message: t('source.connectionStringRequired') }]}
+            >
+              <Input.Password placeholder="postgres://user:pass@host:5432/db" />
+            </Form.Item>
+            <Form.Item
+              name="query"
+              label={t('source.query')}
+              rules={[{ required: true }]}
+            >
+              <Input.TextArea rows={4} placeholder="SELECT * FROM events WHERE created_at > :watermark" />
+            </Form.Item>
+            <Form.Item name="poll_interval" label={t('source.pollInterval')}>
+              <Input placeholder="1m" style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item name="watermark_column" label={t('source.watermarkColumn')}>
+              <Input placeholder="created_at" />
+            </Form.Item>
+          </>
+        )
+
+      default:
+        return null
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 400 }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  if (!workflow || !pipeline) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40 }}>
+        <Text type="secondary">{t('source.notFound')}</Text>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <Breadcrumb
+        style={{ marginBottom: 16 }}
+        items={[
+          { title: <a onClick={() => navigate('/projects')}>{t('project.title')}</a> },
+          { title: <a onClick={() => navigate(`/projects/${projectAlias}`)}>{workflow.project?.name}</a> },
+          { title: <a onClick={() => navigate(`/projects/${projectAlias}/workflows/${workflowId}`)}>{workflow.name}</a> },
+          { title: pipeline.name },
+          { title: t('source.title') },
+        ]}
+      />
+
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Space>
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate(`/projects/${projectAlias}/workflows/${workflowId}`)}
+          >
+            {t('common.back')}
+          </Button>
+          <Title level={4} style={{ margin: 0 }}>
+            {t('source.title')} - {pipeline.name}
+          </Title>
+        </Space>
+        <Button
+          type="primary"
+          icon={<SaveOutlined />}
+          onClick={handleSave}
+          loading={saving}
+          disabled={editMode === 'yaml' && !!yamlError}
+        >
+          {t('common.save')}
+        </Button>
+      </div>
+
+      <Card>
+        <Tabs
+          activeKey={editMode}
+          onChange={handleModeChange}
+          items={[
+            {
+              key: 'visual',
+              label: t('source.visual'),
+              children: (
+                <Form form={form} layout="vertical" style={{ maxWidth: 600 }}>
+                  <Form.Item
+                    name="type"
+                    label={t('source.type')}
+                    rules={[{ required: true }]}
+                  >
+                    <Select>
+                      {Object.entries(sourceTypeConfig).map(([key, config]) => (
+                        <Select.Option key={key} value={key}>
+                          <Space>
+                            <Tag color={config.color} icon={config.icon}>
+                              {config.label}
+                            </Tag>
+                          </Space>
+                        </Select.Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+
+                  <Form.Item
+                    name="name"
+                    label={t('source.name')}
+                    rules={[{ required: true, message: t('source.nameRequired') }]}
+                  >
+                    <Input placeholder="api_source" />
+                  </Form.Item>
+
+                  <Divider>{t('source.configuration')}</Divider>
+
+                  {renderSourceConfigFields()}
+
+                  <Divider>{t('rateLimit.title')}</Divider>
+
+                  <Form.Item name="rate_limit_enabled" valuePropName="checked">
+                    <Switch /> <Text style={{ marginLeft: 8 }}>{t('rateLimit.enabled')}</Text>
+                  </Form.Item>
+
+                  <Form.Item noStyle shouldUpdate={(prev, curr) => prev.rate_limit_enabled !== curr.rate_limit_enabled}>
+                    {({ getFieldValue }) =>
+                      getFieldValue('rate_limit_enabled') && (
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <Space>
+                            <Form.Item name="rate_limit_rate" label={t('rateLimit.rate')} style={{ marginBottom: 0 }}>
+                              <InputNumber min={1} placeholder="100" />
+                            </Form.Item>
+                            <Form.Item name="rate_limit_interval" label={t('rateLimit.interval')} style={{ marginBottom: 0 }}>
+                              <Select style={{ width: 120 }}>
+                                <Select.Option value="second">{t('rateLimit.perSecond')}</Select.Option>
+                                <Select.Option value="minute">{t('rateLimit.perMinute')}</Select.Option>
+                                <Select.Option value="hour">{t('rateLimit.perHour')}</Select.Option>
+                              </Select>
+                            </Form.Item>
+                          </Space>
+                          <Space>
+                            <Form.Item name="rate_limit_burst" label={t('rateLimit.burst')} style={{ marginBottom: 0 }}>
+                              <InputNumber min={1} placeholder="10" />
+                            </Form.Item>
+                            <Form.Item name="rate_limit_strategy" label={t('rateLimit.strategy')} style={{ marginBottom: 0 }}>
+                              <Select style={{ width: 150 }}>
+                                <Select.Option value="token_bucket">{t('rateLimit.tokenBucket')}</Select.Option>
+                                <Select.Option value="sliding_window">{t('rateLimit.slidingWindow')}</Select.Option>
+                                <Select.Option value="fixed_window">{t('rateLimit.fixedWindow')}</Select.Option>
+                              </Select>
+                            </Form.Item>
+                          </Space>
+                        </Space>
+                      )
+                    }
+                  </Form.Item>
+                </Form>
+              ),
+            },
+            {
+              key: 'yaml',
+              label: (
+                <span>
+                  {t('source.yaml')}
+                  {yamlError && <Tag color="red" style={{ marginLeft: 8 }}>Error</Tag>}
+                </span>
+              ),
+              children: (
+                <div>
+                  {yamlError && (
+                    <div style={{ marginBottom: 8, padding: 8, background: '#fff2f0', borderRadius: 4 }}>
+                      <Text type="danger">{yamlError}</Text>
+                    </div>
+                  )}
+                  <Editor
+                    height="500px"
+                    language="yaml"
+                    theme="vs-dark"
+                    value={yamlContent}
+                    onChange={handleYamlChange}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 14,
+                      lineNumbers: 'on',
+                      tabSize: 2,
+                      scrollBeyondLastLine: false,
+                    }}
+                  />
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Card>
+    </div>
+  )
+}

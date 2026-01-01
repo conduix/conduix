@@ -28,6 +28,7 @@ import {
   PauseCircleOutlined,
   BranchesOutlined,
   SettingOutlined,
+  ApiOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -354,11 +355,17 @@ export default function WorkflowDetailPage() {
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 160,
+      width: 200,
       render: (_: unknown, record: WorkflowPipeline) => {
         const hasChildren = pipelines.some(p => p.parent_pipeline_id === record.id)
         return (
           <Space>
+            <Button
+              size="small"
+              icon={<ApiOutlined />}
+              onClick={() => navigate(`/projects/${workflow?.project?.alias}/workflows/${id}/pipelines/${record.id}/source`)}
+              title={t('source.editSource')}
+            />
             <Button
               size="small"
               icon={<SettingOutlined />}

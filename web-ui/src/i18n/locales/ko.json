@@ -496,6 +496,8 @@
     "format": "파일 포맷",
     "delimiter": "구분자",
     "pollInterval": "폴링 간격",
-    "watermarkColumn": "워터마크 컬럼"
+    "watermarkColumn": "워터마크 컬럼",
+    "realtimeModeChanged": "파이프라인 모드가 {{mode}}로 자동 설정되었습니다",
+    "realtimeModeRecommended": "이 소스 타입에는 {{mode}} 모드가 권장됩니다. 파이프라인 설정에서 변경할 수 있습니다."
   }
 }

@@ -496,6 +496,8 @@
     "format": "File Format",
     "delimiter": "Delimiter",
     "pollInterval": "Poll Interval",
-    "watermarkColumn": "Watermark Column"
+    "watermarkColumn": "Watermark Column",
+    "realtimeModeChanged": "Pipeline mode automatically set to {{mode}}",
+    "realtimeModeRecommended": "{{mode}} mode is recommended for this source type. You can change it in pipeline settings."
   }
 }

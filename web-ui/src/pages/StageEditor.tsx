@@ -36,6 +36,7 @@ import {
   FieldNumberOutlined,
   FieldStringOutlined,
   ClockCircleOutlined,
+  DashboardOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
@@ -71,7 +72,8 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
   default: { color: 'geekblue', icon: <FieldStringOutlined />, label: 'Default' },
   cast: { color: 'lime', icon: <FieldNumberOutlined />, label: 'Cast' },
   timestamp: { color: 'pink', icon: <ClockCircleOutlined />, label: 'Timestamp' },
-  validate: { color: 'orange', icon: <CheckCircleOutlined />, label: 'Validate' },
+  throttle: { color: 'orange', icon: <DashboardOutlined />, label: 'Throttle' },
+  validate: { color: 'default', icon: <CheckCircleOutlined />, label: 'Validate' },
   sink: { color: 'purple', icon: <ExportOutlined />, label: 'Sink' },
 }
 
@@ -339,6 +341,12 @@ export default function StageEditorPage() {
       timestamp_timezone: stage.config?.timezone || 'UTC',
       timestamp_input_format: stage.config?.input_format || '',
       timestamp_output_format: stage.config?.output_format || '',
+      // throttle
+      throttle_rate: stage.config?.rate || 100,
+      throttle_interval: stage.config?.interval || 'second',
+      throttle_burst: stage.config?.burst || '',
+      throttle_strategy: stage.config?.strategy || 'token_bucket',
+      throttle_drop_on_limit: stage.config?.drop_on_limit ?? false,
       // validate
       schema: stage.config?.schema ? JSON.stringify(stage.config.schema, null, 2) : '',
       drop_on_fail: stage.config?.drop_on_fail || false,
@@ -447,6 +455,15 @@ export default function StageEditorPage() {
             timezone: values.timestamp_timezone || 'UTC',
             input_format: values.timestamp_input_format || undefined,
             output_format: values.timestamp_output_format || undefined,
+          }
+          break
+        case 'throttle':
+          config = {
+            rate: values.throttle_rate ? Number(values.throttle_rate) : 100,
+            interval: values.throttle_interval || 'second',
+            burst: values.throttle_burst ? Number(values.throttle_burst) : undefined,
+            strategy: values.throttle_strategy || 'token_bucket',
+            drop_on_limit: values.throttle_drop_on_limit || false,
           }
           break
         case 'validate':
@@ -586,6 +603,16 @@ export default function StageEditorPage() {
         return (
           <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
             {action} → {targetField}
+          </Text>
+        )
+      }
+      case 'throttle': {
+        const rate = stage.config?.rate as number | undefined
+        const interval = stage.config?.interval as string | undefined
+        const strategy = stage.config?.strategy as string | undefined
+        return (
+          <Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
+            {rate}/{interval} ({strategy || 'token_bucket'})
           </Text>
         )
       }
@@ -960,6 +987,58 @@ export default function StageEditorPage() {
             )}
           </>
         )
+      case 'throttle':
+        return (
+          <>
+            <Form.Item
+              name="throttle_rate"
+              label={t('stage.throttleRate')}
+              extra={t('stage.throttleRateHelp')}
+              rules={[{ required: true, message: t('stage.throttleRateRequired') }]}
+            >
+              <Input type="number" min={1} placeholder="100" style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item
+              name="throttle_interval"
+              label={t('stage.throttleInterval')}
+              rules={[{ required: true }]}
+            >
+              <Select style={{ width: 150 }}>
+                <Select.Option value="second">{t('stage.throttlePerSecond')}</Select.Option>
+                <Select.Option value="minute">{t('stage.throttlePerMinute')}</Select.Option>
+                <Select.Option value="hour">{t('stage.throttlePerHour')}</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="throttle_burst"
+              label={t('stage.throttleBurst')}
+              extra={t('stage.throttleBurstHelp')}
+            >
+              <Input type="number" min={0} placeholder="10" style={{ width: 150 }} />
+            </Form.Item>
+            <Form.Item
+              name="throttle_strategy"
+              label={t('stage.throttleStrategy')}
+              extra={t('stage.throttleStrategyHelp')}
+            >
+              <Select>
+                <Select.Option value="token_bucket">{t('stage.throttleTokenBucket')}</Select.Option>
+                <Select.Option value="sliding_window">{t('stage.throttleSlidingWindow')}</Select.Option>
+                <Select.Option value="fixed_window">{t('stage.throttleFixedWindow')}</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="throttle_drop_on_limit"
+              label={t('stage.throttleDropOnLimit')}
+              extra={t('stage.throttleDropOnLimitHelp')}
+            >
+              <Select>
+                <Select.Option value={false}>{t('stage.throttleWait')}</Select.Option>
+                <Select.Option value={true}>{t('stage.throttleDrop')}</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
+        )
       case 'validate':
         return (
           <>
@@ -1255,6 +1334,12 @@ export default function StageEditorPage() {
                 <Space>
                   <ClockCircleOutlined style={{ color: '#eb2f96' }} />
                   {t('stage.types.timestamp')}
+                </Space>
+              </Select.Option>
+              <Select.Option value="throttle">
+                <Space>
+                  <DashboardOutlined style={{ color: '#fa8c16' }} />
+                  {t('stage.types.throttle')}
                 </Space>
               </Select.Option>
               <Select.Option value="validate">

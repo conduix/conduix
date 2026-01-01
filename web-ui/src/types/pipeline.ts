@@ -9,11 +9,21 @@ export interface ParameterBinding {
   child_param: string  // 자식 파라미터 이름 (예: "board_id")
 }
 
+// Rate Limit 설정
+export interface RateLimitConfig {
+  enabled: boolean
+  rate: number              // 단위 시간당 처리량
+  interval: 'second' | 'minute' | 'hour'  // 단위 시간
+  burst?: number            // 버스트 허용량 (토큰 버킷)
+  strategy?: 'token_bucket' | 'sliding_window' | 'fixed_window'  // 알고리즘
+}
+
 // 소스 설정
 export interface WorkflowSource {
   type: string // kafka, cdc, rest_api, sql, file, sql_event
   name: string
   config: Record<string, unknown>
+  rate_limit?: RateLimitConfig  // 소스 레벨 rate limiting
 }
 
 // 변환 단계 (레거시, Stage로 대체)
@@ -35,6 +45,7 @@ export type StageType =
   | 'default'   // 기본값 설정
   | 'cast'      // 타입 변환
   | 'timestamp' // 타임스탬프 처리
+  | 'throttle'  // 처리량 제한
   | 'validate'  // 스키마 검증
   | 'sink'      // 추가 출력
 
@@ -108,6 +119,14 @@ export interface TimestampStageConfig {
   timezone?: string         // 타임존 (예: "Asia/Seoul", "UTC")
   input_format?: string     // 입력 포맷 (convert용)
   output_format?: string    // 출력 포맷 (format용)
+}
+
+export interface ThrottleStageConfig {
+  rate: number              // 처리량 (records per interval)
+  interval: 'second' | 'minute' | 'hour'  // 단위 시간
+  burst?: number            // 버스트 허용량 (초과 허용 수)
+  strategy?: 'token_bucket' | 'sliding_window' | 'fixed_window'  // 알고리즘
+  drop_on_limit?: boolean   // true: 초과 시 드랍, false: 대기
 }
 
 export interface ValidateStageConfig {

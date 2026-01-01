@@ -37,6 +37,8 @@ import {
   FieldStringOutlined,
   ClockCircleOutlined,
   DashboardOutlined,
+  ForkOutlined,
+  StopOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
@@ -75,6 +77,8 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
   throttle: { color: 'orange', icon: <DashboardOutlined />, label: 'Throttle' },
   validate: { color: 'default', icon: <CheckCircleOutlined />, label: 'Validate' },
   sink: { color: 'purple', icon: <ExportOutlined />, label: 'Sink' },
+  route: { color: 'cyan', icon: <ForkOutlined />, label: 'Route' },
+  delete: { color: 'red', icon: <StopOutlined />, label: 'Delete' },
 }
 
 export default function StageEditorPage() {

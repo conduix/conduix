@@ -146,7 +146,11 @@
     "hierarchyHelp": "부모-자식 관계로 파이프라인을 구성할 수 있습니다. 예: 게시판 수집 → 게시글 수집",
     "noPipelines": "이 워크플로우에 파이프라인이 없습니다",
     "deleteConfirm": "정말 이 파이프라인을 삭제하시겠습니까?",
-    "cannotDeleteHasChildren": "자식 파이프라인이 있어 삭제할 수 없습니다"
+    "cannotDeleteHasChildren": "자식 파이프라인이 있어 삭제할 수 없습니다",
+    "realtimeMode": "파이프라인 모드",
+    "realtimeModeHelp": "CDC 모드는 이벤트 라우팅 및 삭제 처리 스테이지를 자동 생성합니다",
+    "realtimeModeCdc": "CDC (이벤트 라우팅 포함)",
+    "realtimeModeRaw": "Raw 데이터 (이벤트 처리 없음)"
   },
   "workflow": {
     "title": "워크플로우",
@@ -323,7 +327,9 @@
       "timestamp": "타임스탬프",
       "throttle": "처리량 제한",
       "validate": "유효성 검사",
-      "sink": "싱크"
+      "sink": "싱크",
+      "route": "라우팅",
+      "delete": "삭제 처리"
     },
     "visual": "비주얼",
     "yaml": "YAML",

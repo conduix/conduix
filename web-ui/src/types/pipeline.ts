@@ -33,6 +33,9 @@ export interface TransformStep {
   config: Record<string, unknown>
 }
 
+// 실시간 파이프라인 모드
+export type RealtimePipelineMode = 'raw' | 'cdc'
+
 // Stage 타입 정의
 export type StageType =
   | 'filter'    // 조건 필터링
@@ -48,6 +51,8 @@ export type StageType =
   | 'throttle'  // 처리량 제한
   | 'validate'  // 스키마 검증
   | 'sink'      // 추가 출력
+  | 'route'     // 이벤트 라우팅 (CDC용)
+  | 'delete'    // 삭제 처리 (CDC용)
 
 // Stage 인터페이스
 export interface Stage {
@@ -139,6 +144,26 @@ export interface SinkStageConfig {
   config: Record<string, unknown>
 }
 
+// Route Stage: 이벤트 타입별 라우팅 (CDC용)
+export interface RouteStageConfig {
+  field: string                    // 라우팅 기준 필드 (예: "_op")
+  routes: RouteDefinition[]        // 라우팅 규칙
+}
+
+export interface RouteDefinition {
+  match: string[]                  // 매칭할 값들 (예: ["insert", "update"])
+  target: string                   // 대상 스테이지/플로우 이름
+}
+
+// Delete Stage: 삭제 이벤트 처리 (CDC용)
+export interface DeleteStageConfig {
+  mode: 'physical' | 'logical'     // 삭제 방식
+  logical?: {
+    field: string                  // 삭제 마커 필드 (예: "deleted_at")
+    value: string                  // 값 (예: "$now", "true")
+  }
+}
+
 // 싱크 설정
 export interface WorkflowSink {
   type: string // elasticsearch, kafka, sql, mongodb, s3, rest_api
@@ -159,6 +184,9 @@ export interface WorkflowPipeline {
   stages?: Stage[]              // 새로운 Stage 배열
   sinks: WorkflowSink[]
   weight?: number
+
+  // 실시간 파이프라인 모드 (realtime workflow에서만 사용)
+  realtime_mode?: RealtimePipelineMode   // raw: 순수 데이터, cdc: Change Data Capture
 
   // 계층형 파이프라인 필드
   parent_pipeline_id?: string | null     // 부모 파이프라인 ID

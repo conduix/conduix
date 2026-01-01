@@ -66,7 +66,7 @@ const sourceTypeConfig: Record<SourceType, { color: string; icon: React.ReactNod
 // 워크플로우 타입별 사용 가능한 소스 타입
 const sourceTypesByWorkflow: Record<'batch' | 'realtime', SourceType[]> = {
   batch: ['rest_api', 'sql', 'file'],
-  realtime: ['kafka', 'cdc', 'sql_event'],
+  realtime: ['rest_api', 'kafka', 'cdc', 'sql_event'],
 }
 
 // 실시간 소스 타입별 자동 설정되는 realtime_mode (강제)
@@ -77,6 +77,7 @@ const autoRealtimeModeBySourceType: Record<string, RealtimePipelineMode> = {
 
 // 실시간 소스 타입별 권장 realtime_mode (선택 가능)
 const recommendedRealtimeModeBySourceType: Record<string, RealtimePipelineMode> = {
+  rest_api: 'cdc',   // REST API는 cdc/raw 둘 다 가능, 기본은 cdc 권장
   kafka: 'cdc',      // Kafka는 보통 Debezium 등 CDC 커넥터와 사용하지만 raw도 가능
 }
 

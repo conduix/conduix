@@ -64,8 +64,8 @@ const sourceTypeConfig: Record<SourceType, { color: string; icon: React.ReactNod
 
 // 워크플로우 타입별 사용 가능한 소스 타입
 const sourceTypesByWorkflow: Record<'batch' | 'realtime', SourceType[]> = {
-  batch: ['rest_api', 'sql', 'file', 'sql_event'],
-  realtime: ['kafka', 'cdc'],
+  batch: ['rest_api', 'sql', 'file'],
+  realtime: ['kafka', 'cdc', 'sql_event'],
 }
 
 export default function SourceEditorPage() {

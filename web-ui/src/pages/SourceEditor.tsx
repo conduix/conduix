@@ -42,6 +42,7 @@ interface Workflow {
   id: string
   name: string
   slug: string
+  type: 'batch' | 'realtime'
   project_id: string
   pipelines?: WorkflowPipeline[]
   project?: {
@@ -59,6 +60,12 @@ const sourceTypeConfig: Record<SourceType, { color: string; icon: React.ReactNod
   sql: { color: 'orange', icon: <DatabaseOutlined />, label: 'SQL' },
   file: { color: 'cyan', icon: <FileOutlined />, label: 'File' },
   sql_event: { color: 'magenta', icon: <CloudServerOutlined />, label: 'SQL Event' },
+}
+
+// 워크플로우 타입별 사용 가능한 소스 타입
+const sourceTypesByWorkflow: Record<'batch' | 'realtime', SourceType[]> = {
+  batch: ['rest_api', 'sql', 'file', 'sql_event'],
+  realtime: ['kafka', 'cdc'],
 }
 
 export default function SourceEditorPage() {
@@ -101,7 +108,7 @@ export default function SourceEditorPage() {
         const found = pipelines.find((p: WorkflowPipeline) => p.id === pipelineId)
         if (found) {
           setPipeline(found)
-          const sourceData = found.source || createDefaultSource()
+          const sourceData = found.source || createDefaultSource(res.data.type)
           setSource(sourceData)
           setYamlContent(yaml.dump(sourceData, { indent: 2 }))
 
@@ -125,15 +132,29 @@ export default function SourceEditorPage() {
     }
   }
 
-  const createDefaultSource = (): WorkflowSource => ({
-    type: 'rest_api',
-    name: 'api_source',
-    config: {
-      url: '',
-      method: 'GET',
-      headers: {},
-    },
-  })
+  const createDefaultSource = (workflowType: 'batch' | 'realtime'): WorkflowSource => {
+    if (workflowType === 'realtime') {
+      return {
+        type: 'kafka',
+        name: 'kafka_source',
+        config: {
+          brokers: '',
+          topic: '',
+          group_id: '',
+          offset: 'latest',
+        },
+      }
+    }
+    return {
+      type: 'rest_api',
+      name: 'api_source',
+      config: {
+        url: '',
+        method: 'GET',
+        headers: {},
+      },
+    }
+  }
 
   const handleSave = async () => {
     try {
@@ -537,15 +558,18 @@ export default function SourceEditorPage() {
                     rules={[{ required: true }]}
                   >
                     <Select>
-                      {Object.entries(sourceTypeConfig).map(([key, config]) => (
-                        <Select.Option key={key} value={key}>
-                          <Space>
-                            <Tag color={config.color} icon={config.icon}>
-                              {config.label}
-                            </Tag>
-                          </Space>
-                        </Select.Option>
-                      ))}
+                      {sourceTypesByWorkflow[workflow.type].map((key) => {
+                        const config = sourceTypeConfig[key]
+                        return (
+                          <Select.Option key={key} value={key}>
+                            <Space>
+                              <Tag color={config.color} icon={config.icon}>
+                                {config.label}
+                              </Tag>
+                            </Space>
+                          </Select.Option>
+                        )
+                      })}
                     </Select>
                   </Form.Item>
 

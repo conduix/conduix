@@ -125,10 +125,10 @@
     "parentPipeline": "Parent Pipeline",
     "parentPipelineHelp": "The parent pipeline this depends on. Runs after parent completes.",
     "parentPipelinePlaceholder": "None (Top-level)",
-    "targetDataType": "Target DataType",
-    "targetDataTypeHelp": "DataType that this pipeline collects.",
-    "targetDataTypePlaceholder": "Select DataType",
-    "targetDataTypeRequired": "Please select target DataType",
+    "targetDataModel": "Target Data Model",
+    "targetDataModelHelp": "Data model that this pipeline collects.",
+    "targetDataModelPlaceholder": "Select Data Model",
+    "targetDataModelRequired": "Please select target Data Model",
     "expansionMode": "Expansion Mode",
     "expansionModeHelp": "How child pipeline should execute",
     "expansionNone": "None",
@@ -147,10 +147,10 @@
     "noPipelines": "No pipelines in this workflow",
     "deleteConfirm": "Are you sure you want to delete this pipeline?",
     "cannotDeleteHasChildren": "Cannot delete because it has child pipelines",
-    "realtimeMode": "Pipeline Mode",
-    "realtimeModeHelp": "CDC mode auto-generates event routing and delete handling stages",
-    "realtimeModeCdc": "Change Data Capture (with event routing)",
-    "realtimeModeRaw": "Raw data (no event processing)"
+    "sourceMode": "Source Mode",
+    "sourceModeHelp": "How data is read from the source. CDC includes event operations (_op field for insert/update/delete)",
+    "sourceModeCdc": "CDC (Change Data Capture)",
+    "sourceModeRaw": "Raw data"
   },
   "workflow": {
     "title": "Workflows",
@@ -258,18 +258,18 @@
     "en": "English",
     "ko": "Korean"
   },
-  "dataType": {
-    "title": "Data Types",
-    "new": "New Data Type",
-    "edit": "Edit Data Type",
+  "dataModel": {
+    "title": "Data Models",
+    "new": "New Data Model",
+    "edit": "Edit Data Model",
     "name": "Name",
-    "namePlaceholder": "Data type name",
+    "namePlaceholder": "Data model name",
     "nameRequired": "Please enter name",
     "slug": "URL Slug",
-    "slugPlaceholder": "data_type_slug",
+    "slugPlaceholder": "data_model_slug",
     "slugRequired": "Please enter URL slug",
     "slugPattern": "Only lowercase letters, numbers, hyphens, and underscores are allowed",
-    "slugHelp": "Unique identifier used in data type URL",
+    "slugHelp": "Unique identifier used in data model URL",
     "category": "Category",
     "categories": {
       "master": "Master Data",
@@ -283,10 +283,10 @@
       "reference": "Reference Data",
       "referenceDesc": "Reference information like codes, settings"
     },
-    "parent": "Parent Data Type",
+    "parent": "Parent Data Model",
     "parentHelp": "Select parent for dependent relationship (e.g., Board → Post)",
     "parentPlaceholder": "None (Top-level)",
-    "parentDisabledHasChildren": "Cannot change parent because this data type has children",
+    "parentDisabledHasChildren": "Cannot change parent because this data model has children",
     "keyField": "Key Field",
     "keyFieldHelp": "Field that uniquely identifies the data (e.g., id)",
     "keyFieldPlaceholder": "id",
@@ -296,15 +296,15 @@
     "idFieldsPlaceholder": "Enter field name and press Enter",
     "idFieldsRequired": "Please enter composite key fields",
     "dependentOn": "Child of {{name}}",
-    "deleteConfirm": "Are you sure you want to delete this data type?",
-    "deleteWarning": "Cannot delete if there are pipelines using this data type.",
-    "createSuccess": "Data type created successfully",
-    "updateSuccess": "Data type updated successfully",
-    "deleteSuccess": "Data type deleted successfully",
-    "createError": "Failed to create data type",
-    "updateError": "Failed to update data type",
-    "deleteError": "Failed to delete data type",
-    "noDataTypes": "No data types in this project"
+    "deleteConfirm": "Are you sure you want to delete this data model?",
+    "deleteWarning": "Cannot delete if there are pipelines using this data model.",
+    "createSuccess": "Data model created successfully",
+    "updateSuccess": "Data model updated successfully",
+    "deleteSuccess": "Data model deleted successfully",
+    "createError": "Failed to create data model",
+    "updateError": "Failed to update data model",
+    "deleteError": "Failed to delete data model",
+    "noDataModels": "No data models in this project"
   },
   "stage": {
     "title": "Stage Editor",
@@ -497,7 +497,7 @@
     "delimiter": "Delimiter",
     "pollInterval": "Poll Interval",
     "watermarkColumn": "Watermark Column",
-    "realtimeModeChanged": "Pipeline mode automatically set to {{mode}}",
-    "realtimeModeRecommended": "{{mode}} mode is recommended for this source type. You can change it in pipeline settings."
+    "sourceModeChanged": "Source mode automatically set to {{mode}}",
+    "sourceModeRecommended": "{{mode}} source mode is recommended for this source type. You can change it in pipeline settings."
   }
 }

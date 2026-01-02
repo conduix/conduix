@@ -205,10 +205,10 @@ export default function SourceEditorPage() {
           const newDefaultStages = createDefaultStages('realtime', autoMode)
           updatedPipeline.stages = [...newDefaultStages, ...userStages]
 
-          message.info(t('source.realtimeModeChanged', { mode: autoMode.toUpperCase() }))
+          message.info(t('source.sourceModeChanged', { mode: autoMode.toUpperCase() }))
         } else if (recommendedMode && recommendedMode !== oldRealtimeMode) {
           // 권장사항 안내 (Kafka)
-          message.info(t('source.realtimeModeRecommended', { mode: recommendedMode.toUpperCase() }))
+          message.info(t('source.sourceModeRecommended', { mode: recommendedMode.toUpperCase() }))
         }
       }
 
@@ -358,7 +358,7 @@ export default function SourceEditorPage() {
               <Input placeholder="https://api.example.com/data" />
             </Form.Item>
             <Form.Item name="method" label={t('source.method')}>
-              <Select defaultValue="GET">
+              <Select placeholder="GET">
                 <Select.Option value="GET">GET</Select.Option>
                 <Select.Option value="POST">POST</Select.Option>
               </Select>
@@ -409,7 +409,7 @@ export default function SourceEditorPage() {
               <Input placeholder="consumer-group-1" />
             </Form.Item>
             <Form.Item name="offset" label={t('source.offset')}>
-              <Select defaultValue="latest">
+              <Select placeholder="latest">
                 <Select.Option value="latest">Latest</Select.Option>
                 <Select.Option value="earliest">Earliest</Select.Option>
               </Select>
@@ -465,7 +465,7 @@ export default function SourceEditorPage() {
               <Input.TextArea rows={4} placeholder="SELECT * FROM users WHERE updated_at > :last_sync" />
             </Form.Item>
             <Form.Item name="fetch_size" label={t('source.fetchSize')}>
-              <InputNumber min={100} max={100000} defaultValue={1000} />
+              <InputNumber min={100} max={100000} placeholder="1000" />
             </Form.Item>
           </>
         )
@@ -481,7 +481,7 @@ export default function SourceEditorPage() {
               <Input placeholder="/data/input/*.json" />
             </Form.Item>
             <Form.Item name="format" label={t('source.format')}>
-              <Select defaultValue="json">
+              <Select placeholder="json">
                 <Select.Option value="json">JSON</Select.Option>
                 <Select.Option value="csv">CSV</Select.Option>
                 <Select.Option value="parquet">Parquet</Select.Option>
@@ -621,8 +621,8 @@ export default function SourceEditorPage() {
 
                   <Divider>{t('rateLimit.title')}</Divider>
 
-                  <Form.Item name="rate_limit_enabled" valuePropName="checked">
-                    <Switch /> <Text style={{ marginLeft: 8 }}>{t('rateLimit.enabled')}</Text>
+                  <Form.Item name="rate_limit_enabled" valuePropName="checked" label={t('rateLimit.enabled')}>
+                    <Switch />
                   </Form.Item>
 
                   <Form.Item noStyle shouldUpdate={(prev, curr) => prev.rate_limit_enabled !== curr.rate_limit_enabled}>

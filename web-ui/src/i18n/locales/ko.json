@@ -125,10 +125,10 @@
     "parentPipeline": "부모 파이프라인",
     "parentPipelineHelp": "이 파이프라인이 종속되는 상위 파이프라인입니다. 부모 완료 후 실행됩니다.",
     "parentPipelinePlaceholder": "없음 (최상위)",
-    "targetDataType": "대상 데이터타입",
-    "targetDataTypeHelp": "이 파이프라인이 수집하는 DataType입니다.",
-    "targetDataTypePlaceholder": "DataType 선택",
-    "targetDataTypeRequired": "대상 데이터타입을 선택하세요",
+    "targetDataModel": "대상 데이터 모델",
+    "targetDataModelHelp": "이 파이프라인이 수집하는 데이터 모델입니다.",
+    "targetDataModelPlaceholder": "데이터 모델 선택",
+    "targetDataModelRequired": "대상 데이터 모델을 선택하세요",
     "expansionMode": "확장 모드",
     "expansionModeHelp": "자식 파이프라인을 어떻게 실행할지 결정합니다",
     "expansionNone": "없음",
@@ -147,10 +147,10 @@
     "noPipelines": "이 워크플로우에 파이프라인이 없습니다",
     "deleteConfirm": "정말 이 파이프라인을 삭제하시겠습니까?",
     "cannotDeleteHasChildren": "자식 파이프라인이 있어 삭제할 수 없습니다",
-    "realtimeMode": "파이프라인 모드",
-    "realtimeModeHelp": "CDC 모드는 이벤트 라우팅 및 삭제 처리 스테이지를 자동 생성합니다",
-    "realtimeModeCdc": "CDC (이벤트 라우팅 포함)",
-    "realtimeModeRaw": "Raw 데이터 (이벤트 처리 없음)"
+    "sourceMode": "소스 모드",
+    "sourceModeHelp": "소스에서 데이터를 읽어오는 방식입니다. CDC는 이벤트 연산 정보(_op 필드: insert/update/delete)를 포함합니다",
+    "sourceModeCdc": "CDC (변경 데이터 캡처)",
+    "sourceModeRaw": "Raw 데이터"
   },
   "workflow": {
     "title": "워크플로우",
@@ -258,18 +258,18 @@
     "en": "English",
     "ko": "한국어"
   },
-  "dataType": {
-    "title": "데이터 타입",
-    "new": "새 데이터 타입",
-    "edit": "데이터 타입 수정",
+  "dataModel": {
+    "title": "데이터 모델",
+    "new": "새 데이터 모델",
+    "edit": "데이터 모델 수정",
     "name": "이름",
-    "namePlaceholder": "데이터 타입 이름",
+    "namePlaceholder": "데이터 모델 이름",
     "nameRequired": "이름을 입력하세요",
     "slug": "URL 경로명",
-    "slugPlaceholder": "data_type_slug",
+    "slugPlaceholder": "data_model_slug",
     "slugRequired": "URL 경로명을 입력하세요",
     "slugPattern": "영문 소문자, 숫자, 하이픈, 언더스코어만 사용 가능합니다",
-    "slugHelp": "데이터 타입 URL에 사용되는 고유 식별자입니다",
+    "slugHelp": "데이터 모델 URL에 사용되는 고유 식별자입니다",
     "category": "카테고리",
     "categories": {
       "master": "마스터 데이터",
@@ -283,10 +283,10 @@
       "reference": "참조 데이터",
       "referenceDesc": "코드, 설정 등 참조용 정보"
     },
-    "parent": "부모 데이터타입",
-    "parentHelp": "종속관계가 있는 경우 부모 데이터타입 선택 (예: 게시판 → 게시글)",
+    "parent": "부모 데이터 모델",
+    "parentHelp": "종속관계가 있는 경우 부모 데이터 모델 선택 (예: 게시판 → 게시글)",
     "parentPlaceholder": "없음 (최상위)",
-    "parentDisabledHasChildren": "자식 데이터타입이 있어 부모를 변경할 수 없습니다",
+    "parentDisabledHasChildren": "자식 데이터 모델이 있어 부모를 변경할 수 없습니다",
     "keyField": "키 필드",
     "keyFieldHelp": "데이터를 고유하게 식별하는 필드 (예: id)",
     "keyFieldPlaceholder": "id",
@@ -296,15 +296,15 @@
     "idFieldsPlaceholder": "필드명 입력 후 Enter",
     "idFieldsRequired": "복합키 필드를 입력하세요",
     "dependentOn": "{{name}}의 하위",
-    "deleteConfirm": "정말 이 데이터 타입을 삭제하시겠습니까?",
-    "deleteWarning": "이 데이터 타입을 사용하는 파이프라인이 있으면 삭제할 수 없습니다.",
-    "createSuccess": "데이터 타입이 생성되었습니다",
-    "updateSuccess": "데이터 타입이 수정되었습니다",
-    "deleteSuccess": "데이터 타입이 삭제되었습니다",
-    "createError": "데이터 타입 생성에 실패했습니다",
-    "updateError": "데이터 타입 수정에 실패했습니다",
-    "deleteError": "데이터 타입 삭제에 실패했습니다",
-    "noDataTypes": "이 프로젝트에 데이터 타입이 없습니다"
+    "deleteConfirm": "정말 이 데이터 모델을 삭제하시겠습니까?",
+    "deleteWarning": "이 데이터 모델을 사용하는 파이프라인이 있으면 삭제할 수 없습니다.",
+    "createSuccess": "데이터 모델이 생성되었습니다",
+    "updateSuccess": "데이터 모델이 수정되었습니다",
+    "deleteSuccess": "데이터 모델이 삭제되었습니다",
+    "createError": "데이터 모델 생성에 실패했습니다",
+    "updateError": "데이터 모델 수정에 실패했습니다",
+    "deleteError": "데이터 모델 삭제에 실패했습니다",
+    "noDataModels": "이 프로젝트에 데이터 모델이 없습니다"
   },
   "stage": {
     "title": "Stage 편집기",
@@ -497,7 +497,7 @@
     "delimiter": "구분자",
     "pollInterval": "폴링 간격",
     "watermarkColumn": "워터마크 컬럼",
-    "realtimeModeChanged": "파이프라인 모드가 {{mode}}로 자동 설정되었습니다",
-    "realtimeModeRecommended": "이 소스 타입에는 {{mode}} 모드가 권장됩니다. 파이프라인 설정에서 변경할 수 있습니다."
+    "sourceModeChanged": "소스 모드가 {{mode}}로 자동 설정되었습니다",
+    "sourceModeRecommended": "이 소스 타입에는 {{mode}} 소스 모드가 권장됩니다. 파이프라인 설정에서 변경할 수 있습니다."
   }
 }

@@ -67,7 +67,8 @@ interface DataType {
 
 export default function WorkflowDetailPage() {
   const { t } = useTranslation()
-  const { id } = useParams<{ id: string }>()
+  const { id, workflowId } = useParams<{ id?: string; workflowId?: string }>()
+  const effectiveId = id || workflowId
   const navigate = useNavigate()
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [pipelines, setPipelines] = useState<WorkflowPipeline[]>([])
@@ -82,15 +83,15 @@ export default function WorkflowDetailPage() {
   const [selectedParentPipeline, setSelectedParentPipeline] = useState<string | undefined>()
 
   useEffect(() => {
-    if (id) {
+    if (effectiveId) {
       fetchWorkflowData()
     }
-  }, [id])
+  }, [effectiveId])
 
   const fetchWorkflowData = async () => {
     try {
       setLoading(true)
-      const workflowRes = await api.getWorkflow(id!)
+      const workflowRes = await api.getWorkflow(effectiveId!)
       if (workflowRes.success && workflowRes.data) {
         setWorkflow(workflowRes.data)
         // Use pipelines array directly from backend (already parsed)
@@ -220,7 +221,7 @@ export default function WorkflowDetailPage() {
 
   const savePipelines = async (newPipelines: WorkflowPipeline[]) => {
     try {
-      const response = await api.updateWorkflow(id!, {
+      const response = await api.updateWorkflow(effectiveId!, {
         pipelines: newPipelines,
       })
       if (response.success) {
@@ -318,7 +319,7 @@ export default function WorkflowDetailPage() {
             </Space>
             {targetDataType && (
               <div style={{ fontSize: 12, color: '#999', paddingLeft: depth > 0 ? 20 : 0 }}>
-                {t('pipeline.targetDataType')}: <code>{targetDataType.display_name}</code>
+                {t('pipeline.targetDataModel')}: <code>{targetDataType.display_name}</code>
               </div>
             )}
           </div>
@@ -363,13 +364,13 @@ export default function WorkflowDetailPage() {
             <Button
               size="small"
               icon={<ApiOutlined />}
-              onClick={() => navigate(`/projects/${workflow?.project?.alias}/workflows/${id}/pipelines/${record.id}/source`)}
+              onClick={() => navigate(`/projects/${workflow?.project?.alias}/workflows/${effectiveId}/pipelines/${record.id}/source`)}
               title={t('source.editSource')}
             />
             <Button
               size="small"
               icon={<SettingOutlined />}
-              onClick={() => navigate(`/projects/${workflow?.project?.alias}/workflows/${id}/pipelines/${record.id}/stages`)}
+              onClick={() => navigate(`/projects/${workflow?.project?.alias}/workflows/${effectiveId}/pipelines/${record.id}/stages`)}
               title={t('stage.editStages')}
             />
             <Button
@@ -560,21 +561,21 @@ export default function WorkflowDetailPage() {
             <Input.TextArea rows={2} />
           </Form.Item>
 
-          {/* Realtime mode selector - only for realtime workflows */}
+          {/* Source mode selector - only for realtime workflows */}
           {workflow?.type === 'realtime' && (
             <Form.Item
               name="realtime_mode"
-              label={t('pipeline.realtimeMode')}
-              extra={t('pipeline.realtimeModeHelp')}
+              label={t('pipeline.sourceMode')}
+              extra={t('pipeline.sourceModeHelp')}
             >
               <Select>
                 <Select.Option value="cdc">
                   <Tag color="blue">CDC</Tag>
-                  <span style={{ marginLeft: 8, color: '#666' }}>{t('pipeline.realtimeModeCdc')}</span>
+                  <span style={{ marginLeft: 8, color: '#666' }}>{t('pipeline.sourceModeCdc')}</span>
                 </Select.Option>
                 <Select.Option value="raw">
                   <Tag>RAW</Tag>
-                  <span style={{ marginLeft: 8, color: '#666' }}>{t('pipeline.realtimeModeRaw')}</span>
+                  <span style={{ marginLeft: 8, color: '#666' }}>{t('pipeline.sourceModeRaw')}</span>
                 </Select.Option>
               </Select>
             </Form.Item>
@@ -590,11 +591,11 @@ export default function WorkflowDetailPage() {
 
           <Form.Item
             name="target_data_type_id"
-            label={t('pipeline.targetDataType')}
-            extra={t('pipeline.targetDataTypeHelp')}
-            rules={[{ required: true, message: t('pipeline.targetDataTypeRequired') }]}
+            label={t('pipeline.targetDataModel')}
+            extra={t('pipeline.targetDataModelHelp')}
+            rules={[{ required: true, message: t('pipeline.targetDataModelRequired') }]}
           >
-            <Select placeholder={t('pipeline.targetDataTypePlaceholder')}>
+            <Select placeholder={t('pipeline.targetDataModelPlaceholder')}>
               {dataTypes.map(dt => (
                 <Select.Option key={dt.id} value={dt.id}>
                   {dt.display_name}

@@ -432,11 +432,11 @@ export default function ProjectDetailPage() {
         // 수정
         const response = await api.updateDataType(editingDataType.id, submitData)
         if (response.success) {
-          message.success(t('dataType.updateSuccess'))
+          message.success(t('dataModel.updateSuccess'))
           setDataTypeModalVisible(false)
           fetchProjectData()
         } else {
-          message.error(response.error || t('dataType.updateError'))
+          message.error(response.error || t('dataModel.updateError'))
         }
       } else {
         // 생성 - project.id (UUID) 사용
@@ -449,15 +449,15 @@ export default function ProjectDetailPage() {
           ...submitData,
         })
         if (response.success) {
-          message.success(t('dataType.createSuccess'))
+          message.success(t('dataModel.createSuccess'))
           setDataTypeModalVisible(false)
           fetchProjectData()
         } else {
-          message.error(response.error || t('dataType.createError'))
+          message.error(response.error || t('dataModel.createError'))
         }
       }
     } catch (error: any) {
-      const errorMsg = editingDataType ? t('dataType.updateError') : t('dataType.createError')
+      const errorMsg = editingDataType ? t('dataModel.updateError') : t('dataModel.createError')
       message.error(error.response?.data?.error || errorMsg)
     } finally {
       setDataTypeSaving(false)
@@ -468,23 +468,23 @@ export default function ProjectDetailPage() {
     try {
       const response = await api.deleteDataType(dataTypeId)
       if (response.success) {
-        message.success(t('dataType.deleteSuccess'))
+        message.success(t('dataModel.deleteSuccess'))
         fetchProjectData()
       } else {
-        message.error(response.error || t('dataType.deleteError'))
+        message.error(response.error || t('dataModel.deleteError'))
       }
     } catch (error: any) {
-      message.error(error.response?.data?.error || t('dataType.deleteError'))
+      message.error(error.response?.data?.error || t('dataModel.deleteError'))
     }
   }
 
   const getCategoryConfig = (category: string) => {
     const configs: Record<string, { color: string; text: string }> = {
-      master: { color: 'blue', text: t('dataType.categories.master') },
-      transaction: { color: 'green', text: t('dataType.categories.transaction') },
-      log: { color: 'orange', text: t('dataType.categories.log') },
-      metric: { color: 'purple', text: t('dataType.categories.metric') },
-      reference: { color: 'cyan', text: t('dataType.categories.reference') },
+      master: { color: 'blue', text: t('dataModel.categories.master') },
+      transaction: { color: 'green', text: t('dataModel.categories.transaction') },
+      log: { color: 'orange', text: t('dataModel.categories.log') },
+      metric: { color: 'purple', text: t('dataModel.categories.metric') },
+      reference: { color: 'cyan', text: t('dataModel.categories.reference') },
     }
     return configs[category] || { color: 'default', text: category }
   }
@@ -620,7 +620,7 @@ export default function ProjectDetailPage() {
 
   const dataTypeColumns = [
     {
-      title: t('dataType.name'),
+      title: t('dataModel.name'),
       dataIndex: 'display_name',
       key: 'display_name',
       render: (displayName: string, record: DataType) => {
@@ -641,7 +641,7 @@ export default function ProjectDetailPage() {
       },
     },
     {
-      title: t('dataType.category'),
+      title: t('dataModel.category'),
       dataIndex: 'category',
       key: 'category',
       width: 140,
@@ -680,8 +680,8 @@ export default function ProjectDetailPage() {
             />
             {!hasChildren && (
               <Popconfirm
-                title={t('dataType.deleteConfirm')}
-                description={t('dataType.deleteWarning')}
+                title={t('dataModel.deleteConfirm')}
+                description={t('dataModel.deleteWarning')}
                 onConfirm={() => handleDeleteDataType(record.id)}
                 okText={t('common.delete')}
                 cancelText={t('common.cancel')}
@@ -841,15 +841,15 @@ export default function ProjectDetailPage() {
             label: (
               <span>
                 <DatabaseOutlined />
-                {t('dataType.title')} ({dataTypes.length})
+                {t('dataModel.title')} ({dataTypes.length})
               </span>
             ),
             children: (
               <Card
-                title={t('dataType.title')}
+                title={t('dataModel.title')}
                 extra={
                   <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateDataType}>
-                    {t('dataType.new')}
+                    {t('dataModel.new')}
                   </Button>
                 }
               >
@@ -861,9 +861,9 @@ export default function ProjectDetailPage() {
                     pagination={false}
                   />
                 ) : (
-                  <Empty description={t('dataType.noDataTypes')}>
+                  <Empty description={t('dataModel.noDataModels')}>
                     <Button type="primary" onClick={handleCreateDataType}>
-                      {t('dataType.new')}
+                      {t('dataModel.new')}
                     </Button>
                   </Empty>
                 )}
@@ -1063,7 +1063,7 @@ export default function ProjectDetailPage() {
 
       {/* DataType Create/Edit Modal */}
       <Modal
-        title={editingDataType ? t('dataType.edit') : t('dataType.new')}
+        title={editingDataType ? t('dataModel.edit') : t('dataModel.new')}
         open={dataTypeModalVisible}
         onOk={handleDataTypeSubmit}
         onCancel={() => setDataTypeModalVisible(false)}
@@ -1074,54 +1074,54 @@ export default function ProjectDetailPage() {
         <Form form={dataTypeForm} layout="vertical">
           <Form.Item
             name="display_name"
-            label={t('dataType.name')}
-            rules={[{ required: true, message: t('dataType.nameRequired') }]}
+            label={t('dataModel.name')}
+            rules={[{ required: true, message: t('dataModel.nameRequired') }]}
           >
-            <Input placeholder={t('dataType.namePlaceholder')} />
+            <Input placeholder={t('dataModel.namePlaceholder')} />
           </Form.Item>
 
           <Form.Item
             name="name"
-            label={t('dataType.slug')}
+            label={t('dataModel.slug')}
             rules={[
-              { required: true, message: t('dataType.slugRequired') },
-              { pattern: /^[a-z0-9_-]+$/, message: t('dataType.slugPattern') },
+              { required: true, message: t('dataModel.slugRequired') },
+              { pattern: /^[a-z0-9_-]+$/, message: t('dataModel.slugPattern') },
             ]}
-            extra={t('dataType.slugHelp')}
+            extra={t('dataModel.slugHelp')}
           >
-            <Input placeholder={t('dataType.slugPlaceholder')} />
+            <Input placeholder={t('dataModel.slugPlaceholder')} />
           </Form.Item>
 
-          <Form.Item name="category" label={t('dataType.category')}>
+          <Form.Item name="category" label={t('dataModel.category')}>
             <Select>
               <Select.Option value="master">
                 <div>
-                  <Tag color="blue">{t('dataType.categories.master')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataType.categories.masterDesc')}</span>
+                  <Tag color="blue">{t('dataModel.categories.master')}</Tag>
+                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.masterDesc')}</span>
                 </div>
               </Select.Option>
               <Select.Option value="transaction">
                 <div>
-                  <Tag color="green">{t('dataType.categories.transaction')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataType.categories.transactionDesc')}</span>
+                  <Tag color="green">{t('dataModel.categories.transaction')}</Tag>
+                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.transactionDesc')}</span>
                 </div>
               </Select.Option>
               <Select.Option value="log">
                 <div>
-                  <Tag color="orange">{t('dataType.categories.log')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataType.categories.logDesc')}</span>
+                  <Tag color="orange">{t('dataModel.categories.log')}</Tag>
+                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.logDesc')}</span>
                 </div>
               </Select.Option>
               <Select.Option value="metric">
                 <div>
-                  <Tag color="purple">{t('dataType.categories.metric')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataType.categories.metricDesc')}</span>
+                  <Tag color="purple">{t('dataModel.categories.metric')}</Tag>
+                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.metricDesc')}</span>
                 </div>
               </Select.Option>
               <Select.Option value="reference">
                 <div>
-                  <Tag color="cyan">{t('dataType.categories.reference')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataType.categories.referenceDesc')}</span>
+                  <Tag color="cyan">{t('dataModel.categories.reference')}</Tag>
+                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.referenceDesc')}</span>
                 </div>
               </Select.Option>
             </Select>
@@ -1129,16 +1129,16 @@ export default function ProjectDetailPage() {
 
           <Form.Item
             name="parent_id"
-            label={t('dataType.parent')}
+            label={t('dataModel.parent')}
             extra={
               editingDataType && dataTypes.some(dt => dt.parent_id === editingDataType.id)
-                ? t('dataType.parentDisabledHasChildren')
-                : t('dataType.parentHelp')
+                ? t('dataModel.parentDisabledHasChildren')
+                : t('dataModel.parentHelp')
             }
           >
             <Select
               allowClear
-              placeholder={t('dataType.parentPlaceholder')}
+              placeholder={t('dataModel.parentPlaceholder')}
               onChange={handleParentChange}
               disabled={editingDataType ? dataTypes.some(dt => dt.parent_id === editingDataType.id) : false}
             >
@@ -1156,27 +1156,27 @@ export default function ProjectDetailPage() {
           {selectedParentId ? (
             <Form.Item
               name="id_fields"
-              label={t('dataType.idFields')}
-              extra={t('dataType.idFieldsHelp')}
-              rules={[{ required: true, message: t('dataType.idFieldsRequired') }]}
+              label={t('dataModel.idFields')}
+              extra={t('dataModel.idFieldsHelp')}
+              rules={[{ required: true, message: t('dataModel.idFieldsRequired') }]}
             >
               <Select
                 mode="tags"
-                placeholder={t('dataType.idFieldsPlaceholder')}
+                placeholder={t('dataModel.idFieldsPlaceholder')}
                 tokenSeparators={[',']}
               />
             </Form.Item>
           ) : (
             <Form.Item
               name="key_field"
-              label={t('dataType.keyField')}
-              extra={t('dataType.keyFieldHelp')}
+              label={t('dataModel.keyField')}
+              extra={t('dataModel.keyFieldHelp')}
               rules={[
-                { required: true, message: t('dataType.keyFieldRequired') },
-                { whitespace: true, message: t('dataType.keyFieldRequired') },
+                { required: true, message: t('dataModel.keyFieldRequired') },
+                { whitespace: true, message: t('dataModel.keyFieldRequired') },
               ]}
             >
-              <Input placeholder={t('dataType.keyFieldPlaceholder')} />
+              <Input placeholder={t('dataModel.keyFieldPlaceholder')} />
             </Form.Item>
           )}
 

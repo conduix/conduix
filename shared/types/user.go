@@ -27,6 +27,7 @@ const (
 	OAuth2ProviderGitHub OAuth2Provider = "github"
 	OAuth2ProviderGoogle OAuth2Provider = "google"
 	OAuth2ProviderGitLab OAuth2Provider = "gitlab"
+	OAuth2ProviderNaver  OAuth2Provider = "naver"
 )
 
 // OAuth2ProviderConfig OAuth2 프로바이더 설정

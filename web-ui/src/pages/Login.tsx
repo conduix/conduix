@@ -1,18 +1,27 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Button, message, Space, Typography, Spin, Divider } from 'antd'
-import { GithubOutlined, GoogleOutlined } from '@ant-design/icons'
+import { GithubOutlined, GoogleOutlined, GitlabOutlined, LoginOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../store/auth'
 import { api } from '../services/api'
 
 const { Text } = Typography
 
-// Default OAuth providers
-const DEFAULT_PROVIDERS = [
-  { id: 'github', name: 'GitHub', icon: <GithubOutlined />, color: '#24292e' },
-  { id: 'google', name: 'Google', icon: <GoogleOutlined />, color: '#4285f4' },
-]
+// Provider icons and colors (ID-based lookup)
+const PROVIDER_CONFIG: Record<string, { icon: ReactNode; color: string }> = {
+  github: { icon: <GithubOutlined />, color: '#24292e' },
+  google: { icon: <GoogleOutlined />, color: '#4285f4' },
+  naver: { icon: <span style={{ fontSize: 14, fontWeight: 'bold' }}>N</span>, color: '#03C75A' },
+  kakao: { icon: <span style={{ fontSize: 14, fontWeight: 'bold' }}>K</span>, color: '#FEE500' },
+  gitlab: { icon: <GitlabOutlined />, color: '#FC6D26' },
+}
+
+// Default fallback for unknown providers
+const DEFAULT_PROVIDER_CONFIG = { icon: <LoginOutlined />, color: '#666666' }
+
+// Get provider icon and color (with fallback)
+const getProviderConfig = (id: string) => PROVIDER_CONFIG[id] || DEFAULT_PROVIDER_CONFIG
 
 interface Provider {
   id: string
@@ -42,7 +51,7 @@ interface UserResponse {
 export default function LoginPage() {
   const { t } = useTranslation()
   const [loading, setLoading] = useState<string | null>(null)
-  const [configuredProviders, setConfiguredProviders] = useState<Set<string>>(new Set())
+  const [providers, setProviders] = useState<Provider[]>([])
   const [loadingProviders, setLoadingProviders] = useState(true)
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -55,8 +64,7 @@ export default function LoginPage() {
       try {
         const response = await api.get<ApiResponse<Provider[]>>('/auth/providers')
         if (response.data?.success && response.data.data) {
-          const providerIds = new Set(response.data.data.map(p => p.id))
-          setConfiguredProviders(providerIds)
+          setProviders(response.data.data)
         }
       } catch (error) {
         console.error('Failed to fetch providers:', error)
@@ -92,11 +100,6 @@ export default function LoginPage() {
   }
 
   const handleLogin = async (providerId: string) => {
-    if (!configuredProviders.has(providerId)) {
-      message.warning(t('auth.providerNotConfigured', { provider: providerId.toUpperCase() }))
-      return
-    }
-
     setLoading(providerId)
     try {
       const response = await api.post<ApiResponse<LoginResponse>>('/auth/login', { provider: providerId })
@@ -106,8 +109,8 @@ export default function LoginPage() {
         message.error(response.data?.error || t('auth.loginError'))
         setLoading(null)
       }
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.error || t('auth.loginError')
+    } catch (error: unknown) {
+      const errorMsg = (error as { response?: { data?: { error?: string } } }).response?.data?.error || t('auth.loginError')
       message.error(errorMsg)
       setLoading(null)
     }
@@ -142,30 +145,28 @@ export default function LoginPage() {
           <Spin tip={t('auth.loadingOptions')} />
         ) : (
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            {DEFAULT_PROVIDERS.map((provider) => {
-              const isConfigured = configuredProviders.has(provider.id)
+            {providers.map((provider) => {
+              const config = getProviderConfig(provider.id)
               return (
                 <Button
                   key={provider.id}
                   type="primary"
-                  icon={provider.icon}
+                  icon={config.icon}
                   size="large"
                   block
                   loading={loading === provider.id}
-                  disabled={!isConfigured}
                   onClick={() => handleLogin(provider.id)}
                   style={{
-                    backgroundColor: isConfigured ? provider.color : undefined,
-                    borderColor: isConfigured ? provider.color : undefined,
+                    backgroundColor: config.color,
+                    borderColor: config.color,
                   }}
                 >
                   {t('auth.loginWith', { provider: provider.name })}
-                  {!isConfigured && ` ${t('auth.notConfigured')}`}
                 </Button>
               )
             })}
 
-            {configuredProviders.size === 0 && (
+            {providers.length === 0 && (
               <>
                 <Divider style={{ margin: '8px 0' }} />
                 <Text type="secondary" style={{ fontSize: 12 }}>

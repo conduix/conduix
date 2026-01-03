@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,8 +12,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/github"
-	"golang.org/x/oauth2/google"
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/config"
@@ -25,17 +22,18 @@ import (
 
 // OAuth2ProviderInfo 프로바이더별 설정 정보
 type OAuth2ProviderInfo struct {
+	ID          string
+	Name        string
 	Config      *oauth2.Config
 	UserInfoURL string
-	ParseUser   func(data []byte) (*UserInfo, error)
-	Name        string
+	UserMapping config.UserMappingConfig
 }
 
 // AuthHandler 인증 핸들러
 type AuthHandler struct {
 	db          *database.DB
 	jwtSecret   []byte
-	providers   map[types.OAuth2Provider]*OAuth2ProviderInfo
+	providers   map[string]*OAuth2ProviderInfo // key: provider ID (github, google, naver, etc.)
 	usersConfig *config.UsersConfig
 	frontendURL string
 	mu          sync.RWMutex
@@ -52,56 +50,24 @@ func NewAuthHandler(db *database.DB, jwtSecret string, usersConfig *config.Users
 	return &AuthHandler{
 		db:          db,
 		jwtSecret:   []byte(jwtSecret),
-		providers:   make(map[types.OAuth2Provider]*OAuth2ProviderInfo),
+		providers:   make(map[string]*OAuth2ProviderInfo),
 		usersConfig: usersConfig,
 		frontendURL: frontendURL,
 	}
 }
 
-// RegisterGitHubProvider GitHub OAuth2 프로바이더 등록
-func (h *AuthHandler) RegisterGitHubProvider(clientID, clientSecret, redirectURL string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.providers[types.OAuth2ProviderGitHub] = &OAuth2ProviderInfo{
-		Config: &oauth2.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			RedirectURL:  redirectURL,
-			Scopes:       []string{"user:email", "read:user"},
-			Endpoint:     github.Endpoint,
-		},
-		UserInfoURL: "https://api.github.com/user",
-		ParseUser:   parseGitHubUser,
-		Name:        "GitHub",
+// RegisterProvider OAuth2 프로바이더 등록 (동적)
+func (h *AuthHandler) RegisterProvider(id string, cfg *config.OAuthProviderConfig) {
+	if cfg.ClientID == "" || cfg.ClientSecret == "" {
+		return // credentials가 없으면 등록하지 않음
 	}
-}
 
-// RegisterGoogleProvider Google OAuth2 프로바이더 등록
-func (h *AuthHandler) RegisterGoogleProvider(clientID, clientSecret, redirectURL string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.providers[types.OAuth2ProviderGoogle] = &OAuth2ProviderInfo{
-		Config: &oauth2.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			RedirectURL:  redirectURL,
-			Scopes:       []string{"openid", "profile", "email"},
-			Endpoint:     google.Endpoint,
-		},
-		UserInfoURL: "https://www.googleapis.com/oauth2/v2/userinfo",
-		ParseUser:   parseGoogleUser,
-		Name:        "Google",
-	}
-}
-
-// RegisterCustomProvider 커스텀 OAuth2 프로바이더 등록
-func (h *AuthHandler) RegisterCustomProvider(providerID types.OAuth2Provider, cfg *types.OAuth2ProviderConfig, parser func([]byte) (*UserInfo, error)) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.providers[providerID] = &OAuth2ProviderInfo{
+	h.providers[id] = &OAuth2ProviderInfo{
+		ID:   id,
+		Name: cfg.Name,
 		Config: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -113,8 +79,16 @@ func (h *AuthHandler) RegisterCustomProvider(providerID types.OAuth2Provider, cf
 			},
 		},
 		UserInfoURL: cfg.UserInfoURL,
-		ParseUser:   parser,
-		Name:        cfg.Name,
+		UserMapping: cfg.UserMapping,
+	}
+
+	fmt.Printf("[Auth] OAuth2 provider '%s' (%s) registered\n", id, cfg.Name)
+}
+
+// RegisterProvidersFromConfig 설정에서 모든 프로바이더 등록
+func (h *AuthHandler) RegisterProvidersFromConfig(oauthConfig *config.OAuthConfig) {
+	for id, cfg := range oauthConfig.Providers {
+		h.RegisterProvider(id, cfg)
 	}
 }
 
@@ -127,7 +101,7 @@ func (h *AuthHandler) GetProviders(c *gin.Context) {
 	providers := make([]types.AvailableProvider, 0, len(h.providers))
 	for id, info := range h.providers {
 		providers = append(providers, types.AvailableProvider{
-			ID:      id,
+			ID:      types.OAuth2Provider(id),
 			Name:    info.Name,
 			Enabled: true,
 		})
@@ -150,10 +124,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	providerID := types.OAuth2Provider(req.Provider)
-
 	h.mu.RLock()
-	provider, exists := h.providers[providerID]
+	provider, exists := h.providers[req.Provider]
 	h.mu.RUnlock()
 
 	if !exists {
@@ -196,12 +168,12 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 	}
 
 	// state에서 provider 추출 (format: uuid:provider)
-	var providerID types.OAuth2Provider
+	var providerID string
 	if len(state) > 37 && state[36] == ':' {
-		providerID = types.OAuth2Provider(state[37:])
+		providerID = state[37:]
 	} else {
 		// 쿼리 파라미터에서 provider 확인
-		providerID = types.OAuth2Provider(c.Query("provider"))
+		providerID = c.Query("provider")
 	}
 
 	if providerID == "" {
@@ -258,7 +230,7 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 }
 
 // fetchUserInfo OAuth2 프로바이더에서 사용자 정보 조회
-func (h *AuthHandler) fetchUserInfo(ctx context.Context, provider *OAuth2ProviderInfo, token *oauth2.Token) (*UserInfo, error) {
+func (h *AuthHandler) fetchUserInfo(ctx context.Context, provider *OAuth2ProviderInfo, token *oauth2.Token) (*config.ParsedUserInfo, error) {
 	client := provider.Config.Client(ctx, token)
 
 	resp, err := client.Get(provider.UserInfoURL)
@@ -282,74 +254,11 @@ func (h *AuthHandler) fetchUserInfo(ctx context.Context, provider *OAuth2Provide
 		}
 	}
 
-	return provider.ParseUser(data)
+	// JSON path 기반 파싱
+	return config.ParseUserInfo(data, provider.UserMapping)
 }
 
-// UserInfo 사용자 정보
-type UserInfo struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	Name      string `json:"name"`
-	AvatarURL string `json:"avatar_url"`
-	Login     string `json:"login"` // GitHub username
-}
-
-// parseGitHubUser GitHub API 응답 파싱
-func parseGitHubUser(data []byte) (*UserInfo, error) {
-	var ghUser struct {
-		ID        int64  `json:"id"`
-		Login     string `json:"login"`
-		Name      string `json:"name"`
-		Email     string `json:"email"`
-		AvatarURL string `json:"avatar_url"`
-	}
-
-	if err := json.Unmarshal(data, &ghUser); err != nil {
-		return nil, fmt.Errorf("failed to parse GitHub user: %w", err)
-	}
-
-	name := ghUser.Name
-	if name == "" {
-		name = ghUser.Login
-	}
-
-	email := ghUser.Email
-	if email == "" {
-		// GitHub에서 이메일이 비공개일 경우
-		email = fmt.Sprintf("%s@users.noreply.github.com", ghUser.Login)
-	}
-
-	return &UserInfo{
-		ID:        fmt.Sprintf("%d", ghUser.ID),
-		Email:     email,
-		Name:      name,
-		AvatarURL: ghUser.AvatarURL,
-		Login:     ghUser.Login,
-	}, nil
-}
-
-// parseGoogleUser Google API 응답 파싱
-func parseGoogleUser(data []byte) (*UserInfo, error) {
-	var googleUser struct {
-		ID      string `json:"id"`
-		Email   string `json:"email"`
-		Name    string `json:"name"`
-		Picture string `json:"picture"`
-	}
-
-	if err := json.Unmarshal(data, &googleUser); err != nil {
-		return nil, fmt.Errorf("failed to parse Google user: %w", err)
-	}
-
-	return &UserInfo{
-		ID:        googleUser.ID,
-		Email:     googleUser.Email,
-		Name:      googleUser.Name,
-		AvatarURL: googleUser.Picture,
-	}, nil
-}
-
-func (h *AuthHandler) findOrCreateUser(info *UserInfo, providerID types.OAuth2Provider) (*models.User, error) {
+func (h *AuthHandler) findOrCreateUser(info *config.ParsedUserInfo, providerID string) (*models.User, error) {
 	var user models.User
 
 	// 설정 파일에서 역할 확인
@@ -378,7 +287,7 @@ func (h *AuthHandler) findOrCreateUser(info *UserInfo, providerID types.OAuth2Pr
 		ID:         uuid.New().String(),
 		Email:      info.Email,
 		Name:       info.Name,
-		Provider:   string(providerID),
+		Provider:   providerID,
 		ProviderID: info.ID,
 		Role:       configRole,
 		AvatarURL:  info.AvatarURL,

@@ -233,12 +233,7 @@ func (s *Server) Router() *gin.Engine {
 	return s.router
 }
 
-// RegisterGitHubOAuth2 GitHub OAuth2 프로바이더 등록
-func (s *Server) RegisterGitHubOAuth2(clientID, clientSecret, redirectURL string) {
-	s.authHandler.RegisterGitHubProvider(clientID, clientSecret, redirectURL)
-}
-
-// RegisterGoogleOAuth2 Google OAuth2 프로바이더 등록
-func (s *Server) RegisterGoogleOAuth2(clientID, clientSecret, redirectURL string) {
-	s.authHandler.RegisterGoogleProvider(clientID, clientSecret, redirectURL)
+// RegisterOAuthProviders OAuth2 프로바이더들 일괄 등록
+func (s *Server) RegisterOAuthProviders(oauthConfig *config.OAuthConfig) {
+	s.authHandler.RegisterProvidersFromConfig(oauthConfig)
 }

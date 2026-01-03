@@ -18,6 +18,50 @@ export interface RateLimitConfig {
   strategy?: 'token_bucket' | 'sliding_window' | 'fixed_window'  // 알고리즘
 }
 
+// REST API Pagination 타입
+export type PaginationType =
+  | 'none'            // 페이지네이션 없음
+  | 'page_increment'  // 방식1: 호출자가 page 파라미터 증가, 데이터 없으면 종료
+  | 'next_url'        // 방식2: 응답에서 다음 URL 추출, URL 없으면 종료
+  | 'next_offset'     // 방식3: 응답에서 offset 추출하여 URL 생성, offset 없으면 종료
+  | 'page_with_count' // 방식4: page 증가 + currentCount < perPage 면 종료
+
+// 방식1: Page Increment 설정
+export interface PageIncrementConfig {
+  type: 'page_increment'
+  param_name: string        // URL 파라미터명 (예: "page")
+  start_value: number       // 시작값 (예: 1)
+}
+
+// 방식2: Next URL 설정
+export interface NextUrlConfig {
+  type: 'next_url'
+  url_path: string          // 응답 JSON에서 다음 URL 경로 (예: "nextUrl", "links.next")
+}
+
+// 방식3: Next Offset 설정
+export interface NextOffsetConfig {
+  type: 'next_offset'
+  offset_param: string      // URL 파라미터명 (예: "offset")
+  offset_path: string       // 응답 JSON에서 다음 offset 경로 (예: "nextOffset")
+}
+
+// 방식4: Page with Count 설정
+export interface PageWithCountConfig {
+  type: 'page_with_count'
+  page_param: string        // URL 파라미터명 (예: "page")
+  start_value: number       // 시작값 (예: 1)
+  current_count_path: string // 응답 JSON에서 현재 개수 경로 (예: "currentCount")
+  per_page_path: string     // 응답 JSON에서 페이지당 개수 경로 (예: "perPage")
+}
+
+// Pagination 설정 Union 타입
+export type PaginationConfig =
+  | PageIncrementConfig
+  | NextUrlConfig
+  | NextOffsetConfig
+  | PageWithCountConfig
+
 // 소스 설정
 export interface WorkflowSource {
   type: string // kafka, cdc, rest_api, sql, file, sql_event
@@ -35,6 +79,12 @@ export interface TransformStep {
 
 // 실시간 파이프라인 모드
 export type RealtimePipelineMode = 'raw' | 'cdc'
+
+// 실시간 파이프라인 Target Model 매핑
+export interface TargetModelMapping {
+  model_id: string              // Data Model ID
+  discriminator_value?: string  // discriminator_field 값 (라우팅용)
+}
 
 // Stage 타입 정의
 export type StageType =
@@ -188,11 +238,15 @@ export interface WorkflowPipeline {
   // 실시간 파이프라인 모드 (realtime workflow에서만 사용)
   realtime_mode?: RealtimePipelineMode   // raw: 순수 데이터, cdc: Change Data Capture
 
-  // 계층형 파이프라인 필드
+  // 계층형 파이프라인 필드 (Batch용)
   parent_pipeline_id?: string | null     // 부모 파이프라인 ID
-  target_data_type_id?: string | null    // 확장용 DataType ID
+  target_data_type_id?: string | null    // 단일 DataType ID (Batch용)
   expansion_mode?: ExpansionMode         // 자식 파이프라인 확장 모드
   parameter_bindings?: ParameterBinding[] // 부모→자식 파라미터 매핑
+
+  // 실시간 파이프라인 Target Model 필드
+  target_models?: TargetModelMapping[]   // 다중 Target Model (Realtime용)
+  discriminator_field?: string           // 모델 구분 필드 (예: "_table")
 }
 
 // 워크플로우

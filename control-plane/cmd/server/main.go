@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/caarlos0/env/v10"
@@ -38,15 +39,9 @@ type Config struct {
 	Port      int    `env:"PORT" envDefault:"8080"`
 	JWTSecret string `env:"JWT_SECRET" envDefault:"your-secret-key"`
 
-	// GitHub OAuth2
-	GitHubClientID     string `env:"GITHUB_CLIENT_ID" envDefault:""`
-	GitHubClientSecret string `env:"GITHUB_CLIENT_SECRET" envDefault:""`
-	GitHubRedirectURL  string `env:"GITHUB_REDIRECT_URL" envDefault:"http://localhost:8080/api/v1/auth/callback"`
-
-	// Google OAuth2
-	GoogleClientID     string `env:"GOOGLE_CLIENT_ID" envDefault:""`
-	GoogleClientSecret string `env:"GOOGLE_CLIENT_SECRET" envDefault:""`
-	GoogleRedirectURL  string `env:"GOOGLE_REDIRECT_URL" envDefault:"http://localhost:8080/api/v1/auth/callback"`
+	// OAuth2 Config
+	OAuthConfigPath      string `env:"OAUTH_CONFIG_PATH" envDefault:""`
+	OAuthDefaultRedirect string `env:"OAUTH_REDIRECT_URL" envDefault:"http://localhost:8080/api/v1/auth/callback"`
 
 	// Users Config
 	UsersConfigPath string `env:"USERS_CONFIG_PATH" envDefault:""`
@@ -82,12 +77,8 @@ func main() {
 	flag.IntVar(&cfg.RedisDB, "redis-db", cfg.RedisDB, "Redis database number")
 	flag.StringVar(&cfg.JWTSecret, "jwt-secret", cfg.JWTSecret, "JWT secret key")
 	flag.IntVar(&cfg.Port, "port", cfg.Port, "API server port")
-	flag.StringVar(&cfg.GitHubClientID, "github-client-id", cfg.GitHubClientID, "GitHub OAuth2 client ID")
-	flag.StringVar(&cfg.GitHubClientSecret, "github-client-secret", cfg.GitHubClientSecret, "GitHub OAuth2 client secret")
-	flag.StringVar(&cfg.GitHubRedirectURL, "github-redirect-url", cfg.GitHubRedirectURL, "GitHub OAuth2 redirect URL")
-	flag.StringVar(&cfg.GoogleClientID, "google-client-id", cfg.GoogleClientID, "Google OAuth2 client ID")
-	flag.StringVar(&cfg.GoogleClientSecret, "google-client-secret", cfg.GoogleClientSecret, "Google OAuth2 client secret")
-	flag.StringVar(&cfg.GoogleRedirectURL, "google-redirect-url", cfg.GoogleRedirectURL, "Google OAuth2 redirect URL")
+	flag.StringVar(&cfg.OAuthConfigPath, "oauth-config", cfg.OAuthConfigPath, "OAuth providers config file path (YAML)")
+	flag.StringVar(&cfg.OAuthDefaultRedirect, "oauth-redirect-url", cfg.OAuthDefaultRedirect, "Default OAuth redirect URL")
 	flag.StringVar(&cfg.UsersConfigPath, "users-config", cfg.UsersConfigPath, "Users config file path (YAML)")
 	flag.StringVar(&cfg.FrontendURL, "frontend-url", cfg.FrontendURL, "Frontend URL for OAuth callback redirect")
 	flag.BoolVar(&cfg.Migrate, "migrate", false, "Run database migrations")
@@ -173,14 +164,45 @@ func main() {
 	// API 서버 생성
 	server := api.NewServer(db, redisService, schedulerService, cfg.JWTSecret, usersConfig, cfg.FrontendURL)
 
-	// OAuth2 프로바이더 등록
-	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" {
-		server.RegisterGitHubOAuth2(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GitHubRedirectURL)
-		fmt.Println("GitHub OAuth2 provider registered")
+	// OAuth2 프로바이더 설정 로드
+	var oauthConfig *config.OAuthConfig
+	if cfg.OAuthConfigPath != "" {
+		var err error
+		oauthConfig, err = config.LoadOAuthConfigWithEnv(cfg.OAuthConfigPath, cfg.OAuthDefaultRedirect)
+		if err != nil {
+			fmt.Printf("Warning: Failed to load OAuth config from %s: %v\n", cfg.OAuthConfigPath, err)
+			oauthConfig = config.GetDefaultOAuthConfig()
+		}
+	} else {
+		oauthConfig = config.GetDefaultOAuthConfig()
 	}
-	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
-		server.RegisterGoogleOAuth2(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURL)
-		fmt.Println("Google OAuth2 provider registered")
+
+	// 환경변수에서 credentials 주입 (LoadOAuthConfigWithEnv에서 처리됨)
+	// GetDefaultOAuthConfig 사용 시에도 환경변수 적용 필요
+	if cfg.OAuthConfigPath == "" {
+		for id, provider := range oauthConfig.Providers {
+			upperID := strings.ToUpper(id)
+			provider.ClientID = os.Getenv(fmt.Sprintf("%s_CLIENT_ID", upperID))
+			provider.ClientSecret = os.Getenv(fmt.Sprintf("%s_CLIENT_SECRET", upperID))
+			provider.RedirectURL = os.Getenv(fmt.Sprintf("%s_REDIRECT_URL", upperID))
+			if provider.RedirectURL == "" {
+				provider.RedirectURL = cfg.OAuthDefaultRedirect
+			}
+		}
+	}
+
+	// 프로바이더 등록
+	server.RegisterOAuthProviders(oauthConfig)
+	enabledProviders := oauthConfig.GetEnabledProviders()
+	if len(enabledProviders) > 0 {
+		fmt.Printf("OAuth2 providers registered: ")
+		names := make([]string, 0, len(enabledProviders))
+		for id := range enabledProviders {
+			names = append(names, id)
+		}
+		fmt.Println(strings.Join(names, ", "))
+	} else {
+		fmt.Println("Warning: No OAuth2 providers configured")
 	}
 
 	// 서버 시작

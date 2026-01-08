@@ -105,6 +105,13 @@ type PaginationConfig struct {
 	NextField string `yaml:"next_field"` // 응답에서 다음 URL 필드
 	DataField string `yaml:"data_field"` // 실제 데이터 필드
 	MaxPages  int    `yaml:"max_pages"`  // 최대 페이지 수
+
+	// Offset 페이지네이션
+	PageParam    string `yaml:"page_param"`     // 페이지 번호 파라미터 (기본: page)
+	PerPageParam string `yaml:"per_page_param"` // 페이지 크기 파라미터 (기본: perPage)
+	PerPage      int    `yaml:"per_page"`       // 페이지당 항목 수 (기본: 10)
+	StartPage    int    `yaml:"start_page"`     // 시작 페이지 (기본: 1)
+	TotalField   string `yaml:"total_field"`    // 총 개수 필드 (자동 종료용)
 }
 
 // RealtimeConfig 실시간 파이프라인 설정
@@ -210,11 +217,20 @@ func (fc *FilterConfig) GetExpression() string {
 
 // OutputConfig 출력 설정 (Stub)
 type OutputConfig struct {
-	Type      string               `yaml:"type"` // stub
+	Type      string               `yaml:"type"` // stub, sql
 	LogLevel  string               `yaml:"log_level,omitempty"`
 	LogFormat string               `yaml:"log_format,omitempty"`
 	Metrics   *MetricsOutputConfig `yaml:"metrics,omitempty"`
 	Callback  *CallbackConfig      `yaml:"callback,omitempty"`
+
+	// SQL Sink
+	Driver    string            `yaml:"driver,omitempty"`     // mysql, postgres
+	DSN       string            `yaml:"dsn,omitempty"`        // database connection string
+	Table     string            `yaml:"table,omitempty"`      // target table name
+	Columns   []string          `yaml:"columns,omitempty"`    // columns to insert (optional, auto-detect if empty)
+	ColumnMap map[string]string `yaml:"column_map,omitempty"` // source field -> db column mapping
+	BatchSize int               `yaml:"batch_size,omitempty"` // batch insert size (default: 100)
+	OnConflict string           `yaml:"on_conflict,omitempty"` // ignore, update, error (default: error)
 }
 
 // MetricsOutputConfig 메트릭 출력 설정

@@ -1,0 +1,39 @@
+# 아산시 주정차단속 위치 정보 수집 파이프라인
+# 공공데이터포털 API: https://www.data.go.kr/data/15040494/openapi.do
+name: asan-parking-enforcement
+type: batch
+
+source:
+  type: http
+  # serviceKey를 URL에 포함 (환경변수로 주입)
+  url: "https://api.odcloud.kr/api/15040494/v1/uddi:dfcae358-aba1-4553-87c9-f0c3fbc30655?serviceKey=${PUBLIC_API_SERVICE_KEY}"
+  method: GET
+  headers:
+    Accept: "application/json"
+
+  # Offset 페이지네이션 설정
+  pagination:
+    type: offset
+    data_field: "data"
+    total_field: "totalCount"
+    page_param: "page"
+    per_page_param: "perPage"
+    per_page: 100
+    start_page: 1
+    max_pages: 10  # 최대 1000건
+
+# 데이터 변환 없이 바로 저장 (컬럼 매핑으로 처리)
+steps: []
+
+# SQL 출력
+output:
+  type: sql
+  driver: mysql
+  dsn: "${DB_USER}:${DB_PASSWORD}@tcp(${DB_HOST}:${DB_PORT})/${DB_NAME}"
+  table: asan_parking_enforcement
+  column_map:
+    연번: seq_no
+    단속유형: enforcement_type
+    설치주소: install_address
+  batch_size: 50
+  on_conflict: ignore

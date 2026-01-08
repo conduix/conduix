@@ -90,6 +90,118 @@ func (s *HTTPSource) readSingle(ctx context.Context, records chan<- Record, errs
 }
 
 func (s *HTTPSource) readWithPagination(ctx context.Context, records chan<- Record, errs chan<- error) {
+	switch s.pagination.Type {
+	case "offset":
+		s.readWithOffsetPagination(ctx, records, errs)
+	default:
+		s.readWithNextURLPagination(ctx, records, errs)
+	}
+}
+
+func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<- Record, errs chan<- error) {
+	maxPages := s.pagination.MaxPages
+	if maxPages == 0 {
+		maxPages = 100
+	}
+
+	perPage := s.pagination.PerPage
+	if perPage == 0 {
+		perPage = 10
+	}
+
+	pageParam := s.pagination.PageParam
+	if pageParam == "" {
+		pageParam = "page"
+	}
+
+	perPageParam := s.pagination.PerPageParam
+	if perPageParam == "" {
+		perPageParam = "perPage"
+	}
+
+	startPage := s.pagination.StartPage
+	if startPage == 0 {
+		startPage = 1
+	}
+
+	baseURL, err := url.Parse(s.url)
+	if err != nil {
+		errs <- fmt.Errorf("invalid base URL: %w", err)
+		return
+	}
+
+	for page := startPage; page < startPage+maxPages; page++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// URL에 페이지 파라미터 추가
+		query := baseURL.Query()
+		query.Set(pageParam, fmt.Sprintf("%d", page))
+		query.Set(perPageParam, fmt.Sprintf("%d", perPage))
+		baseURL.RawQuery = query.Encode()
+		currentURL := baseURL.String()
+
+		data, err := s.doRequest(ctx, currentURL)
+		if err != nil {
+			errs <- fmt.Errorf("page %d: %w", page, err)
+			return
+		}
+
+		// 데이터 추출
+		var items []any
+		if s.pagination.DataField != "" {
+			if dataField, ok := data[s.pagination.DataField]; ok {
+				if arr, ok := dataField.([]any); ok {
+					items = arr
+				}
+			}
+		}
+
+		// 데이터가 없으면 종료
+		if len(items) == 0 {
+			return
+		}
+
+		for _, item := range items {
+			if m, ok := item.(map[string]any); ok {
+				records <- Record{
+					Data: m,
+					Metadata: Metadata{
+						Source:    "http",
+						Origin:    currentURL,
+						Timestamp: time.Now().UnixMilli(),
+					},
+				}
+			}
+		}
+
+		// totalCount 기반 종료 체크
+		if s.pagination.TotalField != "" {
+			if totalVal, ok := data[s.pagination.TotalField]; ok {
+				var total int
+				switch v := totalVal.(type) {
+				case float64:
+					total = int(v)
+				case int:
+					total = v
+				}
+				if total > 0 && page*perPage >= total {
+					return
+				}
+			}
+		}
+
+		// 현재 페이지 데이터가 perPage보다 적으면 마지막 페이지
+		if len(items) < perPage {
+			return
+		}
+	}
+}
+
+func (s *HTTPSource) readWithNextURLPagination(ctx context.Context, records chan<- Record, errs chan<- error) {
 	currentURL := s.url
 	pageCount := 0
 	maxPages := s.pagination.MaxPages

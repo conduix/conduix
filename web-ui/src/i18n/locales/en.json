@@ -208,7 +208,16 @@
     "startSuccess": "Workflow started successfully",
     "startError": "Failed to start workflow",
     "stopSuccess": "Workflow stopped successfully",
-    "stopError": "Failed to stop workflow"
+    "stopError": "Failed to stop workflow",
+    "executions": "Executions",
+    "executionHistory": "Execution History",
+    "noExecutions": "No executions yet",
+    "startedAt": "Started At",
+    "completedAt": "Completed At",
+    "duration": "Duration",
+    "totalRecords": "Total Records",
+    "failedRecords": "Failed Records",
+    "errorMessage": "Error Message"
   },
   "agent": {
     "title": "Agents",

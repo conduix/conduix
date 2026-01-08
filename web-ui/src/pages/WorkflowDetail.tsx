@@ -30,6 +30,11 @@ import {
   BranchesOutlined,
   SettingOutlined,
   ApiOutlined,
+  HistoryOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  SyncOutlined,
+  StopOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -66,6 +71,19 @@ interface DataType {
   parent_id?: string | null
 }
 
+interface WorkflowExecution {
+  id: string
+  workflow_id: string
+  status: string
+  started_at: string
+  completed_at?: string
+  total_records: number
+  failed_records: number
+  error_message?: string
+  triggered_by?: string
+  created_at: string
+}
+
 export default function WorkflowDetailPage() {
   const { t } = useTranslation()
   const { id, workflowId } = useParams<{ id?: string; workflowId?: string }>()
@@ -74,6 +92,7 @@ export default function WorkflowDetailPage() {
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [pipelines, setPipelines] = useState<WorkflowPipeline[]>([])
   const [dataTypes, setDataTypes] = useState<DataType[]>([])
+  const [executions, setExecutions] = useState<WorkflowExecution[]>([])
   const [loading, setLoading] = useState(true)
 
   // Pipeline modal states
@@ -114,6 +133,11 @@ export default function WorkflowDetailPage() {
           if (dataTypesRes.success) {
             setDataTypes(dataTypesRes.data || [])
           }
+        }
+        // Fetch workflow executions
+        const executionsRes = await api.getWorkflowExecutions(effectiveId!)
+        if (executionsRes.success) {
+          setExecutions(executionsRes.data || [])
         }
       }
     } catch (error) {
@@ -610,6 +634,91 @@ export default function WorkflowDetailPage() {
                       {t('pipeline.new')}
                     </Button>
                   </Empty>
+                )}
+              </Card>
+            ),
+          },
+          {
+            key: 'executions',
+            label: (
+              <span>
+                <HistoryOutlined />
+                {t('workflow.executions')} ({executions.length})
+              </span>
+            ),
+            children: (
+              <Card title={t('workflow.executionHistory')}>
+                {executions.length > 0 ? (
+                  <Table
+                    dataSource={executions}
+                    rowKey="id"
+                    pagination={{ pageSize: 10 }}
+                    columns={[
+                      {
+                        title: t('common.status'),
+                        dataIndex: 'status',
+                        key: 'status',
+                        width: 120,
+                        render: (status: string) => {
+                          const statusConfig: Record<string, { color: string; icon: React.ReactNode; text: string }> = {
+                            completed: { color: 'success', icon: <CheckCircleOutlined />, text: t('pipeline.status.completed') },
+                            running: { color: 'processing', icon: <SyncOutlined spin />, text: t('pipeline.status.running') },
+                            error: { color: 'error', icon: <CloseCircleOutlined />, text: t('pipeline.status.error') },
+                            stopped: { color: 'default', icon: <StopOutlined />, text: t('pipeline.status.stopped') },
+                          }
+                          const config = statusConfig[status] || { color: 'default', icon: null, text: status }
+                          return <Tag icon={config.icon} color={config.color}>{config.text}</Tag>
+                        },
+                      },
+                      {
+                        title: t('workflow.startedAt'),
+                        dataIndex: 'started_at',
+                        key: 'started_at',
+                        render: (date: string) => date ? new Date(date).toLocaleString() : '-',
+                      },
+                      {
+                        title: t('workflow.completedAt'),
+                        dataIndex: 'completed_at',
+                        key: 'completed_at',
+                        render: (date: string) => date ? new Date(date).toLocaleString() : '-',
+                      },
+                      {
+                        title: t('workflow.duration'),
+                        key: 'duration',
+                        render: (_: unknown, record: WorkflowExecution) => {
+                          if (!record.started_at) return '-'
+                          const start = new Date(record.started_at).getTime()
+                          const end = record.completed_at ? new Date(record.completed_at).getTime() : Date.now()
+                          const duration = Math.round((end - start) / 1000)
+                          if (duration < 60) return `${duration}s`
+                          if (duration < 3600) return `${Math.floor(duration / 60)}m ${duration % 60}s`
+                          return `${Math.floor(duration / 3600)}h ${Math.floor((duration % 3600) / 60)}m`
+                        },
+                      },
+                      {
+                        title: t('workflow.totalRecords'),
+                        dataIndex: 'total_records',
+                        key: 'total_records',
+                        align: 'right' as const,
+                      },
+                      {
+                        title: t('workflow.failedRecords'),
+                        dataIndex: 'failed_records',
+                        key: 'failed_records',
+                        align: 'right' as const,
+                        render: (count: number) => count > 0 ? <Text type="danger">{count}</Text> : count,
+                      },
+                      {
+                        title: t('workflow.errorMessage'),
+                        dataIndex: 'error_message',
+                        key: 'error_message',
+                        ellipsis: true,
+                        render: (msg: string) => msg || '-',
+                      },
+                    ]}
+                  />
+                ) : (
+                  <Empty description={t('workflow.noExecutions')} />
                 )}
               </Card>
             ),

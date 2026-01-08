@@ -388,6 +388,11 @@ class ApiService {
     return response.data
   }
 
+  async getWorkflowExecutions(id: string) {
+    const response = await this.client.get(`/workflows/${id}/executions`)
+    return response.data
+  }
+
   // 사용자 관리
   async getUsers(params?: { page?: number; page_size?: number; search?: string; role?: string }) {
     const response = await this.client.get('/users', { params })

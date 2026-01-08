@@ -208,7 +208,16 @@
     "startSuccess": "워크플로우가 시작되었습니다",
     "startError": "워크플로우 시작에 실패했습니다",
     "stopSuccess": "워크플로우가 중지되었습니다",
-    "stopError": "워크플로우 중지에 실패했습니다"
+    "stopError": "워크플로우 중지에 실패했습니다",
+    "executions": "실행 기록",
+    "executionHistory": "실행 히스토리",
+    "noExecutions": "실행 기록이 없습니다",
+    "startedAt": "시작 시간",
+    "completedAt": "완료 시간",
+    "duration": "소요 시간",
+    "totalRecords": "처리 건수",
+    "failedRecords": "실패 건수",
+    "errorMessage": "오류 메시지"
   },
   "agent": {
     "title": "에이전트",

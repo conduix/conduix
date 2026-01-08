@@ -41,10 +41,17 @@ spec:
                   fieldPath: metadata.name
             - name: CONTROL_PLANE_URL
               value: "http://{{ include "conduix.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}"
+            {{- if .Values.redis.enabled }}
             - name: REDIS_HOST
               value: "{{ .Release.Name }}-redis-master"
             - name: REDIS_PORT
               value: "6379"
+            {{- else }}
+            - name: REDIS_HOST
+              value: "{{ .Values.externalRedis.host }}"
+            - name: REDIS_PORT
+              value: "{{ .Values.externalRedis.port | default 6379 }}"
+            {{- end }}
             - name: HEARTBEAT_INTERVAL
               value: "{{ .Values.agent.env.HEARTBEAT_INTERVAL | default "10s" }}"
             - name: CONFIG_DIR
@@ -56,13 +63,13 @@ spec:
               mountPath: /var/lib/conduix
           livenessProbe:
             httpGet:
-              path: /health
+              path: /api/v1/health
               port: http
             initialDelaySeconds: 15
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health
+              path: /api/v1/health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5

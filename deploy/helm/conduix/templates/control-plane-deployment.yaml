@@ -35,6 +35,7 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
+            {{- if .Values.mysql.enabled }}
             - name: DB_HOST
               value: "{{ .Release.Name }}-mysql"
             - name: DB_PORT
@@ -48,6 +49,19 @@ spec:
                   key: mysql-password
             - name: DB_NAME
               value: "{{ .Values.mysql.auth.database }}"
+            {{- else }}
+            - name: DB_HOST
+              value: "{{ .Values.externalDatabase.host }}"
+            - name: DB_PORT
+              value: "{{ .Values.externalDatabase.port | default 3306 }}"
+            - name: DB_USER
+              value: "{{ .Values.externalDatabase.user }}"
+            - name: DB_PASSWORD
+              value: "{{ .Values.externalDatabase.password }}"
+            - name: DB_NAME
+              value: "{{ .Values.externalDatabase.database }}"
+            {{- end }}
+            {{- if .Values.redis.enabled }}
             - name: REDIS_ADDR
               value: "{{ .Release.Name }}-redis-master:6379"
             {{- if .Values.redis.auth.enabled }}
@@ -56,6 +70,14 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-redis
                   key: redis-password
+            {{- end }}
+            {{- else }}
+            - name: REDIS_ADDR
+              value: "{{ .Values.externalRedis.host }}:{{ .Values.externalRedis.port | default 6379 }}"
+            {{- if .Values.externalRedis.password }}
+            - name: REDIS_PASSWORD
+              value: "{{ .Values.externalRedis.password }}"
+            {{- end }}
             {{- end }}
             - name: JWT_SECRET
               valueFrom:

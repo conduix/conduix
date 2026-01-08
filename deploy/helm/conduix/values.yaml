@@ -7,7 +7,7 @@ global:
 controlPlane:
   replicaCount: 2
   image:
-    repository: conduix/control-plane
+    repository: ghcr.io/conduix/control-plane
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
@@ -46,7 +46,7 @@ migration:
 agent:
   replicaCount: 3
   image:
-    repository: conduix/agent
+    repository: ghcr.io/conduix/agent
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
@@ -71,7 +71,7 @@ agent:
 webUI:
   replicaCount: 2
   image:
-    repository: conduix/web-ui
+    repository: ghcr.io/conduix/web-ui
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
@@ -103,7 +103,7 @@ ingress:
           service: control-plane
   tls: []
 
-# MySQL
+# MySQL (Bitnami subchart)
 mysql:
   enabled: true
   auth:
@@ -116,7 +116,15 @@ mysql:
       enabled: true
       size: 10Gi
 
-# Redis
+# External Database (mysql.enabled=false 일 때 사용)
+externalDatabase:
+  host: "host.docker.internal"
+  port: 3307
+  user: "conduixuser"
+  password: "conduixpassword"
+  database: "conduix"
+
+# Redis (Bitnami subchart)
 redis:
   enabled: true
   architecture: standalone
@@ -126,6 +134,12 @@ redis:
     persistence:
       enabled: true
       size: 5Gi
+
+# External Redis (redis.enabled=false 일 때 사용)
+externalRedis:
+  host: "host.docker.internal"
+  port: 6379
+  password: ""
 
 # ServiceAccount
 serviceAccount:

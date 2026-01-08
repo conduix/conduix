@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -8,6 +8,7 @@ RUN apk add --no-cache git
 
 # Go 모듈 복사 및 다운로드
 COPY shared/go.mod shared/go.sum ./shared/
+COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
 COPY control-plane/go.mod control-plane/go.sum ./control-plane/
 
 WORKDIR /app/control-plane
@@ -16,6 +17,7 @@ RUN go mod download
 # 소스 코드 복사
 WORKDIR /app
 COPY shared ./shared
+COPY pipeline-core ./pipeline-core
 COPY control-plane ./control-plane
 
 # 빌드

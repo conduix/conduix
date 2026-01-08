@@ -97,7 +97,7 @@ func (h *Handler) StartPipeline(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
 			Success: false,
-			Error:   err.Error(),
+			Error:   types.NewAPIError(types.ErrCodeBadRequest, err.Error()),
 		})
 		return
 	}
@@ -106,7 +106,7 @@ func (h *Handler) StartPipeline(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, types.APIResponse[any]{
 			Success: false,
-			Error:   "Invalid config: " + err.Error(),
+			Error:   types.NewAPIError(types.ErrCodeValidationFailed, "Invalid config: "+err.Error()),
 		})
 		return
 	}
@@ -114,7 +114,7 @@ func (h *Handler) StartPipeline(c *gin.Context) {
 	if err := h.agent.StartPipeline(pipelineID, cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
 			Success: false,
-			Error:   err.Error(),
+			Error:   types.NewAPIError(types.ErrCodeInternalError, err.Error()),
 		})
 		return
 	}
@@ -132,7 +132,7 @@ func (h *Handler) StopPipeline(c *gin.Context) {
 	if err := h.agent.StopPipeline(pipelineID); err != nil {
 		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
 			Success: false,
-			Error:   err.Error(),
+			Error:   types.NewAPIError(types.ErrCodeInternalError, err.Error()),
 		})
 		return
 	}
@@ -150,7 +150,7 @@ func (h *Handler) PausePipeline(c *gin.Context) {
 	if err := h.agent.PausePipeline(pipelineID); err != nil {
 		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
 			Success: false,
-			Error:   err.Error(),
+			Error:   types.NewAPIError(types.ErrCodeInternalError, err.Error()),
 		})
 		return
 	}
@@ -168,7 +168,7 @@ func (h *Handler) ResumePipeline(c *gin.Context) {
 	if err := h.agent.ResumePipeline(pipelineID); err != nil {
 		c.JSON(http.StatusInternalServerError, types.APIResponse[any]{
 			Success: false,
-			Error:   err.Error(),
+			Error:   types.NewAPIError(types.ErrCodeInternalError, err.Error()),
 		})
 		return
 	}
@@ -187,7 +187,7 @@ func (h *Handler) GetPipelineStatus(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, types.APIResponse[any]{
 			Success: false,
-			Error:   err.Error(),
+			Error:   types.NewAPIError(types.ErrCodeNotFound, err.Error()),
 		})
 		return
 	}

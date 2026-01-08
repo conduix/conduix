@@ -1,0 +1,72 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: conduix
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/conduix/conduix.git
+    targetRevision: main
+    path: deploy/helm/conduix
+    helm:
+      releaseName: conduix
+      valueFiles:
+        - values.yaml
+      parameters:
+        # GHCR 이미지 pull secret
+        - name: global.imagePullSecrets[0].name
+          value: ghcr-secret
+
+        # 내장 MySQL 비활성화, 외부 DB 사용
+        - name: mysql.enabled
+          value: "false"
+        - name: externalDatabase.host
+          value: "your-mysql-host"
+        - name: externalDatabase.port
+          value: "3306"
+        - name: externalDatabase.user
+          value: "conduixuser"
+        - name: externalDatabase.password
+          value: "your-password"
+        - name: externalDatabase.database
+          value: "conduix"
+
+        # 내장 Redis 비활성화, 외부 Redis 사용
+        - name: redis.enabled
+          value: "false"
+        - name: externalRedis.host
+          value: "your-redis-host"
+        - name: externalRedis.port
+          value: "6379"
+
+        # 보안 설정 (프로덕션)
+        - name: securityContext.runAsNonRoot
+          value: "true"
+        - name: securityContext.runAsUser
+          value: "1000"
+
+        # 마이그레이션 비활성화 (수동 실행)
+        - name: migration.enabled
+          value: "false"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: conduix
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

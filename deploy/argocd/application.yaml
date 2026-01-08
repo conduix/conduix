@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: conduix
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/conduix/conduix.git
+    targetRevision: main
+    path: deploy/helm/conduix
+    helm:
+      releaseName: conduix
+      valueFiles:
+        - values.yaml
+      # 추가 설정 오버라이드
+      parameters:
+        # 이미지 pull secret (GHCR private 이미지용)
+        - name: global.imagePullSecrets[0].name
+          value: ghcr-secret
+        # 내장 MySQL/Redis 비활성화 (외부 DB 사용 시)
+        # - name: mysql.enabled
+        #   value: "false"
+        # - name: redis.enabled
+        #   value: "false"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: conduix
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

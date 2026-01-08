@@ -204,7 +204,11 @@
     "executionMode": "Execution Mode",
     "start": "Start",
     "pause": "Pause",
-    "stop": "Stop"
+    "stop": "Stop",
+    "startSuccess": "Workflow started successfully",
+    "startError": "Failed to start workflow",
+    "stopSuccess": "Workflow stopped successfully",
+    "stopError": "Failed to stop workflow"
   },
   "agent": {
     "title": "Agents",

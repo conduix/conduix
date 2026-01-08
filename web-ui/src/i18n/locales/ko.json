@@ -204,7 +204,11 @@
     "executionMode": "실행 모드",
     "start": "시작",
     "pause": "일시정지",
-    "stop": "중지"
+    "stop": "중지",
+    "startSuccess": "워크플로우가 시작되었습니다",
+    "startError": "워크플로우 시작에 실패했습니다",
+    "stopSuccess": "워크플로우가 중지되었습니다",
+    "stopError": "워크플로우 중지에 실패했습니다"
   },
   "agent": {
     "title": "에이전트",

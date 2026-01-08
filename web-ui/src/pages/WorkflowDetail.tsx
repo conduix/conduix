@@ -82,6 +82,7 @@ export default function WorkflowDetailPage() {
   const [pipelineForm] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [selectedParentPipeline, setSelectedParentPipeline] = useState<string | undefined>()
+  const [actionLoading, setActionLoading] = useState(false)
 
   useEffect(() => {
     if (effectiveId) {
@@ -119,6 +120,44 @@ export default function WorkflowDetailPage() {
       message.error(t('workflow.loadError'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleStartWorkflow = async () => {
+    if (!effectiveId) return
+    try {
+      setActionLoading(true)
+      const res = await api.startWorkflow(effectiveId)
+      if (res.success) {
+        message.success(t('workflow.startSuccess'))
+        fetchWorkflowData()
+      } else {
+        message.error(res.error?.message || t('workflow.startError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      message.error(err.response?.data?.error?.message || t('workflow.startError'))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleStopWorkflow = async () => {
+    if (!effectiveId) return
+    try {
+      setActionLoading(true)
+      const res = await api.stopWorkflow(effectiveId)
+      if (res.success) {
+        message.success(t('workflow.stopSuccess'))
+        fetchWorkflowData()
+      } else {
+        message.error(res.error?.message || t('workflow.stopError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      message.error(err.response?.data?.error?.message || t('workflow.stopError'))
+    } finally {
+      setActionLoading(false)
     }
   }
 
@@ -474,11 +513,20 @@ export default function WorkflowDetailPage() {
         </Space>
         <Space>
           {workflow.status === 'running' ? (
-            <Button icon={<PauseCircleOutlined />}>
-              {t('workflow.pause')}
+            <Button
+              icon={<PauseCircleOutlined />}
+              onClick={handleStopWorkflow}
+              loading={actionLoading}
+            >
+              {t('workflow.stop')}
             </Button>
           ) : (
-            <Button type="primary" icon={<PlayCircleOutlined />}>
+            <Button
+              type="primary"
+              icon={<PlayCircleOutlined />}
+              onClick={handleStartWorkflow}
+              loading={actionLoading}
+            >
               {t('workflow.start')}
             </Button>
           )}

@@ -117,18 +117,27 @@ export default function MainLayout() {
       <Sider trigger={null} collapsible collapsed={collapsed}>
         <div
           style={{
-            height: 32,
+            height: 40,
             margin: 16,
-            background: 'rgba(255, 255, 255, 0.2)',
-            borderRadius: 6,
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            borderRadius: 8,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
+            justifyContent: collapsed ? 'center' : 'flex-start',
+            padding: collapsed ? 0 : '0 12px',
+            gap: 8,
             color: '#fff',
             fontWeight: 'bold',
+            fontSize: 16,
+            boxShadow: '0 2px 8px rgba(102, 126, 234, 0.4)',
           }}
         >
-          {collapsed ? 'CX' : 'Conduix'}
+          <img
+            src="/favicon-24.ico"
+            alt="Conduix"
+            style={{ width: 20, height: 20 }}
+          />
+          {!collapsed && 'Conduix'}
         </div>
         <Menu
           theme="dark"

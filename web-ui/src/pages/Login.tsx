@@ -64,7 +64,9 @@ export default function LoginPage() {
       try {
         const response = await api.get<ApiResponse<Provider[]>>('/auth/providers')
         if (response.data?.success && response.data.data) {
-          setProviders(response.data.data)
+          // 사전순 정렬 (이름 기준)
+          const sorted = [...response.data.data].sort((a, b) => a.name.localeCompare(b.name))
+          setProviders(sorted)
         }
       } catch (error) {
         console.error('Failed to fetch providers:', error)

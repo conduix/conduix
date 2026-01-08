@@ -1,0 +1,2 @@
+# Helm dependency charts - downloaded at install time
+*.tgz

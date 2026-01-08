@@ -69,3 +69,7 @@ local/
 # Vector data
 vector_data/
 checkpoints/
+
+# Helm
+Chart.lock
+deploy/helm/**/charts/*.tgz

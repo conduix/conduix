@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Tabs, message, Alert } from 'antd'
+import { Tabs, message, Alert, Button, Modal } from 'antd'
+import { FileSearchOutlined } from '@ant-design/icons'
 import Editor from '@monaco-editor/react'
 import { useTranslation } from 'react-i18next'
 import VisualFieldBuilder, { DataTypeField } from './VisualFieldBuilder'
@@ -114,12 +115,66 @@ function mapJsonSchemaTypeToFieldType(type: string, format?: string): string {
   return 'string'
 }
 
+// Infer field type from a value
+function inferFieldType(value: unknown): string {
+  if (value === null || value === undefined) return 'string'
+
+  const type = typeof value
+
+  if (type === 'boolean') return 'boolean'
+  if (type === 'number') {
+    return Number.isInteger(value) ? 'integer' : 'number'
+  }
+  if (type === 'string') {
+    const str = value as string
+    // Check for datetime patterns
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(str)) return 'datetime'
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return 'date'
+    // Check for UUID pattern
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str)) return 'uuid'
+    return 'string'
+  }
+  if (Array.isArray(value)) return 'array'
+  if (type === 'object') return 'json'
+
+  return 'string'
+}
+
+// Infer schema fields from sample JSON data
+function inferSchemaFromSample(sampleJson: string): DataTypeField[] {
+  const data = JSON.parse(sampleJson)
+  const fields: DataTypeField[] = []
+
+  // Handle array of objects - use first item
+  const sample = Array.isArray(data) ? data[0] : data
+
+  if (!sample || typeof sample !== 'object') {
+    throw new Error('Sample must be an object or array of objects')
+  }
+
+  for (const [name, value] of Object.entries(sample)) {
+    fields.push({
+      name,
+      type: inferFieldType(value),
+      required: value !== null && value !== undefined,
+      description: '',
+    })
+  }
+
+  return fields
+}
+
 export default function SchemaEditor({ schema, jsonSchema, onChange, idFields = [] }: SchemaEditorProps) {
   const { t } = useTranslation()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
   const [fields, setFields] = useState<DataTypeField[]>(schema?.fields || [])
   const [jsonContent, setJsonContent] = useState<string>(jsonSchema || '')
   const [jsonError, setJsonError] = useState<string | null>(null)
+
+  // Sample to schema modal state
+  const [sampleModalOpen, setSampleModalOpen] = useState(false)
+  const [sampleInput, setSampleInput] = useState('')
+  const [sampleError, setSampleError] = useState<string | null>(null)
 
   // Initialize from props
   useEffect(() => {
@@ -191,6 +246,31 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, idFields = 
     }
   }, [onChange])
 
+  const handleGenerateFromSample = () => {
+    try {
+      const inferredFields = inferSchemaFromSample(sampleInput)
+      setFields(inferredFields)
+      const newJson = fieldsToJsonSchema(inferredFields)
+      setJsonContent(newJson)
+      onChange(
+        { type: 'json_schema', fields: inferredFields, definition: newJson },
+        newJson
+      )
+      setSampleModalOpen(false)
+      setSampleInput('')
+      setSampleError(null)
+      setEditMode('visual')
+      message.success(t('dataModel.schema.generateSuccess', { count: inferredFields.length }))
+    } catch (e) {
+      setSampleError((e as Error).message)
+    }
+  }
+
+  const handleSampleInputChange = (value: string | undefined) => {
+    setSampleInput(value || '')
+    setSampleError(null)
+  }
+
   const tabItems = [
     {
       key: 'visual',
@@ -240,10 +320,65 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, idFields = 
   ]
 
   return (
-    <Tabs
-      activeKey={editMode}
-      onChange={handleTabChange}
-      items={tabItems}
-    />
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button
+          icon={<FileSearchOutlined />}
+          onClick={() => setSampleModalOpen(true)}
+        >
+          {t('dataModel.schema.generateFromSample')}
+        </Button>
+      </div>
+
+      <Tabs
+        activeKey={editMode}
+        onChange={handleTabChange}
+        items={tabItems}
+      />
+
+      <Modal
+        title={t('dataModel.schema.generateFromSampleTitle')}
+        open={sampleModalOpen}
+        onCancel={() => {
+          setSampleModalOpen(false)
+          setSampleInput('')
+          setSampleError(null)
+        }}
+        onOk={handleGenerateFromSample}
+        okText={t('dataModel.schema.generate')}
+        cancelText={t('common.cancel')}
+        width={700}
+        okButtonProps={{ disabled: !sampleInput.trim() }}
+      >
+        <p style={{ marginBottom: 16, color: '#666' }}>
+          {t('dataModel.schema.sampleInputHelp')}
+        </p>
+        {sampleError && (
+          <Alert
+            message={t('dataModel.schema.sampleParseError')}
+            description={sampleError}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <Editor
+          height="300px"
+          language="json"
+          theme="vs-light"
+          value={sampleInput}
+          onChange={handleSampleInputChange}
+          options={{
+            minimap: { enabled: false },
+            fontSize: 13,
+            lineNumbers: 'on',
+            tabSize: 2,
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            formatOnPaste: true,
+          }}
+        />
+      </Modal>
+    </div>
   )
 }

@@ -391,6 +391,12 @@
       "syncToJson": "Sync to JSON",
       "keyField": "Key Field",
       "duplicateFieldName": "Field name already exists",
+      "generateFromSample": "Generate from Sample",
+      "generateFromSampleTitle": "Generate Schema from Sample Data",
+      "sampleInputHelp": "Paste sample JSON data (object or array of objects). Field types will be automatically inferred.",
+      "sampleParseError": "Invalid sample data",
+      "generate": "Generate",
+      "generateSuccess": "Successfully generated {{count}} fields",
       "fieldTypes": {
         "string": "String",
         "integer": "Integer",

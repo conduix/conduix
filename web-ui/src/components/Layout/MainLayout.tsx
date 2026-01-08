@@ -14,7 +14,6 @@ import {
   TeamOutlined,
   ProjectOutlined,
   GlobalOutlined,
-  DatabaseOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../../store/auth'
@@ -42,11 +41,6 @@ export default function MainLayout() {
       key: '/projects',
       icon: <ProjectOutlined />,
       label: t('nav.projects'),
-    },
-    {
-      key: '/data-models',
-      icon: <DatabaseOutlined />,
-      label: t('nav.dataModels'),
     },
     {
       key: '/workflows',

@@ -27,6 +27,7 @@ type Server struct {
 	dataTypeHandler  *handlers.DataTypeHandler
 	userHandler      *handlers.UserHandler
 	projectHandler   *handlers.ProjectHandler
+	agentHandler     *handlers.AgentHandler
 }
 
 // NewServer 새 서버 생성
@@ -48,6 +49,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		dataTypeHandler:  handlers.NewDataTypeHandler(db),
 		userHandler:      handlers.NewUserHandler(db),
 		projectHandler:   handlers.NewProjectHandler(db),
+		agentHandler:     handlers.NewAgentHandler(db, redisService),
 	}
 
 	s.setupRoutes()
@@ -197,8 +199,12 @@ func (s *Server) setupRoutes() {
 				projects.GET("/:id/data-types", s.projectHandler.GetProjectDataTypes)
 			}
 
-			// 에이전트 (TODO: 구현)
-			// agents := authenticated.Group("/agents")
+			// 에이전트
+			agents := authenticated.Group("/agents")
+			{
+				agents.GET("", s.agentHandler.ListAgents)
+				agents.GET("/:id", s.agentHandler.GetAgent)
+			}
 		}
 	}
 }

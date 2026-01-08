@@ -59,6 +59,14 @@ spec:
           value: "herohyohwan@gmail.com,herohyohwan@users.noreply.github.com"
 
         # ===========================================
+        # Image Pull Policy (Always for local dev)
+        # ===========================================
+        - name: controlPlane.image.pullPolicy
+          value: "Always"
+        - name: agent.image.pullPolicy
+          value: "Always"
+
+        # ===========================================
         # Ingress (disabled for local)
         # ===========================================
         - name: ingress.enabled

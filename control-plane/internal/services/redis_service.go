@@ -172,7 +172,7 @@ func (s *RedisService) retryPendingCommands() {
 
 // PublishWorkflowExecution 워크플로우 실행 명령 발행
 func (s *RedisService) PublishWorkflowExecution(cmd *types.WorkflowExecutionCommand) error {
-	channel := "workflow:execute:broadcast"
+	channel := "group:execute:broadcast"
 
 	err := s.client.Publish(s.ctx, channel, cmd)
 	if err != nil {

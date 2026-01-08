@@ -21,15 +21,17 @@ import (
 // WorkflowHandler 워크플로우 API 핸들러
 type WorkflowHandler struct {
 	db           *database.DB
+	redisService *services.RedisService
 	kafkaService *services.KafkaService
 	logger       *slog.Logger
 }
 
 // NewWorkflowHandler 핸들러 생성
-func NewWorkflowHandler(db *database.DB) *WorkflowHandler {
+func NewWorkflowHandler(db *database.DB, redisService *services.RedisService) *WorkflowHandler {
 	logger := slog.Default()
 	return &WorkflowHandler{
 		db:           db,
+		redisService: redisService,
 		kafkaService: services.NewKafkaService(&services.KafkaServiceConfig{Logger: logger}),
 		logger:       logger,
 	}
@@ -406,8 +408,41 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	workflow.LastRunAt = &execution.StartedAt
 	h.db.Save(&workflow)
 
-	// TODO: 실제 실행은 에이전트에 위임 (Redis Pub/Sub 또는 gRPC)
-	// 여기서는 실행 기록만 생성
+	fmt.Printf("[StartWorkflow] Workflow status updated to running: %s\n", workflowID)
+
+	// 파이프라인 설정 파싱
+	var pipelines []types.GroupedPipeline
+	if workflow.PipelinesConfig != "" {
+		if err := json.Unmarshal([]byte(workflow.PipelinesConfig), &pipelines); err != nil {
+			fmt.Printf("[StartWorkflow] Failed to parse pipelines config: %v\n", err)
+		}
+	}
+	fmt.Printf("[StartWorkflow] Parsed %d pipelines\n", len(pipelines))
+
+	// Redis를 통해 에이전트에 실행 명령 전송
+	cmd := &types.WorkflowExecutionCommand{
+		ID:          uuid.New().String(),
+		WorkflowID:  workflowID,
+		ExecutionID: execution.ID,
+		TriggeredBy: "user",
+		UserID:      userIDStr,
+		WorkflowConfig: &types.Workflow{
+			ID:            workflow.ID,
+			ProjectID:     workflow.ProjectID,
+			Name:          workflow.Name,
+			Type:          types.PipelineGroupType(workflow.Type),
+			ExecutionMode: types.ExecutionMode(workflow.ExecutionMode),
+			Pipelines:     pipelines,
+		},
+		Timestamp: time.Now(),
+	}
+
+	fmt.Printf("[StartWorkflow] Publishing workflow execution command to Redis...\n")
+	if err := h.redisService.PublishWorkflowExecution(cmd); err != nil {
+		fmt.Printf("[StartWorkflow] Failed to publish: %v\n", err)
+	} else {
+		fmt.Printf("[StartWorkflow] Successfully published workflow execution: %s\n", execution.ID)
+	}
 
 	c.JSON(http.StatusAccepted, types.APIResponse[map[string]any]{
 		Success: true,

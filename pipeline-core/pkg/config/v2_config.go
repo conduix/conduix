@@ -224,13 +224,13 @@ type OutputConfig struct {
 	Callback  *CallbackConfig      `yaml:"callback,omitempty"`
 
 	// SQL Sink
-	Driver    string            `yaml:"driver,omitempty"`     // mysql, postgres
-	DSN       string            `yaml:"dsn,omitempty"`        // database connection string
-	Table     string            `yaml:"table,omitempty"`      // target table name
-	Columns   []string          `yaml:"columns,omitempty"`    // columns to insert (optional, auto-detect if empty)
-	ColumnMap map[string]string `yaml:"column_map,omitempty"` // source field -> db column mapping
-	BatchSize int               `yaml:"batch_size,omitempty"` // batch insert size (default: 100)
-	OnConflict string           `yaml:"on_conflict,omitempty"` // ignore, update, error (default: error)
+	Driver     string            `yaml:"driver,omitempty"`      // mysql, postgres
+	DSN        string            `yaml:"dsn,omitempty"`         // database connection string
+	Table      string            `yaml:"table,omitempty"`       // target table name
+	Columns    []string          `yaml:"columns,omitempty"`     // columns to insert (optional, auto-detect if empty)
+	ColumnMap  map[string]string `yaml:"column_map,omitempty"`  // source field -> db column mapping
+	BatchSize  int               `yaml:"batch_size,omitempty"`  // batch insert size (default: 100)
+	OnConflict string            `yaml:"on_conflict,omitempty"` // ignore, update, error (default: error)
 }
 
 // MetricsOutputConfig 메트릭 출력 설정

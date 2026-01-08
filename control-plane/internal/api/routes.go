@@ -41,7 +41,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		jwtSecret:        []byte(jwtSecret),
 		pipelineHandler:  handlers.NewPipelineHandler(db, redisService),
 		authHandler:      handlers.NewAuthHandler(db, jwtSecret, usersConfig, frontendURL),
-		workflowHandler:  handlers.NewWorkflowHandler(db),
+		workflowHandler:  handlers.NewWorkflowHandler(db, redisService),
 		statsHandler:     handlers.NewStatsHandler(db),
 		scheduleHandler:  handlers.NewScheduleHandler(db, schedulerService),
 		graphHandler:     handlers.NewGraphHandler(db, redisService),

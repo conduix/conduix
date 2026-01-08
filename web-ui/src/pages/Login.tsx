@@ -131,7 +131,7 @@ export default function LoginPage() {
         styles={{ body: { padding: '40px' } }}
       >
         <img
-          src="/logo-with-title.png"
+          src="/logo-title-nobg.png"
           alt="Conduix Logo"
           style={{
             width: 1000,

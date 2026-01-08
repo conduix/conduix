@@ -28,10 +28,10 @@ type SQLSink struct {
 	batchSize  int
 	onConflict string
 
-	db      *sql.DB
-	buffer  []source.Record
-	bufMu   sync.Mutex
-	stats   SinkStats
+	db     *sql.DB
+	buffer []source.Record
+	bufMu  sync.Mutex
+	stats  SinkStats
 }
 
 // NewSQLSink SQL 싱크 생성

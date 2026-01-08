@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/logo-with-title.png" alt="Conduix Logo" width="600">
+  <img src="images/logo-title-nobg.png" alt="Conduix Logo" width="600">
 </p>
 
 **Conduix** = **Intelligent Conduit**

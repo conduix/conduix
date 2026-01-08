@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/pipeline-core/pkg/config"
+	"github.com/conduix/conduix/pipeline-core/pkg/sink"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
 	"github.com/conduix/conduix/shared/types"
 )
@@ -302,15 +305,48 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		StartedAt:    time.Now(),
 	}
 
+	// 싱크 생성 및 열기
+	var sinks []sink.Sink
+	for _, sinkConfig := range pipeline.Sinks {
+		s, err := e.createSink(sinkConfig)
+		if err != nil {
+			result.Status = "failed"
+			result.ErrorMessage = fmt.Sprintf("failed to create sink %s: %v", sinkConfig.Name, err)
+			return result, err
+		}
+		if err := s.Open(ctx); err != nil {
+			result.Status = "failed"
+			result.ErrorMessage = fmt.Sprintf("failed to open sink %s: %v", sinkConfig.Name, err)
+			return result, err
+		}
+		sinks = append(sinks, s)
+		fmt.Printf("[runPipeline] Sink opened: %s (type: %s)\n", sinkConfig.Name, sinkConfig.Type)
+	}
+
+	// 싱크 정리 defer
+	defer func() {
+		for _, s := range sinks {
+			if err := s.Flush(ctx); err != nil {
+				fmt.Printf("[runPipeline] Flush error: %v\n", err)
+			}
+			if err := s.Close(); err != nil {
+				fmt.Printf("[runPipeline] Close error: %v\n", err)
+			}
+		}
+	}()
+
 	// 소스 생성 및 실행
+	fmt.Printf("[runPipeline] Creating source: %s (type: %s)\n", pipeline.Source.Name, pipeline.Source.Type)
 	records, errs, err := e.createAndRunSource(ctx, pipeline.Source)
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = err.Error()
 		statsCollector.RecordCollectionError()
 		result.Statistics = statsCollector.GetStatistics()
+		fmt.Printf("[runPipeline] Source creation failed: %v\n", err)
 		return result, err
 	}
+	fmt.Printf("[runPipeline] Source created successfully\n")
 
 	// 레코드 처리
 	for {
@@ -336,6 +372,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				result.RecordsWritten = stats.RecordsProcessed
 				result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
 				result.Statistics = stats
+				fmt.Printf("[runPipeline] Completed: read=%d, written=%d, errors=%d\n",
+					result.RecordsRead, result.RecordsWritten, result.ErrorCount)
 				return result, nil
 			}
 
@@ -371,9 +409,10 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			}
 
 			// Sink로 전송 (처리량 추적)
-			for _, sink := range pipeline.Sinks {
-				if err := e.sendToSink(ctx, data, sink); err != nil {
+			for _, s := range sinks {
+				if err := e.sendToSink(ctx, data, s); err != nil {
 					statsCollector.RecordProcessingError()
+					fmt.Printf("[runPipeline] Sink write error: %v\n", err)
 				} else {
 					statsCollector.RecordProcessed()
 				}
@@ -383,6 +422,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			if err != nil {
 				statsCollector.RecordCollectionError()
 				result.ErrorMessage = err.Error()
+				fmt.Printf("[runPipeline] Source error: %v\n", err)
 			}
 		}
 	}
@@ -518,13 +558,52 @@ func (e *GroupExecutor) applyStage(data map[string]any, stage types.Stage) (map[
 }
 
 // sendToSink 싱크로 전송
-func (e *GroupExecutor) sendToSink(ctx context.Context, data map[string]any, sink types.GroupedSink) error {
-	// TODO: 조건부 라우팅 확인 (sink.Condition)
-	// TODO: 실제 싱크 전송 로직
-	_ = ctx
-	_ = data
-	_ = sink
-	return nil
+func (e *GroupExecutor) sendToSink(ctx context.Context, data map[string]any, s sink.Sink) error {
+	record := source.Record{
+		Data: data,
+		Metadata: source.Metadata{
+			Source:    s.Name(),
+			Timestamp: time.Now().UnixNano(),
+		},
+	}
+	return s.Write(ctx, record)
+}
+
+// createSink GroupedSink에서 Sink 생성
+func (e *GroupExecutor) createSink(gs types.GroupedSink) (sink.Sink, error) {
+	cfg := config.OutputConfig{
+		Type: gs.Type,
+	}
+
+	// Config에서 필드 매핑
+	if gs.Config != nil {
+		if driver, ok := gs.Config["driver"].(string); ok {
+			cfg.Driver = driver
+		}
+		if dsn, ok := gs.Config["dsn"].(string); ok {
+			// 환경변수 확장 (${VAR} 형식)
+			cfg.DSN = os.ExpandEnv(dsn)
+		}
+		if table, ok := gs.Config["table"].(string); ok {
+			cfg.Table = table
+		}
+		if batchSize, ok := gs.Config["batch_size"].(float64); ok {
+			cfg.BatchSize = int(batchSize)
+		}
+		if onConflict, ok := gs.Config["on_conflict"].(string); ok {
+			cfg.OnConflict = onConflict
+		}
+		if columnMap, ok := gs.Config["column_map"].(map[string]any); ok {
+			cfg.ColumnMap = make(map[string]string)
+			for k, v := range columnMap {
+				if str, ok := v.(string); ok {
+					cfg.ColumnMap[k] = str
+				}
+			}
+		}
+	}
+
+	return sink.NewSink(cfg)
 }
 
 // Stop 그룹 실행 중지

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
+	"github.com/conduix/conduix/pipeline-core/pkg/executor"
 	"github.com/conduix/conduix/pipeline-core/pkg/pipeline"
 	redisclient "github.com/conduix/conduix/shared/redis"
 	"github.com/conduix/conduix/shared/types"
@@ -574,65 +575,95 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 
 	fmt.Printf("Starting group execution: %s (%s)\n", workflow.Name, workflow.ID)
 
-	// 결과 수집
-	var results []types.PipelineExecutionResult
-	var totalRecords, failedRecords int64
-	var hasError bool
-	var errorMessage string
+	// GroupExecutor를 사용하여 파이프라인 그룹 실행
+	groupExecutor := executor.NewGroupExecutor(workflow)
 
-	// 실행 모드에 따라 파이프라인 실행
-	// 현재는 순차 실행만 지원 (TODO: parallel, dag 모드 지원)
-	for _, pipeline := range workflow.Pipelines {
-		pipelineStart := time.Now()
-		fmt.Printf("  Executing pipeline: %s (%s)\n", pipeline.Name, pipeline.ID)
+	// 실행 시작
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
-		// TODO: 실제 파이프라인 실행 로직 구현
-		// 현재는 placeholder로 성공 처리
-		result := types.PipelineExecutionResult{
-			PipelineID:     pipeline.ID,
-			PipelineName:   pipeline.Name,
-			Status:         "completed",
-			StartedAt:      pipelineStart,
-			RecordsRead:    0,
-			RecordsWritten: 0,
-			ErrorCount:     0,
-		}
+	_, err := groupExecutor.Start(ctx, cmd.TriggeredBy)
+	if err != nil {
+		fmt.Printf("Failed to start group execution: %v\n", err)
+
+		// 실패 결과 보고
 		completedAt := time.Now()
-		result.CompletedAt = completedAt
-
-		results = append(results, result)
-		totalRecords += result.RecordsWritten
+		executionResult := &types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: err.Error(),
+		}
+		if err := a.reportGroupExecutionResult(executionResult); err != nil {
+			fmt.Printf("Failed to report group execution result: %v\n", err)
+		}
+		return
 	}
 
-	// 완료 시간
-	completedAt := time.Now()
-	duration := completedAt.Sub(startTime)
+	// 실행 완료 대기 (최대 10분)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
 
-	// 결과 상태 결정
-	status := types.PipelineGroupStatusCompleted
-	if hasError {
-		status = types.PipelineGroupStatusError
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("Group execution timed out: %s\n", workflow.Name)
+			_ = groupExecutor.Stop()
+
+			completedAt := time.Now()
+			executionResult := &types.GroupExecutionResult{
+				ExecutionID:  cmd.ExecutionID,
+				WorkflowID:   cmd.WorkflowID,
+				Status:       types.PipelineGroupStatusError,
+				StartedAt:    startTime,
+				CompletedAt:  &completedAt,
+				ErrorMessage: "execution timed out",
+			}
+			if err := a.reportGroupExecutionResult(executionResult); err != nil {
+				fmt.Printf("Failed to report group execution result: %v\n", err)
+			}
+			return
+
+		case <-ticker.C:
+			// 실행 상태 확인
+			currentExec := groupExecutor.Execution()
+			if currentExec == nil {
+				continue
+			}
+
+			// 완료 확인
+			if currentExec.Status == types.PipelineGroupStatusCompleted ||
+				currentExec.Status == types.PipelineGroupStatusError ||
+				currentExec.Status == types.PipelineGroupStatusStopped {
+
+				completedAt := time.Now()
+				duration := completedAt.Sub(startTime)
+
+				// 결과 보고
+				executionResult := &types.GroupExecutionResult{
+					ExecutionID:     cmd.ExecutionID,
+					WorkflowID:      cmd.WorkflowID,
+					Status:          currentExec.Status,
+					PipelineResults: currentExec.PipelineResults,
+					TotalRecords:    currentExec.TotalRecords,
+					FailedRecords:   currentExec.FailedRecords,
+					StartedAt:       startTime,
+					CompletedAt:     &completedAt,
+					ErrorMessage:    currentExec.ErrorMessage,
+				}
+
+				if err := a.reportGroupExecutionResult(executionResult); err != nil {
+					fmt.Printf("Failed to report group execution result: %v\n", err)
+				}
+
+				fmt.Printf("Group execution completed: %s (status: %s, duration: %v, records: %d)\n",
+					workflow.Name, currentExec.Status, duration, currentExec.TotalRecords)
+				return
+			}
+		}
 	}
-
-	// 결과 보고
-	executionResult := &types.GroupExecutionResult{
-		ExecutionID:     cmd.ExecutionID,
-		WorkflowID:      cmd.WorkflowID,
-		Status:          status,
-		PipelineResults: results,
-		TotalRecords:    totalRecords,
-		FailedRecords:   failedRecords,
-		StartedAt:       startTime,
-		CompletedAt:     &completedAt,
-		ErrorMessage:    errorMessage,
-	}
-
-	// Control Plane에 결과 보고
-	if err := a.reportGroupExecutionResult(executionResult); err != nil {
-		fmt.Printf("Failed to report group execution result: %v\n", err)
-	}
-
-	fmt.Printf("Group execution completed: %s (duration: %v)\n", workflow.Name, duration)
 }
 
 // reportGroupExecutionResult 그룹 실행 결과 보고

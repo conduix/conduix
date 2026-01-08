@@ -101,17 +101,26 @@ type AuthConfig struct {
 
 // PaginationConfig HTTP 페이징 설정
 type PaginationConfig struct {
-	Type      string `yaml:"type"`       // next_url, offset, cursor
-	NextField string `yaml:"next_field"` // 응답에서 다음 URL 필드
-	DataField string `yaml:"data_field"` // 실제 데이터 필드
-	MaxPages  int    `yaml:"max_pages"`  // 최대 페이지 수
+	Type      string `yaml:"type" json:"type"`             // next_url, offset, page_increment, next_offset
+	NextField string `yaml:"next_field" json:"next_field"` // 응답에서 다음 URL 필드
+	DataField string `yaml:"data_field" json:"data_field"` // 실제 데이터 필드
+	MaxPages  int    `yaml:"max_pages" json:"max_pages"`   // 최대 페이지 수
 
-	// Offset 페이지네이션
-	PageParam    string `yaml:"page_param"`     // 페이지 번호 파라미터 (기본: page)
-	PerPageParam string `yaml:"per_page_param"` // 페이지 크기 파라미터 (기본: perPage)
-	PerPage      int    `yaml:"per_page"`       // 페이지당 항목 수 (기본: 10)
-	StartPage    int    `yaml:"start_page"`     // 시작 페이지 (기본: 1)
-	TotalField   string `yaml:"total_field"`    // 총 개수 필드 (자동 종료용)
+	// Offset/Page 페이지네이션
+	PageParam    string `yaml:"page_param" json:"page_param"`         // 페이지 번호 파라미터 (기본: page)
+	ParamName    string `yaml:"param_name" json:"param_name"`         // UI 호환: page_increment용 파라미터명
+	PerPageParam string `yaml:"per_page_param" json:"per_page_param"` // 페이지 크기 파라미터 (기본: perPage)
+	PerPage      int    `yaml:"per_page" json:"per_page"`             // 페이지당 항목 수 (기본: 10)
+	StartPage    int    `yaml:"start_page" json:"start_page"`         // 시작 페이지 (기본: 1)
+	StartValue   int    `yaml:"start_value" json:"start_value"`       // UI 호환: page_increment용 시작값
+	TotalField   string `yaml:"total_field" json:"total_field"`       // 총 개수 필드 (자동 종료용)
+
+	// Next Offset 페이지네이션
+	OffsetParam string `yaml:"offset_param" json:"offset_param"` // offset 쿼리 파라미터 (기본: offset)
+	OffsetPath  string `yaml:"offset_path" json:"offset_path"`   // 응답에서 다음 offset 경로 (예: meta.next_offset)
+
+	// Next URL 페이지네이션
+	URLPath string `yaml:"url_path" json:"url_path"` // 응답에서 다음 URL 경로 (예: links.next)
 }
 
 // RealtimeConfig 실시간 파이프라인 설정

@@ -91,8 +91,12 @@ func (s *HTTPSource) readSingle(ctx context.Context, records chan<- Record, errs
 
 func (s *HTTPSource) readWithPagination(ctx context.Context, records chan<- Record, errs chan<- error) {
 	switch s.pagination.Type {
-	case "offset":
+	case "offset", "page_increment", "page_with_count":
 		s.readWithOffsetPagination(ctx, records, errs)
+	case "next_url":
+		s.readWithNextURLPagination(ctx, records, errs)
+	case "next_offset":
+		s.readWithNextOffsetPagination(ctx, records, errs)
 	default:
 		s.readWithNextURLPagination(ctx, records, errs)
 	}
@@ -109,7 +113,11 @@ func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<
 		perPage = 10
 	}
 
-	pageParam := s.pagination.PageParam
+	// UI 호환: ParamName 우선, PageParam 폴백
+	pageParam := s.pagination.ParamName
+	if pageParam == "" {
+		pageParam = s.pagination.PageParam
+	}
 	if pageParam == "" {
 		pageParam = "page"
 	}
@@ -119,7 +127,11 @@ func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<
 		perPageParam = "perPage"
 	}
 
-	startPage := s.pagination.StartPage
+	// UI 호환: StartValue 우선, StartPage 폴백
+	startPage := s.pagination.StartValue
+	if startPage == 0 {
+		startPage = s.pagination.StartPage
+	}
 	if startPage == 0 {
 		startPage = 1
 	}
@@ -201,6 +213,98 @@ func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<
 	}
 }
 
+func (s *HTTPSource) readWithNextOffsetPagination(ctx context.Context, records chan<- Record, errs chan<- error) {
+	maxPages := s.pagination.MaxPages
+	if maxPages == 0 {
+		maxPages = 100
+	}
+
+	offsetParam := s.pagination.OffsetParam
+	if offsetParam == "" {
+		offsetParam = "offset"
+	}
+
+	baseURL, err := url.Parse(s.url)
+	if err != nil {
+		errs <- fmt.Errorf("invalid base URL: %w", err)
+		return
+	}
+
+	var currentOffset int64 = 0
+	pageCount := 0
+
+	for pageCount < maxPages {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		pageCount++
+
+		// URL에 offset 파라미터 추가
+		query := baseURL.Query()
+		query.Set(offsetParam, fmt.Sprintf("%d", currentOffset))
+		baseURL.RawQuery = query.Encode()
+		currentURL := baseURL.String()
+
+		data, err := s.doRequest(ctx, currentURL)
+		if err != nil {
+			errs <- fmt.Errorf("offset %d: %w", currentOffset, err)
+			return
+		}
+
+		// 데이터 추출
+		var items []any
+		if s.pagination.DataField != "" {
+			if dataField, ok := data[s.pagination.DataField]; ok {
+				if arr, ok := dataField.([]any); ok {
+					items = arr
+				}
+			}
+		}
+
+		// 데이터가 없으면 종료
+		if len(items) == 0 {
+			return
+		}
+
+		for _, item := range items {
+			if m, ok := item.(map[string]any); ok {
+				records <- Record{
+					Data: m,
+					Metadata: Metadata{
+						Source:    "http",
+						Origin:    currentURL,
+						Timestamp: time.Now().UnixMilli(),
+					},
+				}
+			}
+		}
+
+		// 다음 offset 추출 (응답에서 가져오기)
+		if s.pagination.OffsetPath != "" {
+			nextOffset := getNestedValue(data, s.pagination.OffsetPath)
+			if nextOffset == nil {
+				return // 다음 offset이 없으면 종료
+			}
+			switch v := nextOffset.(type) {
+			case float64:
+				currentOffset = int64(v)
+			case int:
+				currentOffset = int64(v)
+			case int64:
+				currentOffset = v
+			default:
+				return
+			}
+		} else {
+			// 응답에 offset이 없으면 items 수만큼 증가
+			currentOffset += int64(len(items))
+		}
+	}
+}
+
 func (s *HTTPSource) readWithNextURLPagination(ctx context.Context, records chan<- Record, errs chan<- error) {
 	currentURL := s.url
 	pageCount := 0
@@ -252,10 +356,27 @@ func (s *HTTPSource) readWithNextURLPagination(ctx context.Context, records chan
 
 		// 다음 페이지 URL 추출
 		currentURL = ""
-		if s.pagination.NextField != "" {
-			if nextURL, ok := data[s.pagination.NextField]; ok {
-				if urlStr, ok := nextURL.(string); ok && urlStr != "" {
-					currentURL = urlStr
+
+		// URLPath 우선 (nested path 지원), NextField 폴백
+		nextURLPath := s.pagination.URLPath
+		if nextURLPath == "" {
+			nextURLPath = s.pagination.NextField
+		}
+
+		if nextURLPath != "" {
+			// 점으로 구분된 경로 지원 (예: links.next)
+			if strings.Contains(nextURLPath, ".") {
+				if nextURL := getNestedValue(data, nextURLPath); nextURL != nil {
+					if urlStr, ok := nextURL.(string); ok && urlStr != "" {
+						currentURL = urlStr
+					}
+				}
+			} else {
+				// 단순 필드명
+				if nextURL, ok := data[nextURLPath]; ok {
+					if urlStr, ok := nextURL.(string); ok && urlStr != "" {
+						currentURL = urlStr
+					}
 				}
 			}
 		}
@@ -424,4 +545,24 @@ func (s *HTTPSource) emitRecords(data map[string]any, origin string, records cha
 
 func (s *HTTPSource) Close() error {
 	return nil
+}
+
+// getNestedValue JSON 객체에서 점으로 구분된 경로의 값을 가져옴
+// 예: "meta.pagination.next_offset" -> data["meta"]["pagination"]["next_offset"]
+func getNestedValue(data map[string]any, path string) any {
+	parts := strings.Split(path, ".")
+	current := any(data)
+
+	for _, part := range parts {
+		if m, ok := current.(map[string]any); ok {
+			current = m[part]
+			if current == nil {
+				return nil
+			}
+		} else {
+			return nil
+		}
+	}
+
+	return current
 }

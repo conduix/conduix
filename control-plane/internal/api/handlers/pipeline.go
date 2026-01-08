@@ -179,7 +179,7 @@ func (h *PipelineHandler) GetStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, types.APIResponse[any]{
 			Success: true,
 			Data: map[string]string{
-				"status": "stopped",
+				"status": "idle",
 			},
 		})
 		return

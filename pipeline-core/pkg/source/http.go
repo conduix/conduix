@@ -80,13 +80,38 @@ func (s *HTTPSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 }
 
 func (s *HTTPSource) readSingle(ctx context.Context, records chan<- Record, errs chan<- error) {
-	data, err := s.doRequest(ctx, s.url)
+	response, err := s.doRequest(ctx, s.url)
 	if err != nil {
 		errs <- err
 		return
 	}
 
-	s.emitRecords(data, s.url, records)
+	// 배열 또는 객체 응답 처리
+	items, obj := extractItems(response, "")
+	if len(items) > 0 {
+		for _, item := range items {
+			if m, ok := item.(map[string]any); ok {
+				records <- Record{
+					Data: m,
+					Metadata: Metadata{
+						Source:    "http",
+						Origin:    s.url,
+						Timestamp: time.Now().UnixMilli(),
+					},
+				}
+			}
+		}
+	} else if obj != nil {
+		// 단일 객체 응답
+		records <- Record{
+			Data: obj,
+			Metadata: Metadata{
+				Source:    "http",
+				Origin:    s.url,
+				Timestamp: time.Now().UnixMilli(),
+			},
+		}
+	}
 }
 
 func (s *HTTPSource) readWithPagination(ctx context.Context, records chan<- Record, errs chan<- error) {
@@ -156,26 +181,25 @@ func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<
 		baseURL.RawQuery = query.Encode()
 		currentURL := baseURL.String()
 
-		data, err := s.doRequest(ctx, currentURL)
+		response, err := s.doRequest(ctx, currentURL)
 		if err != nil {
 			errs <- fmt.Errorf("page %d: %w", page, err)
 			return
 		}
 
-		// 데이터 추출
-		var items []any
-		if s.pagination.DataField != "" {
-			if dataField, ok := data[s.pagination.DataField]; ok {
-				if arr, ok := dataField.([]any); ok {
-					items = arr
-				}
-			}
-		}
+		// 데이터 추출 (배열 또는 객체 응답 모두 지원)
+		items, respObj := extractItems(response, s.pagination.DataField)
 
 		// 데이터가 없으면 종료
 		if len(items) == 0 {
+			if respObj != nil {
+				fmt.Printf("[HTTP] No items found on page %d (dataField=%s, response keys=%v)\n", page, s.pagination.DataField, getMapKeys(respObj))
+			} else {
+				fmt.Printf("[HTTP] No items found on page %d (response is not array or object)\n", page)
+			}
 			return
 		}
+		fmt.Printf("[HTTP] Page %d: found %d items\n", page, len(items))
 
 		for _, item := range items {
 			if m, ok := item.(map[string]any); ok {
@@ -190,9 +214,9 @@ func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<
 			}
 		}
 
-		// totalCount 기반 종료 체크
-		if s.pagination.TotalField != "" {
-			if totalVal, ok := data[s.pagination.TotalField]; ok {
+		// totalCount 기반 종료 체크 (객체 응답인 경우만)
+		if respObj != nil && s.pagination.TotalField != "" {
+			if totalVal, ok := respObj[s.pagination.TotalField]; ok {
 				var total int
 				switch v := totalVal.(type) {
 				case float64:
@@ -248,21 +272,14 @@ func (s *HTTPSource) readWithNextOffsetPagination(ctx context.Context, records c
 		baseURL.RawQuery = query.Encode()
 		currentURL := baseURL.String()
 
-		data, err := s.doRequest(ctx, currentURL)
+		response, err := s.doRequest(ctx, currentURL)
 		if err != nil {
 			errs <- fmt.Errorf("offset %d: %w", currentOffset, err)
 			return
 		}
 
-		// 데이터 추출
-		var items []any
-		if s.pagination.DataField != "" {
-			if dataField, ok := data[s.pagination.DataField]; ok {
-				if arr, ok := dataField.([]any); ok {
-					items = arr
-				}
-			}
-		}
+		// 데이터 추출 (배열 또는 객체 응답 모두 지원)
+		items, respObj := extractItems(response, s.pagination.DataField)
 
 		// 데이터가 없으면 종료
 		if len(items) == 0 {
@@ -282,9 +299,9 @@ func (s *HTTPSource) readWithNextOffsetPagination(ctx context.Context, records c
 			}
 		}
 
-		// 다음 offset 추출 (응답에서 가져오기)
-		if s.pagination.OffsetPath != "" {
-			nextOffset := getNestedValue(data, s.pagination.OffsetPath)
+		// 다음 offset 추출 (응답에서 가져오기, 객체 응답인 경우만)
+		if respObj != nil && s.pagination.OffsetPath != "" {
+			nextOffset := getNestedValue(respObj, s.pagination.OffsetPath)
 			if nextOffset == nil {
 				return // 다음 offset이 없으면 종료
 			}
@@ -322,23 +339,18 @@ func (s *HTTPSource) readWithNextURLPagination(ctx context.Context, records chan
 
 		pageCount++
 
-		data, err := s.doRequest(ctx, currentURL)
+		response, err := s.doRequest(ctx, currentURL)
 		if err != nil {
 			errs <- fmt.Errorf("page %d: %w", pageCount, err)
 			return
 		}
 
-		// 데이터 추출
-		var items []any
-		if s.pagination.DataField != "" {
-			if dataField, ok := data[s.pagination.DataField]; ok {
-				if arr, ok := dataField.([]any); ok {
-					items = arr
-				}
-			}
-		} else {
-			// 전체 응답이 배열인 경우
-			items = []any{data}
+		// 데이터 추출 (배열 또는 객체 응답 모두 지원)
+		items, respObj := extractItems(response, s.pagination.DataField)
+
+		// 배열도 아니고 객체에서 데이터도 못 찾은 경우, 객체 자체를 단일 아이템으로 처리
+		if len(items) == 0 && respObj != nil {
+			items = []any{respObj}
 		}
 
 		for _, item := range items {
@@ -354,28 +366,30 @@ func (s *HTTPSource) readWithNextURLPagination(ctx context.Context, records chan
 			}
 		}
 
-		// 다음 페이지 URL 추출
+		// 다음 페이지 URL 추출 (객체 응답인 경우만)
 		currentURL = ""
 
-		// URLPath 우선 (nested path 지원), NextField 폴백
-		nextURLPath := s.pagination.URLPath
-		if nextURLPath == "" {
-			nextURLPath = s.pagination.NextField
-		}
+		if respObj != nil {
+			// URLPath 우선 (nested path 지원), NextField 폴백
+			nextURLPath := s.pagination.URLPath
+			if nextURLPath == "" {
+				nextURLPath = s.pagination.NextField
+			}
 
-		if nextURLPath != "" {
-			// 점으로 구분된 경로 지원 (예: links.next)
-			if strings.Contains(nextURLPath, ".") {
-				if nextURL := getNestedValue(data, nextURLPath); nextURL != nil {
-					if urlStr, ok := nextURL.(string); ok && urlStr != "" {
-						currentURL = urlStr
+			if nextURLPath != "" {
+				// 점으로 구분된 경로 지원 (예: links.next)
+				if strings.Contains(nextURLPath, ".") {
+					if nextURL := getNestedValue(respObj, nextURLPath); nextURL != nil {
+						if urlStr, ok := nextURL.(string); ok && urlStr != "" {
+							currentURL = urlStr
+						}
 					}
-				}
-			} else {
-				// 단순 필드명
-				if nextURL, ok := data[nextURLPath]; ok {
-					if urlStr, ok := nextURL.(string); ok && urlStr != "" {
-						currentURL = urlStr
+				} else {
+					// 단순 필드명
+					if nextURL, ok := respObj[nextURLPath]; ok {
+						if urlStr, ok := nextURL.(string); ok && urlStr != "" {
+							currentURL = urlStr
+						}
 					}
 				}
 			}
@@ -383,7 +397,7 @@ func (s *HTTPSource) readWithNextURLPagination(ctx context.Context, records chan
 	}
 }
 
-func (s *HTTPSource) doRequest(ctx context.Context, requestURL string) (map[string]any, error) {
+func (s *HTTPSource) doRequest(ctx context.Context, requestURL string) (any, error) {
 	var bodyReader io.Reader
 	if s.body != "" {
 		bodyReader = bytes.NewReader([]byte(s.body))
@@ -421,7 +435,8 @@ func (s *HTTPSource) doRequest(ctx context.Context, requestURL string) (map[stri
 		return nil, fmt.Errorf("http error %d: %s", resp.StatusCode, string(body))
 	}
 
-	var result map[string]any
+	// any 타입으로 디코딩 (배열 또는 객체 모두 지원)
+	var result any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -514,37 +529,44 @@ func (s *HTTPSource) getOAuth2Token(ctx context.Context) (string, error) {
 	return s.accessToken, nil
 }
 
-func (s *HTTPSource) emitRecords(data map[string]any, origin string, records chan<- Record) {
-	// 응답이 배열인 경우
-	if arr, ok := data["data"].([]any); ok {
-		for _, item := range arr {
-			if m, ok := item.(map[string]any); ok {
-				records <- Record{
-					Data: m,
-					Metadata: Metadata{
-						Source:    "http",
-						Origin:    origin,
-						Timestamp: time.Now().UnixMilli(),
-					},
-				}
-			}
-		}
-		return
-	}
-
-	// 단일 객체
-	records <- Record{
-		Data: data,
-		Metadata: Metadata{
-			Source:    "http",
-			Origin:    origin,
-			Timestamp: time.Now().UnixMilli(),
-		},
-	}
-}
-
 func (s *HTTPSource) Close() error {
 	return nil
+}
+
+// getMapKeys map의 키 목록 반환 (디버깅용)
+func getMapKeys(data map[string]any) []string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// extractItems 응답에서 데이터 배열 추출
+// - 응답이 배열이면 직접 반환
+// - 응답이 객체면 dataField에서 추출 (기본값: "data")
+func extractItems(response any, dataField string) ([]any, map[string]any) {
+	// 응답이 직접 배열인 경우
+	if arr, ok := response.([]any); ok {
+		return arr, nil
+	}
+
+	// 응답이 객체인 경우
+	if obj, ok := response.(map[string]any); ok {
+		fieldName := dataField
+		if fieldName == "" {
+			fieldName = "data"
+		}
+
+		if dataValue, ok := obj[fieldName]; ok {
+			if arr, ok := dataValue.([]any); ok {
+				return arr, obj
+			}
+		}
+		return nil, obj
+	}
+
+	return nil, nil
 }
 
 // getNestedValue JSON 객체에서 점으로 구분된 경로의 값을 가져옴

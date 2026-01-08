@@ -97,6 +97,10 @@ type DataType struct {
 	// 스키마 정보 (선택적)
 	Schema *DataTypeSchema `json:"schema,omitempty"`
 
+	// JSON Schema for validation (JSON Schema draft-07)
+	// Source에서 읽은 데이터가 이 스키마를 만족하는지 검증
+	JSONSchema string `json:"json_schema,omitempty"`
+
 	// 저장소 설정
 	Storage *DataTypeStorage `json:"storage,omitempty"`
 

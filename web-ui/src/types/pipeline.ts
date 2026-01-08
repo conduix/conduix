@@ -87,7 +87,9 @@ export interface TargetModelMapping {
 }
 
 // Stage 타입 정의
+// 변환 Stage와 출력 Stage 모두 포함 (통합 추상화)
 export type StageType =
+  // 변환 Stage
   | 'filter'    // 조건 필터링
   | 'remap'     // 필드 이름 변경
   | 'drop'      // 필드 삭제
@@ -100,9 +102,16 @@ export type StageType =
   | 'timestamp' // 타임스탬프 처리
   | 'throttle'  // 처리량 제한
   | 'validate'  // 스키마 검증
-  | 'sink'      // 추가 출력
   | 'route'     // 이벤트 라우팅 (CDC용)
   | 'delete'    // 삭제 처리 (CDC용)
+  // Output Stage (출력)
+  | 'sql'           // SQL 데이터베이스 출력
+  | 'elasticsearch' // Elasticsearch 출력
+  | 'kafka'         // Kafka 출력
+  | 'mongodb'       // MongoDB 출력
+  | 's3'            // S3 출력
+  | 'rest_api'      // REST API 출력
+  | 'file'          // 파일 출력
 
 // Stage 인터페이스
 export interface Stage {
@@ -189,7 +198,7 @@ export interface ValidateStageConfig {
   drop_on_fail?: boolean
 }
 
-export interface SinkStageConfig {
+export interface OutputStageConfig {
   type: string         // elasticsearch, kafka, etc.
   config: Record<string, unknown>
 }
@@ -214,14 +223,6 @@ export interface DeleteStageConfig {
   }
 }
 
-// 싱크 설정
-export interface WorkflowSink {
-  type: string // elasticsearch, kafka, sql, mongodb, s3, rest_api
-  name: string
-  config: Record<string, unknown>
-  condition?: string
-}
-
 // 워크플로우 내 파이프라인 정의
 export interface WorkflowPipeline {
   id: string
@@ -231,8 +232,7 @@ export interface WorkflowPipeline {
   depends_on?: string[]
   source: WorkflowSource
   transforms?: TransformStep[]  // 레거시
-  stages?: Stage[]              // 새로운 Stage 배열
-  sinks: WorkflowSink[]
+  stages?: Stage[]              // Stage 배열 (변환 + 출력 모두 포함)
   weight?: number
 
   // 실시간 파이프라인 모드 (realtime workflow에서만 사용)

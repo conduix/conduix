@@ -18,6 +18,8 @@ import {
   Input,
   Select,
   Popconfirm,
+  Collapse,
+  Alert,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -35,6 +37,8 @@ import {
   CloseCircleOutlined,
   SyncOutlined,
   StopOutlined,
+  EyeOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -84,6 +88,36 @@ interface WorkflowExecution {
   created_at: string
 }
 
+interface PipelineExecutionResult {
+  pipeline_id: string
+  pipeline_name: string
+  status: string
+  started_at: string
+  completed_at?: string
+  records_read: number
+  records_written: number
+  records_processed: number
+  records_failed: number
+  error_message?: string
+}
+
+interface ExecutionDetail {
+  id: string
+  workflow_id: string
+  status: string
+  started_at: string
+  completed_at?: string
+  duration_ms?: number
+  total_records: number
+  failed_records: number
+  error_message?: string
+  triggered_by?: string
+  triggered_by_id?: string
+  created_at: string
+  pipelines_snapshot?: WorkflowPipeline[]
+  pipeline_results?: PipelineExecutionResult[]
+}
+
 export default function WorkflowDetailPage() {
   const { t } = useTranslation()
   const { id, workflowId } = useParams<{ id?: string; workflowId?: string }>()
@@ -102,6 +136,11 @@ export default function WorkflowDetailPage() {
   const [saving, setSaving] = useState(false)
   const [selectedParentPipeline, setSelectedParentPipeline] = useState<string | undefined>()
   const [actionLoading, setActionLoading] = useState(false)
+
+  // Execution detail modal states
+  const [executionDetailVisible, setExecutionDetailVisible] = useState(false)
+  const [executionDetail, setExecutionDetail] = useState<ExecutionDetail | null>(null)
+  const [executionDetailLoading, setExecutionDetailLoading] = useState(false)
 
   useEffect(() => {
     if (effectiveId) {
@@ -185,6 +224,24 @@ export default function WorkflowDetailPage() {
     }
   }
 
+  const handleViewExecutionDetail = async (executionId: string) => {
+    if (!effectiveId) return
+    try {
+      setExecutionDetailLoading(true)
+      setExecutionDetailVisible(true)
+      const res = await api.getWorkflowExecution(effectiveId, executionId)
+      if (res.success && res.data) {
+        setExecutionDetail(res.data)
+      } else {
+        message.error(t('workflow.executionDetailError'))
+      }
+    } catch (error) {
+      message.error(t('workflow.executionDetailError'))
+    } finally {
+      setExecutionDetailLoading(false)
+    }
+  }
+
   const handleCreatePipeline = () => {
     setEditingPipeline(null)
     setSelectedParentPipeline(undefined)
@@ -194,7 +251,6 @@ export default function WorkflowDetailPage() {
       priority: pipelines.length,
       expansion_mode: 'none',
       source: { type: 'rest_api', name: '', config: {} },
-      sinks: [{ type: 'elasticsearch', name: '', config: {} }],
       // Default to 'cdc' mode for realtime workflows
       realtime_mode: workflow?.type === 'realtime' ? 'cdc' : undefined,
       // Initialize target_models for realtime, empty array
@@ -287,7 +343,6 @@ export default function WorkflowDetailPage() {
         description: values.description,
         priority: values.priority,
         source: editingPipeline?.source || { type: 'rest_api', name: values.name, config: {} },
-        sinks: editingPipeline?.sinks || [{ type: 'elasticsearch', name: values.name, config: {} }],
         parent_pipeline_id: values.parent_pipeline_id || null,
         target_data_type_id: targetDataTypeId,
         expansion_mode: values.expansion_mode || 'none',
@@ -429,17 +484,23 @@ export default function WorkflowDetailPage() {
       render: (type: string) => <Tag>{type}</Tag>,
     },
     {
-      title: t('pipeline.sink'),
-      key: 'sinks',
+      title: t('pipeline.output'),
+      key: 'outputStages',
       width: 120,
-      render: (_: unknown, record: WorkflowPipeline) => (
-        <Space>
-          {record.sinks?.slice(0, 2).map((sink, i) => (
-            <Tag key={i}>{sink.type}</Tag>
-          ))}
-          {record.sinks?.length > 2 && <Tag>+{record.sinks.length - 2}</Tag>}
-        </Space>
-      ),
+      render: (_: unknown, record: WorkflowPipeline) => {
+        // 출력 타입 stage들만 필터링
+        const outputTypes = ['sql', 'elasticsearch', 'kafka', 'mongodb', 's3', 'rest_api', 'file']
+        const outputStages = record.stages?.filter(s => outputTypes.includes(s.type)) || []
+        return (
+          <Space>
+            {outputStages.slice(0, 2).map((stage, i) => (
+              <Tag key={i}>{stage.type}</Tag>
+            ))}
+            {outputStages.length > 2 && <Tag>+{outputStages.length - 2}</Tag>}
+            {outputStages.length === 0 && <Tag color="default">-</Tag>}
+          </Space>
+        )
+      },
     },
     {
       title: t('pipeline.priority'),
@@ -713,7 +774,22 @@ export default function WorkflowDetailPage() {
                         dataIndex: 'error_message',
                         key: 'error_message',
                         ellipsis: true,
-                        render: (msg: string) => msg || '-',
+                        render: (msg: string) => msg ? (
+                          <Text type="danger" ellipsis={{ tooltip: msg }}>{msg}</Text>
+                        ) : '-',
+                      },
+                      {
+                        title: t('common.actions'),
+                        key: 'actions',
+                        width: 80,
+                        render: (_: unknown, record: WorkflowExecution) => (
+                          <Button
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => handleViewExecutionDetail(record.id)}
+                            title={t('workflow.viewExecutionDetail')}
+                          />
+                        ),
                       },
                     ]}
                   />
@@ -958,6 +1034,232 @@ export default function WorkflowDetailPage() {
             </>
           )}
         </Form>
+      </Modal>
+
+      {/* Execution Detail Modal */}
+      <Modal
+        title={t('workflow.executionDetail')}
+        open={executionDetailVisible}
+        onCancel={() => {
+          setExecutionDetailVisible(false)
+          setExecutionDetail(null)
+        }}
+        footer={[
+          <Button key="close" onClick={() => {
+            setExecutionDetailVisible(false)
+            setExecutionDetail(null)
+          }}>
+            {t('common.close')}
+          </Button>
+        ]}
+        width={900}
+      >
+        {executionDetailLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+            <Spin size="large" />
+          </div>
+        ) : executionDetail ? (
+          <div>
+            {/* Error Alert */}
+            {executionDetail.error_message && (
+              <Alert
+                type="error"
+                icon={<ExclamationCircleOutlined />}
+                message={t('workflow.executionError')}
+                description={executionDetail.error_message}
+                style={{ marginBottom: 16 }}
+                showIcon
+              />
+            )}
+
+            {/* Execution Overview */}
+            <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label={t('workflow.executionId')}>
+                <code style={{ fontSize: 11 }}>{executionDetail.id}</code>
+              </Descriptions.Item>
+              <Descriptions.Item label={t('common.status')}>
+                {(() => {
+                  const statusConfig: Record<string, { color: string; icon: React.ReactNode; text: string }> = {
+                    completed: { color: 'success', icon: <CheckCircleOutlined />, text: t('pipeline.status.completed') },
+                    running: { color: 'processing', icon: <SyncOutlined spin />, text: t('pipeline.status.running') },
+                    error: { color: 'error', icon: <CloseCircleOutlined />, text: t('pipeline.status.error') },
+                    stopped: { color: 'default', icon: <StopOutlined />, text: t('pipeline.status.stopped') },
+                  }
+                  const config = statusConfig[executionDetail.status] || { color: 'default', icon: null, text: executionDetail.status }
+                  return <Tag icon={config.icon} color={config.color}>{config.text}</Tag>
+                })()}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.startedAt')}>
+                {new Date(executionDetail.started_at).toLocaleString()}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.completedAt')}>
+                {executionDetail.completed_at ? new Date(executionDetail.completed_at).toLocaleString() : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.duration')}>
+                {(() => {
+                  if (!executionDetail.started_at) return '-'
+                  const start = new Date(executionDetail.started_at).getTime()
+                  const end = executionDetail.completed_at ? new Date(executionDetail.completed_at).getTime() : Date.now()
+                  const duration = Math.round((end - start) / 1000)
+                  if (duration < 60) return `${duration}s`
+                  if (duration < 3600) return `${Math.floor(duration / 60)}m ${duration % 60}s`
+                  return `${Math.floor(duration / 3600)}h ${Math.floor((duration % 3600) / 60)}m`
+                })()}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.triggeredBy')}>
+                {executionDetail.triggered_by || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.totalRecords')}>
+                {executionDetail.total_records.toLocaleString()}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.failedRecords')}>
+                {executionDetail.failed_records > 0 ? (
+                  <Text type="danger">{executionDetail.failed_records.toLocaleString()}</Text>
+                ) : executionDetail.failed_records}
+              </Descriptions.Item>
+            </Descriptions>
+
+            {/* Pipeline Results */}
+            {executionDetail.pipeline_results && executionDetail.pipeline_results.length > 0 && (
+              <Card title={t('workflow.pipelineResults')} size="small" style={{ marginBottom: 16 }}>
+                <Table
+                  dataSource={executionDetail.pipeline_results}
+                  rowKey="pipeline_id"
+                  size="small"
+                  pagination={false}
+                  columns={[
+                    {
+                      title: t('pipeline.name'),
+                      dataIndex: 'pipeline_name',
+                      key: 'pipeline_name',
+                    },
+                    {
+                      title: t('common.status'),
+                      dataIndex: 'status',
+                      key: 'status',
+                      width: 100,
+                      render: (status: string) => {
+                        const config: Record<string, { color: string; text: string }> = {
+                          completed: { color: 'success', text: t('pipeline.status.completed') },
+                          running: { color: 'processing', text: t('pipeline.status.running') },
+                          error: { color: 'error', text: t('pipeline.status.error') },
+                        }
+                        const c = config[status] || { color: 'default', text: status }
+                        return <Tag color={c.color}>{c.text}</Tag>
+                      },
+                    },
+                    {
+                      title: t('workflow.recordsRead'),
+                      dataIndex: 'records_read',
+                      key: 'records_read',
+                      align: 'right' as const,
+                      render: (v: number) => v?.toLocaleString() || 0,
+                    },
+                    {
+                      title: t('workflow.recordsWritten'),
+                      dataIndex: 'records_written',
+                      key: 'records_written',
+                      align: 'right' as const,
+                      render: (v: number) => v?.toLocaleString() || 0,
+                    },
+                    {
+                      title: t('workflow.failedRecords'),
+                      dataIndex: 'records_failed',
+                      key: 'records_failed',
+                      align: 'right' as const,
+                      render: (v: number) => v > 0 ? <Text type="danger">{v}</Text> : v || 0,
+                    },
+                    {
+                      title: t('workflow.errorMessage'),
+                      dataIndex: 'error_message',
+                      key: 'error_message',
+                      ellipsis: true,
+                      render: (msg: string) => msg ? <Text type="danger">{msg}</Text> : '-',
+                    },
+                  ]}
+                />
+              </Card>
+            )}
+
+            {/* Pipeline Configuration Snapshot */}
+            {executionDetail.pipelines_snapshot && executionDetail.pipelines_snapshot.length > 0 && (
+              <Card title={t('workflow.pipelineConfigSnapshot')} size="small">
+                <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                  {t('workflow.pipelineConfigSnapshotHelp')}
+                </Text>
+                <Collapse>
+                  {executionDetail.pipelines_snapshot.map((pipeline, index) => (
+                    <Collapse.Panel
+                      header={
+                        <Space>
+                          <span>{pipeline.name}</span>
+                          <Tag>{pipeline.source?.type || 'unknown'}</Tag>
+                          {pipeline.stages && pipeline.stages.length > 0 && (
+                            <Tag color="blue">{pipeline.stages.length} {t('stage.title')}</Tag>
+                          )}
+                        </Space>
+                      }
+                      key={pipeline.id || index}
+                    >
+                      {/* Source Config */}
+                      <Descriptions title={t('source.title')} bordered column={1} size="small" style={{ marginBottom: 16 }}>
+                        <Descriptions.Item label={t('source.type')}>
+                          <Tag>{pipeline.source?.type}</Tag>
+                        </Descriptions.Item>
+                        <Descriptions.Item label={t('source.config')}>
+                          <pre style={{ margin: 0, fontSize: 11, maxHeight: 200, overflow: 'auto', background: '#f5f5f5', padding: 8, borderRadius: 4 }}>
+                            {JSON.stringify(pipeline.source?.config || {}, null, 2)}
+                          </pre>
+                        </Descriptions.Item>
+                      </Descriptions>
+
+                      {/* Stages */}
+                      {pipeline.stages && pipeline.stages.length > 0 && (
+                        <div style={{ marginBottom: 16 }}>
+                          <Title level={5}>{t('stage.title')}</Title>
+                          <Table
+                            dataSource={pipeline.stages}
+                            rowKey={(_, idx) => String(idx)}
+                            size="small"
+                            pagination={false}
+                            columns={[
+                              {
+                                title: t('stage.name'),
+                                dataIndex: 'name',
+                                key: 'name',
+                                width: 150,
+                              },
+                              {
+                                title: t('stage.type'),
+                                dataIndex: 'type',
+                                key: 'type',
+                                width: 100,
+                                render: (type: string) => <Tag>{type}</Tag>,
+                              },
+                              {
+                                title: t('stage.config'),
+                                dataIndex: 'config',
+                                key: 'config',
+                                render: (config: Record<string, unknown>) => (
+                                  <pre style={{ margin: 0, fontSize: 10, maxHeight: 100, overflow: 'auto', background: '#f5f5f5', padding: 4, borderRadius: 4 }}>
+                                    {JSON.stringify(config || {}, null, 2)}
+                                  </pre>
+                                ),
+                              },
+                            ]}
+                          />
+                        </div>
+                      )}
+
+                    </Collapse.Panel>
+                  ))}
+                </Collapse>
+              </Card>
+            )}
+          </div>
+        ) : (
+          <Empty description={t('workflow.noExecutionDetail')} />
+        )}
       </Modal>
     </div>
   )

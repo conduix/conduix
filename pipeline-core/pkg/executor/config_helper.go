@@ -155,6 +155,53 @@ func configToSourceV2(cfg map[string]any) config.SourceV2 {
 		result.PollInterval = int(v)
 	}
 
+	// Pagination
+	if paginationCfg, ok := cfg["pagination"].(map[string]any); ok {
+		result.Pagination = &config.PaginationConfig{}
+		if v, ok := paginationCfg["type"].(string); ok {
+			result.Pagination.Type = v
+		}
+		if v, ok := paginationCfg["page_param"].(string); ok {
+			result.Pagination.PageParam = v
+		}
+		if v, ok := paginationCfg["param_name"].(string); ok {
+			result.Pagination.ParamName = v
+		}
+		if v, ok := paginationCfg["per_page_param"].(string); ok {
+			result.Pagination.PerPageParam = v
+		}
+		if v, ok := paginationCfg["start_page"].(float64); ok {
+			result.Pagination.StartPage = int(v)
+		}
+		if v, ok := paginationCfg["start_value"].(float64); ok {
+			result.Pagination.StartValue = int(v)
+		}
+		if v, ok := paginationCfg["per_page"].(float64); ok {
+			result.Pagination.PerPage = int(v)
+		}
+		if v, ok := paginationCfg["max_pages"].(float64); ok {
+			result.Pagination.MaxPages = int(v)
+		}
+		if v, ok := paginationCfg["data_field"].(string); ok {
+			result.Pagination.DataField = v
+		}
+		if v, ok := paginationCfg["next_field"].(string); ok {
+			result.Pagination.NextField = v
+		}
+		if v, ok := paginationCfg["total_field"].(string); ok {
+			result.Pagination.TotalField = v
+		}
+		if v, ok := paginationCfg["offset_param"].(string); ok {
+			result.Pagination.OffsetParam = v
+		}
+		if v, ok := paginationCfg["offset_path"].(string); ok {
+			result.Pagination.OffsetPath = v
+		}
+		if v, ok := paginationCfg["url_path"].(string); ok {
+			result.Pagination.URLPath = v
+		}
+	}
+
 	// CDC
 	if v, ok := cfg["host"].(string); ok {
 		result.Host = v

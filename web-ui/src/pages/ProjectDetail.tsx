@@ -29,6 +29,7 @@ import {
   UserOutlined,
   PlusOutlined,
   DatabaseOutlined,
+  EyeOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -103,6 +104,7 @@ interface DataType {
   description?: string
   category?: string
   id_fields?: string
+  json_schema?: string
   created_at: string
   updated_at: string
   parent?: DataType
@@ -362,6 +364,7 @@ export default function ProjectDetailPage() {
       description: dataType.description,
       category: dataType.category || 'master',
       parent_id: dataType.parent_id || undefined,
+      json_schema: dataType.json_schema || '',
     }
     if (dataType.parent_id) {
       formValues.id_fields = idFieldsArray
@@ -426,6 +429,7 @@ export default function ProjectDetailPage() {
         category: values.category,
         parent_id: values.parent_id || null,
         id_fields: idFieldsArray,
+        json_schema: values.json_schema || null,
       }
 
       if (editingDataType) {
@@ -631,7 +635,7 @@ export default function ProjectDetailPage() {
               {depth > 0 && (
                 <span style={{ color: '#999', fontSize: 12 }}>└─</span>
               )}
-              <span>{displayName}</span>
+              <a onClick={() => navigate(`/data-models/${record.id}`)}>{displayName}</a>
             </Space>
             <div style={{ fontSize: 12, color: '#999', paddingLeft: depth > 0 ? 20 : 0 }}>
               <code>{record.name}</code>
@@ -667,7 +671,7 @@ export default function ProjectDetailPage() {
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 120,
+      width: 150,
       render: (_: unknown, record: DataType) => {
         // 자식이 있으면 삭제 불가
         const hasChildren = dataTypes.some(dt => dt.parent_id === record.id)
@@ -675,8 +679,15 @@ export default function ProjectDetailPage() {
           <Space>
             <Button
               size="small"
+              icon={<EyeOutlined />}
+              onClick={() => navigate(`/data-models/${record.id}`)}
+              title={t('dataModel.viewDetail')}
+            />
+            <Button
+              size="small"
               icon={<EditOutlined />}
               onClick={() => handleEditDataType(record)}
+              title={t('common.edit')}
             />
             {!hasChildren && (
               <Popconfirm
@@ -686,7 +697,7 @@ export default function ProjectDetailPage() {
                 okText={t('common.delete')}
                 cancelText={t('common.cancel')}
               >
-                <Button size="small" danger icon={<DeleteOutlined />} />
+                <Button size="small" danger icon={<DeleteOutlined />} title={t('common.delete')} />
               </Popconfirm>
             )}
           </Space>
@@ -1182,6 +1193,18 @@ export default function ProjectDetailPage() {
 
           <Form.Item name="description" label={t('common.description')}>
             <Input.TextArea rows={3} placeholder={t('project.descriptionPlaceholder')} />
+          </Form.Item>
+
+          <Form.Item
+            name="json_schema"
+            label={t('dataModel.jsonSchema')}
+            extra={t('dataModel.jsonSchemaHelp')}
+          >
+            <Input.TextArea
+              rows={10}
+              placeholder={t('dataModel.jsonSchemaPlaceholder')}
+              style={{ fontFamily: 'monospace' }}
+            />
           </Form.Item>
         </Form>
       </Modal>

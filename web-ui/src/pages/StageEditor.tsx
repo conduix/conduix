@@ -38,6 +38,7 @@ import {
   ClockCircleOutlined,
   DashboardOutlined,
   ForkOutlined,
+  DatabaseOutlined,
   StopOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -45,9 +46,91 @@ import Editor from '@monaco-editor/react'
 import yaml from 'js-yaml'
 import { api } from '../services/api'
 import type { Stage, StageType, WorkflowPipeline } from '../types/pipeline'
+import type { DataType, DataTypeField } from '../types/data-type'
 import './StageEditor.css'
 
 const { Title, Text } = Typography
+
+// JSON Schema 타입을 SQL 타입으로 변환
+const jsonSchemaTypeToSQL = (type: string, format?: string): string => {
+  switch (type) {
+    case 'string':
+      if (format === 'date-time' || format === 'datetime') return 'TIMESTAMP'
+      if (format === 'date') return 'DATE'
+      if (format === 'time') return 'TIME'
+      if (format === 'uuid') return 'UUID'
+      return 'VARCHAR(255)'
+    case 'integer':
+    case 'int':
+      return 'INTEGER'
+    case 'number':
+    case 'float':
+      return 'DECIMAL(18,6)'
+    case 'boolean':
+    case 'bool':
+      return 'BOOLEAN'
+    case 'object':
+    case 'json':
+      return 'JSONB'
+    case 'array':
+      return 'JSONB'
+    case 'datetime':
+      return 'TIMESTAMP'
+    default:
+      return 'TEXT'
+  }
+}
+
+// DataTypeField 배열에서 CREATE TABLE 생성
+const generateCreateTableFromFields = (tableName: string, fields: DataTypeField[], idFields?: string[]): string => {
+  if (!fields || fields.length === 0) {
+    return `-- No fields defined in schema\nCREATE TABLE ${tableName} (\n  id SERIAL PRIMARY KEY\n);`
+  }
+
+  const columnDefs = fields.map(field => {
+    const sqlType = jsonSchemaTypeToSQL(field.type)
+    const nullable = field.required ? ' NOT NULL' : ''
+    return `  ${field.name} ${sqlType}${nullable}`
+  })
+
+  // Add primary key constraint if id_fields are defined
+  let primaryKeyClause = ''
+  if (idFields && idFields.length > 0) {
+    primaryKeyClause = `,\n  PRIMARY KEY (${idFields.join(', ')})`
+  }
+
+  return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columnDefs.join(',\n')}${primaryKeyClause}\n);`
+}
+
+// JSON Schema에서 CREATE TABLE 생성
+const generateCreateTableFromJsonSchema = (tableName: string, schemaStr: string, idFields?: string[]): string => {
+  try {
+    const schema = JSON.parse(schemaStr)
+    if (!schema.properties) {
+      return `-- Invalid JSON Schema: no properties found\nCREATE TABLE ${tableName} (\n  id SERIAL PRIMARY KEY\n);`
+    }
+
+    const columnDefs: string[] = []
+    const required = schema.required || []
+
+    for (const [propName, propDef] of Object.entries(schema.properties)) {
+      const prop = propDef as { type?: string; format?: string }
+      const sqlType = jsonSchemaTypeToSQL(prop.type || 'string', prop.format)
+      const nullable = required.includes(propName) ? ' NOT NULL' : ''
+      columnDefs.push(`  ${propName} ${sqlType}${nullable}`)
+    }
+
+    // Add primary key constraint if id_fields are defined
+    let primaryKeyClause = ''
+    if (idFields && idFields.length > 0) {
+      primaryKeyClause = `,\n  PRIMARY KEY (${idFields.join(', ')})`
+    }
+
+    return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columnDefs.join(',\n')}${primaryKeyClause}\n);`
+  } catch {
+    return `-- Failed to parse JSON Schema\nCREATE TABLE ${tableName} (\n  id SERIAL PRIMARY KEY\n);`
+  }
+}
 
 interface Workflow {
   id: string
@@ -64,6 +147,7 @@ interface Workflow {
 
 // Stage 타입별 색상 및 아이콘
 const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode; label: string }> = {
+  // 변환 Stage
   filter: { color: 'blue', icon: <FilterOutlined />, label: 'Filter' },
   remap: { color: 'green', icon: <SwapOutlined />, label: 'Remap' },
   drop: { color: 'red', icon: <MinusCircleOutlined />, label: 'Drop' },
@@ -76,9 +160,38 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
   timestamp: { color: 'pink', icon: <ClockCircleOutlined />, label: 'Timestamp' },
   throttle: { color: 'orange', icon: <DashboardOutlined />, label: 'Throttle' },
   validate: { color: 'default', icon: <CheckCircleOutlined />, label: 'Validate' },
-  sink: { color: 'purple', icon: <ExportOutlined />, label: 'Sink' },
   route: { color: 'cyan', icon: <ForkOutlined />, label: 'Route' },
   delete: { color: 'red', icon: <StopOutlined />, label: 'Delete' },
+  // Output Stage (출력)
+  sql: { color: 'purple', icon: <ExportOutlined />, label: 'SQL Output' },
+  elasticsearch: { color: 'purple', icon: <ExportOutlined />, label: 'Elasticsearch Output' },
+  kafka: { color: 'purple', icon: <ExportOutlined />, label: 'Kafka Output' },
+  mongodb: { color: 'purple', icon: <ExportOutlined />, label: 'MongoDB Output' },
+  s3: { color: 'purple', icon: <ExportOutlined />, label: 'S3 Output' },
+  rest_api: { color: 'purple', icon: <ExportOutlined />, label: 'REST API Output' },
+  file: { color: 'purple', icon: <ExportOutlined />, label: 'File Output' },
+}
+
+// Output 타입별 설정 placeholder
+const getOutputConfigPlaceholder = (outputType: StageType): string => {
+  switch (outputType) {
+    case 'sql':
+      return '{"connection_string": "postgres://...", "table": "my_table", "batch_size": 100}'
+    case 'elasticsearch':
+      return '{"addresses": ["http://localhost:9200"], "index": "my-index", "batch_size": 100}'
+    case 'kafka':
+      return '{"brokers": ["localhost:9092"], "topic": "my-topic"}'
+    case 'mongodb':
+      return '{"uri": "mongodb://localhost:27017", "database": "mydb", "collection": "mycollection"}'
+    case 's3':
+      return '{"bucket": "my-bucket", "region": "us-east-1", "prefix": "data/"}'
+    case 'rest_api':
+      return '{"url": "https://api.example.com/data", "method": "POST", "headers": {}}'
+    case 'file':
+      return '{"path": "/data/output", "format": "json"}'
+    default:
+      return '{}'
+  }
 }
 
 export default function StageEditorPage() {
@@ -354,15 +467,60 @@ export default function StageEditorPage() {
       // validate
       schema: stage.config?.schema ? JSON.stringify(stage.config.schema, null, 2) : '',
       drop_on_fail: stage.config?.drop_on_fail || false,
-      // sink
-      sink_type: stage.config?.type || '',
-      sink_config: stage.config?.config ? JSON.stringify(stage.config.config, null, 2) : '',
+      // output stages - config is directly in stage.config
+      output_config: stage.config ? JSON.stringify(stage.config, null, 2) : '',
     })
     setStageModalVisible(true)
   }
 
   const handleDeleteStage = (id: string) => {
     setStages(stages.filter(s => s.id !== id))
+  }
+
+  // Generate CREATE TABLE from target data model schema
+  const handleGenerateCreateTable = async () => {
+    if (!pipeline?.target_data_type_id) {
+      message.warning(t('stage.noTargetDataModel'))
+      return
+    }
+
+    try {
+      const res = await api.getDataType(pipeline.target_data_type_id)
+      if (res.success && res.data) {
+        const dataType = res.data as DataType
+        const tableName = dataType.name || 'my_table'
+        let createTableSQL = ''
+
+        if (dataType.schema?.fields && dataType.schema.fields.length > 0) {
+          // Use fields array
+          createTableSQL = generateCreateTableFromFields(tableName, dataType.schema.fields, dataType.id_fields)
+        } else if (dataType.schema?.definition) {
+          // Use JSON Schema definition
+          createTableSQL = generateCreateTableFromJsonSchema(tableName, dataType.schema.definition, dataType.id_fields)
+        } else {
+          message.warning(t('stage.noSchemaDefinition'))
+          return
+        }
+
+        // Get current config and add create_table
+        const currentConfig = stageForm.getFieldValue('output_config')
+        let config: Record<string, unknown> = {}
+        try {
+          config = currentConfig ? JSON.parse(currentConfig) : {}
+        } catch {
+          config = {}
+        }
+
+        config.create_table = createTableSQL
+        config.table = tableName
+
+        stageForm.setFieldValue('output_config', JSON.stringify(config, null, 2))
+        message.success(t('stage.createTableGenerated'))
+      }
+    } catch (error) {
+      console.error('Failed to fetch data type:', error)
+      message.error(t('stage.createTableError'))
+    }
   }
 
   const handleStageSubmit = async () => {
@@ -480,14 +638,18 @@ export default function StageEditorPage() {
             config = { schema: {} }
           }
           break
-        case 'sink':
+        // Output stages - each has its own specific config
+        case 'sql':
+        case 'elasticsearch':
+        case 'kafka':
+        case 'mongodb':
+        case 's3':
+        case 'rest_api':
+        case 'file':
           try {
-            config = {
-              type: values.sink_type || '',
-              config: values.sink_config ? JSON.parse(values.sink_config) : {},
-            }
+            config = values.output_config ? JSON.parse(values.output_config) : {}
           } catch {
-            config = { type: values.sink_type || '', config: {} }
+            config = {}
           }
           break
       }
@@ -622,10 +784,17 @@ export default function StageEditorPage() {
       }
       case 'validate':
         return <Text type="secondary">Schema validation</Text>
-      case 'sink':
+      // Output stages
+      case 'sql':
+      case 'elasticsearch':
+      case 'kafka':
+      case 'mongodb':
+      case 's3':
+      case 'rest_api':
+      case 'file':
         return (
           <Text type="secondary">
-            {String(stage.config?.type || 'unknown')}
+            {stage.type} output
           </Text>
         )
       default:
@@ -1065,32 +1234,52 @@ export default function StageEditorPage() {
             </Form.Item>
           </>
         )
-      case 'sink':
+      // SQL Output stage - with CREATE TABLE generation
+      case 'sql':
         return (
           <>
             <Form.Item
-              name="sink_type"
-              label={t('stage.sinkType')}
-              rules={[{ required: true }]}
-            >
-              <Select placeholder={t('stage.sinkTypePlaceholder')}>
-                <Select.Option value="elasticsearch">Elasticsearch</Select.Option>
-                <Select.Option value="kafka">Kafka</Select.Option>
-                <Select.Option value="mongodb">MongoDB</Select.Option>
-                <Select.Option value="s3">S3</Select.Option>
-              </Select>
-            </Form.Item>
-            <Form.Item
-              name="sink_config"
-              label={t('stage.sinkConfig')}
+              name="output_config"
+              label={t('stage.outputConfig')}
+              extra={t('stage.outputConfigHelp')}
             >
               <Input.TextArea
-                rows={5}
-                placeholder='{"index": "my-index", "batch_size": 100}'
+                rows={8}
+                placeholder={getOutputConfigPlaceholder(watchedStageType)}
                 style={{ fontFamily: 'monospace' }}
               />
             </Form.Item>
+            {pipeline?.target_data_type_id && (
+              <Button
+                type="dashed"
+                icon={<DatabaseOutlined />}
+                onClick={handleGenerateCreateTable}
+                style={{ marginBottom: 16 }}
+              >
+                {t('stage.generateCreateTable')}
+              </Button>
+            )}
           </>
+        )
+      // Other Output stages
+      case 'elasticsearch':
+      case 'kafka':
+      case 'mongodb':
+      case 's3':
+      case 'rest_api':
+      case 'file':
+        return (
+          <Form.Item
+            name="output_config"
+            label={t('stage.outputConfig')}
+            extra={t('stage.outputConfigHelp')}
+          >
+            <Input.TextArea
+              rows={5}
+              placeholder={getOutputConfigPlaceholder(watchedStageType)}
+              style={{ fontFamily: 'monospace' }}
+            />
+          </Form.Item>
         )
       default:
         return null
@@ -1352,10 +1541,47 @@ export default function StageEditorPage() {
                   {t('stage.types.validate')}
                 </Space>
               </Select.Option>
-              <Select.Option value="sink">
+              {/* Output Stage Types */}
+              <Select.Option value="sql">
                 <Space>
                   <ExportOutlined style={{ color: '#722ed1' }} />
-                  {t('stage.types.sink')}
+                  SQL Output
+                </Space>
+              </Select.Option>
+              <Select.Option value="elasticsearch">
+                <Space>
+                  <ExportOutlined style={{ color: '#722ed1' }} />
+                  Elasticsearch Output
+                </Space>
+              </Select.Option>
+              <Select.Option value="kafka">
+                <Space>
+                  <ExportOutlined style={{ color: '#722ed1' }} />
+                  Kafka Output
+                </Space>
+              </Select.Option>
+              <Select.Option value="mongodb">
+                <Space>
+                  <ExportOutlined style={{ color: '#722ed1' }} />
+                  MongoDB Output
+                </Space>
+              </Select.Option>
+              <Select.Option value="s3">
+                <Space>
+                  <ExportOutlined style={{ color: '#722ed1' }} />
+                  S3 Output
+                </Space>
+              </Select.Option>
+              <Select.Option value="rest_api">
+                <Space>
+                  <ExportOutlined style={{ color: '#722ed1' }} />
+                  REST API Output
+                </Space>
+              </Select.Option>
+              <Select.Option value="file">
+                <Space>
+                  <ExportOutlined style={{ color: '#722ed1' }} />
+                  File Output
                 </Space>
               </Select.Option>
             </Select>

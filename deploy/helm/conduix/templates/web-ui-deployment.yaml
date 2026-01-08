@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/component: web-ui
 spec:
   replicas: {{ .Values.webUI.replicaCount }}
+  revisionHistory: 3
   selector:
     matchLabels:
       {{- include "conduix.selectorLabels" . | nindent 6 }}

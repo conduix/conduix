@@ -15,6 +15,7 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/sink"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
+	"github.com/conduix/conduix/pipeline-core/pkg/validator"
 	"github.com/conduix/conduix/shared/types"
 )
 
@@ -311,6 +312,16 @@ func (e *GroupExecutor) runDAG(ctx context.Context) error {
 	return nil
 }
 
+// isSinkStageType sink 역할을 하는 Stage 타입인지 확인
+func isSinkStageType(stageType string) bool {
+	switch stageType {
+	case "sql", "elasticsearch", "kafka", "mongodb", "s3", "rest_api", "file":
+		return true
+	default:
+		return false
+	}
+}
+
 // runPipeline 개별 파이프라인 실행
 func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedPipeline) (*types.PipelineExecutionResult, error) {
 	// 통계 수집기 초기화
@@ -323,32 +334,34 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		StartedAt:    time.Now(),
 	}
 
-	// 싱크 생성 및 열기
-	var sinks []sink.Sink
-	for _, sinkConfig := range pipeline.Sinks {
-		s, err := e.createSink(sinkConfig)
-		if err != nil {
-			result.Status = "failed"
-			result.ErrorMessage = fmt.Sprintf("failed to create sink %s: %v", sinkConfig.Name, err)
-			return result, err
+	// Stages에서 sink 타입 찾아서 미리 생성 및 열기
+	sinkStages := make(map[string]sink.Sink) // stage name -> sink
+	for _, stage := range pipeline.Stages {
+		if isSinkStageType(stage.Type) {
+			s, err := e.createSinkFromStage(stage)
+			if err != nil {
+				result.Status = "failed"
+				result.ErrorMessage = fmt.Sprintf("failed to create sink stage %s: %v", stage.Name, err)
+				return result, err
+			}
+			if err := s.Open(ctx); err != nil {
+				result.Status = "failed"
+				result.ErrorMessage = fmt.Sprintf("failed to open sink stage %s: %v", stage.Name, err)
+				return result, err
+			}
+			sinkStages[stage.Name] = s
+			fmt.Printf("[runPipeline] Sink stage opened: %s (type: %s)\n", stage.Name, stage.Type)
 		}
-		if err := s.Open(ctx); err != nil {
-			result.Status = "failed"
-			result.ErrorMessage = fmt.Sprintf("failed to open sink %s: %v", sinkConfig.Name, err)
-			return result, err
-		}
-		sinks = append(sinks, s)
-		fmt.Printf("[runPipeline] Sink opened: %s (type: %s)\n", sinkConfig.Name, sinkConfig.Type)
 	}
 
 	// 싱크 정리 defer
 	defer func() {
-		for _, s := range sinks {
+		for name, s := range sinkStages {
 			if err := s.Flush(ctx); err != nil {
-				fmt.Printf("[runPipeline] Flush error: %v\n", err)
+				fmt.Printf("[runPipeline] Flush error for %s: %v\n", name, err)
 			}
 			if err := s.Close(); err != nil {
-				fmt.Printf("[runPipeline] Close error: %v\n", err)
+				fmt.Printf("[runPipeline] Close error for %s: %v\n", name, err)
 			}
 		}
 	}()
@@ -365,6 +378,19 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		return result, err
 	}
 	fmt.Printf("[runPipeline] Source created successfully\n")
+
+	// 소스 스키마 검증기 생성 (JSONSchema가 있는 경우)
+	var sourceValidator *validator.SchemaValidator
+	if pipeline.Source.JSONSchema != "" {
+		sourceValidator, err = validator.NewSchemaValidator(pipeline.Source.JSONSchema)
+		if err != nil {
+			fmt.Printf("[runPipeline] Source schema validator creation failed: %v\n", err)
+			// 스키마 파싱 실패는 경고로만 처리, 검증 없이 계속 진행
+			sourceValidator = nil
+		} else {
+			fmt.Printf("[runPipeline] Source schema validator created\n")
+		}
+	}
 
 	// 레코드 처리
 	for {
@@ -398,12 +424,37 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			// 수집량 카운트
 			statsCollector.RecordCollected()
 
+			// 소스 스키마 검증 (검증기가 있는 경우)
+			if sourceValidator != nil {
+				validationResult := sourceValidator.Validate(record.Data)
+				if !validationResult.Valid {
+					statsCollector.RecordProcessingError()
+					fmt.Printf("[runPipeline] Source schema validation failed: %v\n", validationResult.Errors)
+					continue // 스키마 검증 실패 시 레코드 건너뛰기
+				}
+			}
+
 			// Stage 적용 (필터별 처리량 추적)
 			data := record.Data
 			var filtered bool
 			for _, stage := range pipeline.Stages {
 				statsCollector.RecordTransformInput(stage.Name, stage.Type)
 
+				// Sink stage인 경우: 데이터를 sink로 전송하고 통과
+				if isSinkStageType(stage.Type) {
+					if s, ok := sinkStages[stage.Name]; ok {
+						if err := e.sendToSink(ctx, data, s); err != nil {
+							statsCollector.RecordProcessingError()
+							fmt.Printf("[runPipeline] Sink stage %s write error: %v\n", stage.Name, err)
+						} else {
+							statsCollector.RecordProcessed()
+						}
+					}
+					statsCollector.RecordTransformOutput(stage.Name)
+					continue // sink stage는 데이터를 변환하지 않음, 다음 stage로
+				}
+
+				// 일반 stage: 데이터 변환
 				transformed, err := e.applyStage(data, stage)
 				if err != nil {
 					statsCollector.RecordTransformError(stage.Name)
@@ -421,19 +472,9 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				data = transformed
 			}
 
-			// 필터링된 레코드는 Sink로 전송하지 않음
+			// 필터링된 레코드는 처리 완료
 			if filtered {
 				continue
-			}
-
-			// Sink로 전송 (처리량 추적)
-			for _, s := range sinks {
-				if err := e.sendToSink(ctx, data, s); err != nil {
-					statsCollector.RecordProcessingError()
-					fmt.Printf("[runPipeline] Sink write error: %v\n", err)
-				} else {
-					statsCollector.RecordProcessed()
-				}
 			}
 
 		case err := <-errs:
@@ -570,9 +611,146 @@ func (e *GroupExecutor) createSource(gs types.GroupedSource) (source.Source, err
 
 // applyStage Stage 적용
 func (e *GroupExecutor) applyStage(data map[string]any, stage types.Stage) (map[string]any, error) {
-	// TODO: 실제 변환 로직 구현
-	// Bloblang, filter, sample, aggregate 등
-	return data, nil
+	switch stage.Type {
+	case "schema_validate":
+		// JSON Schema 검증 Stage
+		schemaJSON, ok := stage.Config["json_schema"].(string)
+		if !ok || schemaJSON == "" {
+			// 스키마 없으면 통과
+			return data, nil
+		}
+
+		schemaValidator, err := validator.NewSchemaValidator(schemaJSON)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create schema validator: %w", err)
+		}
+
+		result := schemaValidator.Validate(data)
+		if !result.Valid {
+			// 검증 실패 시 레코드 필터링 (nil 반환)
+			onError, _ := stage.Config["on_error"].(string)
+			if onError == "pass" {
+				// on_error=pass이면 검증 실패해도 통과
+				return data, nil
+			}
+			// 기본: 검증 실패 시 레코드 필터링
+			return nil, nil
+		}
+		return data, nil
+
+	case "filter":
+		// 간단한 필터 로직
+		if condition, ok := stage.Config["condition"].(string); ok {
+			if !e.evaluateCondition(data, condition) {
+				return nil, nil // 조건 미충족 시 필터링
+			}
+		}
+		return data, nil
+
+	case "remap":
+		// 필드 매핑/변환
+		if mapping, ok := stage.Config["mapping"].(map[string]any); ok {
+			result := make(map[string]any)
+			// 기존 데이터 복사
+			for k, v := range data {
+				result[k] = v
+			}
+			// 매핑 적용
+			for newField, expr := range mapping {
+				if exprStr, ok := expr.(string); ok {
+					if strings.HasPrefix(exprStr, ".") {
+						// 필드 참조
+						srcField := strings.TrimPrefix(exprStr, ".")
+						if val, ok := data[srcField]; ok {
+							result[newField] = val
+						}
+					} else {
+						// 리터럴 값
+						result[newField] = exprStr
+					}
+				}
+			}
+			return result, nil
+		}
+		return data, nil
+
+	case "select":
+		// 필드 선택
+		if fields, ok := stage.Config["fields"].([]any); ok {
+			result := make(map[string]any)
+			for _, f := range fields {
+				if field, ok := f.(string); ok {
+					if val, ok := data[field]; ok {
+						result[field] = val
+					}
+				}
+			}
+			return result, nil
+		}
+		return data, nil
+
+	case "exclude":
+		// 필드 제외
+		if fields, ok := stage.Config["fields"].([]any); ok {
+			result := make(map[string]any)
+			excludeSet := make(map[string]bool)
+			for _, f := range fields {
+				if field, ok := f.(string); ok {
+					excludeSet[field] = true
+				}
+			}
+			for k, v := range data {
+				if !excludeSet[k] {
+					result[k] = v
+				}
+			}
+			return result, nil
+		}
+		return data, nil
+
+	default:
+		// 기타 타입은 통과
+		return data, nil
+	}
+}
+
+// evaluateCondition 간단한 조건 평가
+func (e *GroupExecutor) evaluateCondition(data map[string]any, condition string) bool {
+	condition = strings.TrimSpace(condition)
+
+	// .field == 'value'
+	if strings.Contains(condition, "==") {
+		parts := strings.SplitN(condition, "==", 2)
+		field := strings.TrimPrefix(strings.TrimSpace(parts[0]), ".")
+		value := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
+
+		if val, ok := data[field]; ok {
+			return fmt.Sprintf("%v", val) == value
+		}
+		return false
+	}
+
+	// .field != 'value'
+	if strings.Contains(condition, "!=") {
+		parts := strings.SplitN(condition, "!=", 2)
+		field := strings.TrimPrefix(strings.TrimSpace(parts[0]), ".")
+		value := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
+
+		if val, ok := data[field]; ok {
+			return fmt.Sprintf("%v", val) != value
+		}
+		return true
+	}
+
+	// .field exists
+	if strings.HasSuffix(condition, " exists") {
+		field := strings.TrimSuffix(condition, " exists")
+		field = strings.TrimPrefix(strings.TrimSpace(field), ".")
+		_, ok := data[field]
+		return ok
+	}
+
+	return true // 기본: 통과
 }
 
 // sendToSink 싱크로 전송
@@ -587,31 +765,31 @@ func (e *GroupExecutor) sendToSink(ctx context.Context, data map[string]any, s s
 	return s.Write(ctx, record)
 }
 
-// createSink GroupedSink에서 Sink 생성
-func (e *GroupExecutor) createSink(gs types.GroupedSink) (sink.Sink, error) {
+// createSinkFromStage Stage에서 Sink 생성
+func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error) {
 	cfg := config.OutputConfig{
-		Type: gs.Type,
+		Type: stage.Type,
 	}
 
 	// Config에서 필드 매핑
-	if gs.Config != nil {
-		if driver, ok := gs.Config["driver"].(string); ok {
+	if stage.Config != nil {
+		if driver, ok := stage.Config["driver"].(string); ok {
 			cfg.Driver = driver
 		}
-		if dsn, ok := gs.Config["dsn"].(string); ok {
+		if dsn, ok := stage.Config["dsn"].(string); ok {
 			// 환경변수 확장 (${VAR} 형식)
 			cfg.DSN = os.ExpandEnv(dsn)
 		}
-		if table, ok := gs.Config["table"].(string); ok {
+		if table, ok := stage.Config["table"].(string); ok {
 			cfg.Table = table
 		}
-		if batchSize, ok := gs.Config["batch_size"].(float64); ok {
+		if batchSize, ok := stage.Config["batch_size"].(float64); ok {
 			cfg.BatchSize = int(batchSize)
 		}
-		if onConflict, ok := gs.Config["on_conflict"].(string); ok {
+		if onConflict, ok := stage.Config["on_conflict"].(string); ok {
 			cfg.OnConflict = onConflict
 		}
-		if columnMap, ok := gs.Config["column_map"].(map[string]any); ok {
+		if columnMap, ok := stage.Config["column_map"].(map[string]any); ok {
 			cfg.ColumnMap = make(map[string]string)
 			for k, v := range columnMap {
 				if str, ok := v.(string); ok {

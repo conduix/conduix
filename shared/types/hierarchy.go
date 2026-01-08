@@ -76,8 +76,7 @@ type WorkflowPipeline struct {
 	Priority    int            `json:"priority"`             // 실행 우선순위 (낮을수록 먼저)
 	DependsOn   []string       `json:"depends_on,omitempty"` // 의존하는 파이프라인 ID들
 	Source      WorkflowSource `json:"source"`
-	Stages      []Stage        `json:"stages,omitempty"` // 파이프라인 단계 (추상화 단위)
-	Sinks       []WorkflowSink `json:"sinks"`
+	Stages      []Stage        `json:"stages,omitempty"` // 파이프라인 단계 (추상화 단위) - sink도 Stage로 처리
 	Weight      int            `json:"weight,omitempty"` // 로드밸런싱 가중치
 
 	// 계층형 파이프라인 필드
@@ -93,6 +92,7 @@ type WorkflowSource struct {
 	Name       string            `json:"name"`                 // 소스 식별자
 	Config     map[string]any    `json:"config"`               // 소스별 설정
 	Partitions []PartitionConfig `json:"partitions,omitempty"` // 파티션 설정 (병렬 처리용)
+	JSONSchema string            `json:"json_schema,omitempty"` // JSON Schema for source data validation
 }
 
 // PartitionConfig 파티션 설정
@@ -112,13 +112,6 @@ type Stage struct {
 	Config map[string]any `json:"config"`
 }
 
-// WorkflowSink 워크플로우 내 싱크 설정
-type WorkflowSink struct {
-	Type      string         `json:"type"` // elasticsearch, kafka, sql, mongodb, s3, rest_api
-	Name      string         `json:"name"`
-	Config    map[string]any `json:"config"`
-	Condition string         `json:"condition,omitempty"` // 조건부 라우팅
-}
 
 // ScheduleConfig 스케줄 설정
 type ScheduleConfig struct {
@@ -233,7 +226,6 @@ type PipelineGroupStatus = WorkflowStatus
 type PipelineGroupExecution = WorkflowExecution
 type GroupedPipeline = WorkflowPipeline
 type GroupedSource = WorkflowSource
-type GroupedSink = WorkflowSink
 
 // Backward compatibility constants
 const (

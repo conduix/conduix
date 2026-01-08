@@ -11,7 +11,7 @@ import { api } from '../services/api'
 
 const { Title } = Typography
 
-interface PipelineStats {
+interface WorkflowStats {
   total: number
   running: number
   stopped: number
@@ -26,7 +26,7 @@ interface AgentStats {
 
 export default function DashboardPage() {
   const { t } = useTranslation()
-  const [pipelineStats, setPipelineStats] = useState<PipelineStats>({
+  const [workflowStats, setWorkflowStats] = useState<WorkflowStats>({
     total: 0,
     running: 0,
     stopped: 0,
@@ -37,7 +37,7 @@ export default function DashboardPage() {
     online: 0,
     offline: 0,
   })
-  const [recentPipelines, setRecentPipelines] = useState<any[]>([])
+  const [recentWorkflows, setRecentWorkflows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -48,17 +48,19 @@ export default function DashboardPage() {
     try {
       setLoading(true)
 
-      // Fetch pipeline list
-      const pipelinesRes = await api.getPipelines()
-      if (pipelinesRes.success) {
-        const pipelines = pipelinesRes.data.items || []
-        setPipelineStats({
-          total: pipelinesRes.data.total || 0,
-          running: pipelines.filter((p: any) => p.status === 'running').length,
-          stopped: pipelines.filter((p: any) => p.status === 'stopped').length,
-          failed: pipelines.filter((p: any) => p.status === 'failed').length,
+      // Fetch workflow list
+      const workflowsRes = await api.getWorkflows()
+      if (workflowsRes.success) {
+        // Backend returns array directly, not wrapped in { items: [...] }
+        const data = workflowsRes.data
+        const workflows = Array.isArray(data) ? data : (data.items || [])
+        setWorkflowStats({
+          total: workflows.length,
+          running: workflows.filter((w: any) => w.status === 'running').length,
+          stopped: workflows.filter((w: any) => w.status === 'stopped' || w.status === 'idle').length,
+          failed: workflows.filter((w: any) => w.status === 'error').length,
         })
-        setRecentPipelines(pipelines.slice(0, 5))
+        setRecentWorkflows(workflows.slice(0, 5))
       }
 
       // Fetch agent list
@@ -82,11 +84,19 @@ export default function DashboardPage() {
     }
   }
 
-  const pipelineColumns = [
+  const workflowColumns = [
     {
-      title: t('pipeline.name'),
+      title: t('workflow.name'),
       dataIndex: 'name',
       key: 'name',
+    },
+    {
+      title: t('workflow.type'),
+      dataIndex: 'type',
+      key: 'type',
+      render: (type: string) => (
+        <Tag color={type === 'realtime' ? 'blue' : 'orange'}>{type}</Tag>
+      ),
     },
     {
       title: t('common.status'),
@@ -96,10 +106,10 @@ export default function DashboardPage() {
         const color =
           status === 'running'
             ? 'green'
-            : status === 'failed'
+            : status === 'error'
             ? 'red'
             : 'default'
-        return <Tag color={color}>{status || 'stopped'}</Tag>
+        return <Tag color={color}>{status || 'idle'}</Tag>
       },
     },
     {
@@ -118,8 +128,8 @@ export default function DashboardPage() {
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic
-              title={t('dashboard.totalPipelines')}
-              value={pipelineStats.total}
+              title={t('dashboard.totalWorkflows')}
+              value={workflowStats.total}
               prefix={<BranchesOutlined />}
             />
           </Card>
@@ -127,8 +137,8 @@ export default function DashboardPage() {
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic
-              title={t('dashboard.runningPipelines')}
-              value={pipelineStats.running}
+              title={t('dashboard.runningWorkflows')}
+              value={workflowStats.running}
               prefix={<PlayCircleOutlined />}
               valueStyle={{ color: '#52c41a' }}
             />
@@ -158,10 +168,10 @@ export default function DashboardPage() {
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={12}>
-          <Card title={t('dashboard.recentPipelines')} loading={loading}>
+          <Card title={t('dashboard.recentWorkflows')} loading={loading}>
             <Table
-              dataSource={recentPipelines}
-              columns={pipelineColumns}
+              dataSource={recentWorkflows}
+              columns={workflowColumns}
               rowKey="id"
               pagination={false}
               size="small"

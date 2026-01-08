@@ -401,15 +401,16 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 				"error_message": "Terminated: new execution started",
 			})
 
-		// 실행 기록 생성
+		// 실행 기록 생성 (파이프라인 설정 스냅샷 포함)
 		execution = &models.WorkflowExecution{
-			ID:            uuid.New().String(),
-			WorkflowID:    workflowID,
-			Status:        string(types.PipelineGroupStatusRunning),
-			StartedAt:     time.Now(),
-			TriggeredBy:   "user",
-			TriggeredByID: userIDStr,
-			CreatedAt:     time.Now(),
+			ID:                uuid.New().String(),
+			WorkflowID:        workflowID,
+			Status:            string(types.PipelineGroupStatusRunning),
+			StartedAt:         time.Now(),
+			PipelinesSnapshot: workflow.PipelinesConfig, // 실행 시점 파이프라인 설정 저장
+			TriggeredBy:       "user",
+			TriggeredByID:     userIDStr,
+			CreatedAt:         time.Now(),
 		}
 
 		if err := tx.Create(execution).Error; err != nil {
@@ -612,18 +613,28 @@ func (h *WorkflowHandler) GetWorkflowExecution(c *gin.Context) {
 
 	// 파이프라인 결과 파싱
 	response := map[string]any{
-		"id":             execution.ID,
-		"workflow_id":    execution.WorkflowID,
-		"status":         execution.Status,
-		"started_at":     execution.StartedAt,
-		"completed_at":   execution.CompletedAt,
-		"duration_ms":    execution.DurationMs,
-		"total_records":  execution.TotalRecords,
-		"failed_records": execution.FailedRecords,
-		"error_message":  execution.ErrorMessage,
-		"triggered_by":   execution.TriggeredBy,
+		"id":              execution.ID,
+		"workflow_id":     execution.WorkflowID,
+		"status":          execution.Status,
+		"started_at":      execution.StartedAt,
+		"completed_at":    execution.CompletedAt,
+		"duration_ms":     execution.DurationMs,
+		"total_records":   execution.TotalRecords,
+		"failed_records":  execution.FailedRecords,
+		"error_message":   execution.ErrorMessage,
+		"triggered_by":    execution.TriggeredBy,
+		"triggered_by_id": execution.TriggeredByID,
+		"created_at":      execution.CreatedAt,
 	}
 
+	// 파이프라인 설정 스냅샷 파싱
+	if execution.PipelinesSnapshot != "" {
+		var pipelines []types.GroupedPipeline
+		_ = json.Unmarshal([]byte(execution.PipelinesSnapshot), &pipelines)
+		response["pipelines_snapshot"] = pipelines
+	}
+
+	// 파이프라인 실행 결과 파싱
 	if execution.PipelineResults != "" {
 		var results []types.PipelineExecutionResult
 		_ = json.Unmarshal([]byte(execution.PipelineResults), &results)
@@ -777,7 +788,7 @@ func (h *WorkflowHandler) managePipelineKafkaTopics(
 			}
 
 			// 부모 파이프라인에 Kafka sink 추가
-			h.addKafkaSinkToParent(parentPipeline, p.Name, topicName)
+			h.addKafkaStageToParent(parentPipeline, p.Name, topicName)
 
 			// 자식 파이프라인에 Kafka source 설정
 			h.setKafkaSourceToChild(p, topicName)
@@ -820,7 +831,7 @@ func (h *WorkflowHandler) managePipelineKafkaTopics(
 
 			// 새 파이프라인 목록에서 부모 파이프라인의 sink 제거
 			if newParent, ok := newPipelineMap[*oldP.ParentPipelineID]; ok {
-				h.removeKafkaSinkFromParent(newParent, oldP.Name)
+				h.removeKafkaStageFromParent(newParent, oldP.Name)
 			}
 
 			h.logger.Info("Cleaned up Kafka topic for removed parent-child relationship",
@@ -838,40 +849,40 @@ func (h *WorkflowHandler) managePipelineKafkaTopics(
 	return result, nil
 }
 
-// addKafkaSinkToParent 부모 파이프라인에 Kafka sink 추가
-func (h *WorkflowHandler) addKafkaSinkToParent(parent *types.GroupedPipeline, childName, topicName string) {
-	sinkName := fmt.Sprintf("kafka_to_%s", childName)
+// addKafkaStageToParent 부모 파이프라인에 Kafka sink stage 추가
+func (h *WorkflowHandler) addKafkaStageToParent(parent *types.GroupedPipeline, childName, topicName string) {
+	stageName := fmt.Sprintf("kafka_to_%s", childName)
 
 	// 이미 존재하는지 확인
-	for _, sink := range parent.Sinks {
-		if sink.Name == sinkName {
+	for _, stage := range parent.Stages {
+		if stage.Name == stageName {
 			return
 		}
 	}
 
-	kafkaSink := types.WorkflowSink{
+	kafkaStage := types.Stage{
 		Type: "kafka",
-		Name: sinkName,
+		Name: stageName,
 		Config: map[string]any{
 			"brokers": h.kafkaService.GetBrokers(),
 			"topic":   topicName,
 		},
 	}
 
-	parent.Sinks = append(parent.Sinks, kafkaSink)
+	parent.Stages = append(parent.Stages, kafkaStage)
 }
 
-// removeKafkaSinkFromParent 부모 파이프라인에서 Kafka sink 제거
-func (h *WorkflowHandler) removeKafkaSinkFromParent(parent *types.GroupedPipeline, childName string) {
-	sinkName := fmt.Sprintf("kafka_to_%s", childName)
+// removeKafkaStageFromParent 부모 파이프라인에서 Kafka sink stage 제거
+func (h *WorkflowHandler) removeKafkaStageFromParent(parent *types.GroupedPipeline, childName string) {
+	stageName := fmt.Sprintf("kafka_to_%s", childName)
 
-	newSinks := make([]types.WorkflowSink, 0, len(parent.Sinks))
-	for _, sink := range parent.Sinks {
-		if sink.Name != sinkName {
-			newSinks = append(newSinks, sink)
+	newStages := make([]types.Stage, 0, len(parent.Stages))
+	for _, stage := range parent.Stages {
+		if stage.Name != stageName {
+			newStages = append(newStages, stage)
 		}
 	}
-	parent.Sinks = newSinks
+	parent.Stages = newStages
 }
 
 // setKafkaSourceToChild 자식 파이프라인에 Kafka source 설정

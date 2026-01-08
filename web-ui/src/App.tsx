@@ -9,6 +9,7 @@ import LoginPage from './pages/Login'
 import DashboardPage from './pages/Dashboard'
 import PipelinesPage from './pages/Pipelines'
 import PipelineDetailPage from './pages/PipelineDetail'
+import WorkflowsPage from './pages/Workflows'
 import SchedulesPage from './pages/Schedules'
 import AgentsPage from './pages/Agents'
 import HistoryPage from './pages/History'
@@ -19,6 +20,8 @@ import ProjectDetailPage from './pages/ProjectDetail'
 import WorkflowDetailPage from './pages/WorkflowDetail'
 import StageEditorPage from './pages/StageEditor'
 import SourceEditorPage from './pages/SourceEditor'
+import DataModelsPage from './pages/DataModels'
+import DataModelDetailPage from './pages/DataModelDetail'
 
 const antdLocales: Record<string, typeof enUS> = {
   en: enUS,
@@ -55,6 +58,7 @@ function App() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="workflows" element={<WorkflowsPage />} />
             <Route path="pipelines" element={<PipelinesPage />} />
             <Route path="pipelines/:id" element={<PipelineDetailPage />} />
             <Route path="schedules" element={<SchedulesPage />} />
@@ -68,6 +72,8 @@ function App() {
             <Route path="projects/:projectAlias/workflows/:workflowId" element={<WorkflowDetailPage />} />
             <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/stages" element={<StageEditorPage />} />
             <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/source" element={<SourceEditorPage />} />
+            <Route path="data-models" element={<DataModelsPage />} />
+            <Route path="data-models/:id" element={<DataModelDetailPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

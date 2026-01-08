@@ -276,20 +276,21 @@ func (Workflow) TableName() string {
 
 // WorkflowExecution 워크플로우 실행 이력
 type WorkflowExecution struct {
-	ID              string     `gorm:"primaryKey;size:36" json:"id"`
-	WorkflowID      string     `gorm:"size:36;not null;index" json:"workflow_id"`
-	Status          string     `gorm:"size:50;not null" json:"status"`
-	StartedAt       time.Time  `json:"started_at"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	DurationMs      int64      `json:"duration_ms,omitempty"`
-	PipelineResults string     `gorm:"type:longtext" json:"pipeline_results,omitempty"` // JSON array
-	TotalRecords    int64      `gorm:"default:0" json:"total_records"`
-	FailedRecords   int64      `gorm:"default:0" json:"failed_records"`
-	ErrorMessage    string     `gorm:"type:text" json:"error_message,omitempty"`
-	TriggeredBy     string     `gorm:"size:50" json:"triggered_by"` // user, schedule, event, api
-	TriggeredByID   string     `gorm:"size:36" json:"triggered_by_id,omitempty"`
-	Metadata        string     `gorm:"type:text" json:"metadata,omitempty"` // JSON
-	CreatedAt       time.Time  `json:"created_at"`
+	ID                string     `gorm:"primaryKey;size:36" json:"id"`
+	WorkflowID        string     `gorm:"size:36;not null;index" json:"workflow_id"`
+	Status            string     `gorm:"size:50;not null" json:"status"`
+	StartedAt         time.Time  `json:"started_at"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+	DurationMs        int64      `json:"duration_ms,omitempty"`
+	PipelinesSnapshot string     `gorm:"type:longtext" json:"pipelines_snapshot,omitempty"` // JSON - 실행 시점 파이프라인 설정 스냅샷
+	PipelineResults   string     `gorm:"type:longtext" json:"pipeline_results,omitempty"`   // JSON array
+	TotalRecords      int64      `gorm:"default:0" json:"total_records"`
+	FailedRecords     int64      `gorm:"default:0" json:"failed_records"`
+	ErrorMessage      string     `gorm:"type:text" json:"error_message,omitempty"`
+	TriggeredBy       string     `gorm:"size:50" json:"triggered_by"` // user, schedule, event, api
+	TriggeredByID     string     `gorm:"size:36" json:"triggered_by_id,omitempty"`
+	Metadata          string     `gorm:"type:text" json:"metadata,omitempty"` // JSON
+	CreatedAt         time.Time  `json:"created_at"`
 
 	// Relations
 	Workflow Workflow `gorm:"foreignKey:WorkflowID" json:"workflow,omitempty"`
@@ -387,6 +388,10 @@ type DataType struct {
 
 	// 스키마 정보 (JSON)
 	Schema string `gorm:"type:text" json:"schema,omitempty"`
+
+	// JSON Schema for validation (JSON Schema draft-07)
+	// Source에서 읽은 데이터가 이 스키마를 만족하는지 검증
+	JSONSchema string `gorm:"type:text" json:"json_schema,omitempty"`
 
 	// 저장소 설정 (JSON)
 	Storage string `gorm:"type:text" json:"storage,omitempty"`

@@ -141,6 +141,7 @@ export default function SourceEditorPage() {
           const pagination = sourceData.config?.pagination as Record<string, unknown> | undefined
           if (pagination && pagination.type) {
             formValues.pagination_type = pagination.type
+            formValues.pagination_data_field = pagination.data_field // 공통 필드
             switch (pagination.type) {
               case 'page_increment':
                 formValues.pagination_page_param = pagination.param_name
@@ -274,6 +275,7 @@ export default function SourceEditorPage() {
 
         // Build pagination config based on type
         const paginationType = configFields.pagination_type as PaginationType
+        const dataField = configFields.pagination_data_field as string | undefined
         if (paginationType && paginationType !== 'none') {
           switch (paginationType) {
             case 'page_increment':
@@ -281,12 +283,14 @@ export default function SourceEditorPage() {
                 type: 'page_increment',
                 param_name: configFields.pagination_page_param as string,
                 start_value: configFields.pagination_start_value as number,
+                ...(dataField && { data_field: dataField }),
               }
               break
             case 'next_url':
               config.pagination = {
                 type: 'next_url',
                 url_path: configFields.pagination_url_path as string,
+                ...(dataField && { data_field: dataField }),
               }
               break
             case 'next_offset':
@@ -294,6 +298,7 @@ export default function SourceEditorPage() {
                 type: 'next_offset',
                 offset_param: configFields.pagination_offset_param as string,
                 offset_path: configFields.pagination_offset_path as string,
+                ...(dataField && { data_field: dataField }),
               }
               break
             case 'page_with_count':
@@ -303,6 +308,7 @@ export default function SourceEditorPage() {
                 start_value: configFields.pagination_start_value as number,
                 current_count_path: configFields.pagination_current_count_path as string,
                 per_page_path: configFields.pagination_per_page_path as string,
+                ...(dataField && { data_field: dataField }),
               }
               break
           }
@@ -490,6 +496,13 @@ export default function SourceEditorPage() {
                         >
                           <InputNumber min={0} placeholder="1" style={{ width: 100 }} />
                         </Form.Item>
+                        <Form.Item
+                          name="pagination_data_field"
+                          label={t('source.paginationConfig.dataField')}
+                          extra={t('source.paginationConfig.dataFieldHelp')}
+                        >
+                          <Input placeholder={t('source.paginationConfig.dataFieldPlaceholder')} style={{ width: 200 }} />
+                        </Form.Item>
                       </div>
                     )
 
@@ -503,6 +516,13 @@ export default function SourceEditorPage() {
                           rules={[{ required: true }]}
                         >
                           <Input placeholder={t('source.paginationConfig.urlPathPlaceholder')} style={{ width: 250 }} />
+                        </Form.Item>
+                        <Form.Item
+                          name="pagination_data_field"
+                          label={t('source.paginationConfig.dataField')}
+                          extra={t('source.paginationConfig.dataFieldHelp')}
+                        >
+                          <Input placeholder={t('source.paginationConfig.dataFieldPlaceholder')} style={{ width: 200 }} />
                         </Form.Item>
                       </div>
                     )
@@ -525,6 +545,13 @@ export default function SourceEditorPage() {
                           rules={[{ required: true }]}
                         >
                           <Input placeholder={t('source.paginationConfig.offsetPathPlaceholder')} style={{ width: 250 }} />
+                        </Form.Item>
+                        <Form.Item
+                          name="pagination_data_field"
+                          label={t('source.paginationConfig.dataField')}
+                          extra={t('source.paginationConfig.dataFieldHelp')}
+                        >
+                          <Input placeholder={t('source.paginationConfig.dataFieldPlaceholder')} style={{ width: 200 }} />
                         </Form.Item>
                       </div>
                     )
@@ -563,6 +590,13 @@ export default function SourceEditorPage() {
                           rules={[{ required: true }]}
                         >
                           <Input placeholder={t('source.paginationConfig.perPagePathPlaceholder')} style={{ width: 250 }} />
+                        </Form.Item>
+                        <Form.Item
+                          name="pagination_data_field"
+                          label={t('source.paginationConfig.dataField')}
+                          extra={t('source.paginationConfig.dataFieldHelp')}
+                        >
+                          <Input placeholder={t('source.paginationConfig.dataFieldPlaceholder')} style={{ width: 200 }} />
                         </Form.Item>
                       </div>
                     )

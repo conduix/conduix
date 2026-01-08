@@ -361,7 +361,7 @@ class ApiService {
       depends_on?: string[]
       source: { type: string; name: string; config: Record<string, unknown> }
       transforms?: Array<{ name: string; type: string; config: Record<string, unknown> }>
-      sinks: Array<{ type: string; name: string; config: Record<string, unknown>; condition?: string }>
+      stages?: Array<{ id: string; name: string; type: string; config: Record<string, unknown> }>
       weight?: number
       parent_pipeline_id?: string | null
       target_data_type_id?: string | null
@@ -390,6 +390,11 @@ class ApiService {
 
   async getWorkflowExecutions(id: string) {
     const response = await this.client.get(`/workflows/${id}/executions`)
+    return response.data
+  }
+
+  async getWorkflowExecution(workflowId: string, executionId: string) {
+    const response = await this.client.get(`/workflows/${workflowId}/executions/${executionId}`)
     return response.data
   }
 

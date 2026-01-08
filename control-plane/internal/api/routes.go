@@ -121,6 +121,7 @@ func (s *Server) setupRoutes() {
 				workflows.POST("/:id/pause", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.PauseWorkflow)
 				workflows.POST("/:id/resume", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.ResumeWorkflow)
 				workflows.GET("/:id/executions", s.workflowHandler.GetWorkflowExecutions)
+				workflows.GET("/:id/executions/:execId", s.workflowHandler.GetWorkflowExecution)
 				workflows.POST("/:id/pipelines", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.AddPipelineToWorkflow)
 				workflows.DELETE("/:id/pipelines/:pipelineId", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.workflowHandler.RemovePipelineFromWorkflow)
 				// 스케줄 관련 (워크플로우 하위)

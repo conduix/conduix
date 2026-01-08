@@ -29,6 +29,13 @@ const (
 	ModeHybrid                          // 둘 다 사용
 )
 
+// RunningExecution 실행 중인 워크플로우 실행 정보
+type RunningExecution struct {
+	ExecutionID string
+	WorkflowID  string
+	StartedAt   time.Time
+}
+
 // Agent 파이프라인 에이전트
 type Agent struct {
 	ID              string
@@ -36,7 +43,9 @@ type Agent struct {
 	Status          types.AgentStatus
 	config          *Config
 	pipelines       map[string]*PipelineInstance
+	runningExecs    map[string]*RunningExecution // executionID -> RunningExecution
 	mu              sync.RWMutex
+	execMu          sync.RWMutex
 	ctx             context.Context
 	cancel          context.CancelFunc
 	redisClient     *redisclient.ResilientClient
@@ -88,6 +97,7 @@ func NewAgent(cfg *Config) (*Agent, error) {
 		Status:          types.AgentStatusOffline,
 		config:          cfg,
 		pipelines:       make(map[string]*PipelineInstance),
+		runningExecs:    make(map[string]*RunningExecution),
 		ctx:             ctx,
 		cancel:          cancel,
 		controlPlaneURL: cfg.ControlPlaneURL,
@@ -350,11 +360,24 @@ func (a *Agent) sendHeartbeat() {
 	}
 	a.mu.RUnlock()
 
+	// 실행 중인 워크플로우 정보 수집
+	a.execMu.RLock()
+	runningExecs := make([]types.RunningExecutionInfo, 0, len(a.runningExecs))
+	for _, exec := range a.runningExecs {
+		runningExecs = append(runningExecs, types.RunningExecutionInfo{
+			ExecutionID: exec.ExecutionID,
+			WorkflowID:  exec.WorkflowID,
+			StartedAt:   exec.StartedAt,
+		})
+	}
+	a.execMu.RUnlock()
+
 	heartbeat := types.AgentHeartbeat{
 		AgentID:       a.ID,
 		Timestamp:     time.Now(),
 		Pipelines:     pipelineIDs,
 		PipelineStats: pipelineStats,
+		RunningExecs:  runningExecs,
 	}
 
 	var redisErr, restErr error
@@ -574,6 +597,22 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	workflow := cmd.WorkflowConfig
 
 	fmt.Printf("Starting group execution: %s (%s)\n", workflow.Name, workflow.ID)
+
+	// 실행 추적 시작
+	a.execMu.Lock()
+	a.runningExecs[cmd.ExecutionID] = &RunningExecution{
+		ExecutionID: cmd.ExecutionID,
+		WorkflowID:  cmd.WorkflowID,
+		StartedAt:   startTime,
+	}
+	a.execMu.Unlock()
+
+	// 함수 종료 시 실행 추적 제거
+	defer func() {
+		a.execMu.Lock()
+		delete(a.runningExecs, cmd.ExecutionID)
+		a.execMu.Unlock()
+	}()
 
 	// GroupExecutor를 사용하여 파이프라인 그룹 실행
 	groupExecutor := executor.NewGroupExecutor(workflow)

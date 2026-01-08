@@ -25,13 +25,21 @@ type Agent struct {
 
 // AgentHeartbeat 에이전트 하트비트
 type AgentHeartbeat struct {
-	AgentID       string              `json:"agent_id"`
-	Timestamp     time.Time           `json:"timestamp"`
-	CPUUsage      float64             `json:"cpu_usage"`
-	MemoryUsage   float64             `json:"memory_usage"`
-	DiskUsage     float64             `json:"disk_usage"`
-	Pipelines     []string            `json:"pipelines"`
-	PipelineStats []PipelineStatShort `json:"pipeline_stats,omitempty"`
+	AgentID          string                    `json:"agent_id"`
+	Timestamp        time.Time                 `json:"timestamp"`
+	CPUUsage         float64                   `json:"cpu_usage"`
+	MemoryUsage      float64                   `json:"memory_usage"`
+	DiskUsage        float64                   `json:"disk_usage"`
+	Pipelines        []string                  `json:"pipelines"`
+	PipelineStats    []PipelineStatShort       `json:"pipeline_stats,omitempty"`
+	RunningExecs     []RunningExecutionInfo    `json:"running_execs,omitempty"`     // 실행 중인 워크플로우
+}
+
+// RunningExecutionInfo 실행 중인 워크플로우 정보
+type RunningExecutionInfo struct {
+	ExecutionID string    `json:"execution_id"`
+	WorkflowID  string    `json:"workflow_id"`
+	StartedAt   time.Time `json:"started_at"`
 }
 
 // PipelineStatShort 간략한 파이프라인 통계

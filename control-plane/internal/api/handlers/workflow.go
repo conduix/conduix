@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/services"
@@ -369,54 +370,71 @@ func (h *WorkflowHandler) DeleteWorkflow(c *gin.Context) {
 func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 
-	var workflow models.Workflow
-	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
-		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
-		return
-	}
-
-	// 이미 실행 중인 경우
-	if workflow.Status == string(types.PipelineGroupStatusRunning) {
-		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowRunning, "Workflow is already running")
-		return
-	}
-
 	userID, _ := c.Get("user_id")
 	userIDStr := ""
 	if userID != nil {
 		userIDStr = userID.(string)
 	}
 
-	// 이전에 running 상태로 남아있는 실행 기록 정리 (비정상 종료된 실행)
-	now := time.Now()
-	h.db.Model(&models.WorkflowExecution{}).
-		Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
-		Updates(map[string]any{
-			"status":        string(types.PipelineGroupStatusStopped),
-			"completed_at":  now,
-			"error_message": "Terminated: new execution started",
-		})
+	var workflow models.Workflow
+	var execution *models.WorkflowExecution
 
-	// 실행 기록 생성
-	execution := &models.WorkflowExecution{
-		ID:            uuid.New().String(),
-		WorkflowID:    workflowID,
-		Status:        string(types.PipelineGroupStatusRunning),
-		StartedAt:     time.Now(),
-		TriggeredBy:   "user",
-		TriggeredByID: userIDStr,
-		CreatedAt:     time.Now(),
-	}
+	// 트랜잭션으로 동시성 제어 (SELECT FOR UPDATE)
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		// FOR UPDATE로 행 잠금 획득
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&workflow, "id = ?", workflowID).Error; err != nil {
+			return err
+		}
 
-	if err := h.db.Create(execution).Error; err != nil {
-		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to create execution record")
+		// 이미 실행 중인 경우 에러 반환
+		if workflow.Status == string(types.PipelineGroupStatusRunning) {
+			return fmt.Errorf("WORKFLOW_RUNNING")
+		}
+
+		// 이전에 running 상태로 남아있는 실행 기록 정리 (비정상 종료된 실행)
+		now := time.Now()
+		tx.Model(&models.WorkflowExecution{}).
+			Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
+			Updates(map[string]any{
+				"status":        string(types.PipelineGroupStatusStopped),
+				"completed_at":  now,
+				"error_message": "Terminated: new execution started",
+			})
+
+		// 실행 기록 생성
+		execution = &models.WorkflowExecution{
+			ID:            uuid.New().String(),
+			WorkflowID:    workflowID,
+			Status:        string(types.PipelineGroupStatusRunning),
+			StartedAt:     time.Now(),
+			TriggeredBy:   "user",
+			TriggeredByID: userIDStr,
+			CreatedAt:     time.Now(),
+		}
+
+		if err := tx.Create(execution).Error; err != nil {
+			return err
+		}
+
+		// 워크플로우 상태 업데이트
+		workflow.Status = string(types.PipelineGroupStatusRunning)
+		workflow.LastRunAt = &execution.StartedAt
+		return tx.Save(&workflow).Error
+	})
+
+	if err != nil {
+		if err.Error() == "WORKFLOW_RUNNING" {
+			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowRunning, "Workflow is already running")
+			return
+		}
+		if err == gorm.ErrRecordNotFound {
+			middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
+			return
+		}
+		h.logger.Error("Failed to start workflow", "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to start workflow")
 		return
 	}
-
-	// 워크플로우 상태 업데이트
-	workflow.Status = string(types.PipelineGroupStatusRunning)
-	workflow.LastRunAt = &execution.StartedAt
-	h.db.Save(&workflow)
 
 	fmt.Printf("[StartWorkflow] Workflow status updated to running: %s\n", workflowID)
 

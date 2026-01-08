@@ -3,7 +3,60 @@ global:
   imageRegistry: ""
   imagePullSecrets: []
 
+# =============================================================================
+# 환경변수 설정 (ConfigMap으로 주입)
+# ArgoCD에서 env.* 파라미터로 오버라이드 가능
+# =============================================================================
+env:
+  # Database (mysql.enabled=false 일 때 사용)
+  DB_HOST: "host.docker.internal"
+  DB_PORT: "3307"
+  DB_USER: "conduixuser"
+  DB_NAME: "conduix"
+
+  # Redis (redis.enabled=false 일 때 사용)
+  REDIS_ADDR: "host.docker.internal:6379"
+  REDIS_HOST: "host.docker.internal"
+  REDIS_PORT: "6379"
+
+  # Application Settings
+  AUTO_MIGRATE: "true"
+  MAX_DATATYPE_DEPTH: "10"
+  USERS_CONFIG_PATH: "config/users.yaml"
+  FRONTEND_URL: "http://localhost:3000"
+
+  # OAuth2 Client IDs (non-sensitive)
+  GITHUB_CLIENT_ID: ""
+  GITHUB_REDIRECT_URL: ""
+  GOOGLE_CLIENT_ID: ""
+  GOOGLE_REDIRECT_URL: ""
+  NAVER_CLIENT_ID: ""
+  NAVER_REDIRECT_URL: ""
+  KAKAO_CLIENT_ID: ""
+  KAKAO_REDIRECT_URL: ""
+
+# =============================================================================
+# Secrets (민감한 정보, Secret으로 주입)
+# ArgoCD에서 secrets.* 파라미터로 오버라이드 가능
+# 프로덕션에서는 External Secrets 또는 Sealed Secrets 사용 권장
+# =============================================================================
+secrets:
+  create: true
+  # JWT Secret (미설정 시 자동 생성)
+  jwtSecret: ""
+  # Database Password
+  dbPassword: "conduixpassword"
+  # Redis Password
+  redisPassword: ""
+  # OAuth2 Client Secrets
+  githubClientSecret: ""
+  googleClientSecret: ""
+  naverClientSecret: ""
+  kakaoClientSecret: ""
+
+# =============================================================================
 # Control Plane
+# =============================================================================
 controlPlane:
   replicaCount: 2
   image:
@@ -20,29 +73,31 @@ controlPlane:
     requests:
       cpu: 100m
       memory: 128Mi
-  # OAuth2 설정
-  oauth2:
-    github:
-      enabled: false
-      clientId: ""
-      clientSecret: ""
-      redirectUrl: "https://your-domain.com/api/v1/auth/callback"
-    google:
-      enabled: false
-      clientId: ""
-      clientSecret: ""
-      redirectUrl: "https://your-domain.com/api/v1/auth/callback"
   autoscaling:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 80
+  # Legacy OAuth2 설정 (deprecated, env.* 사용 권장)
+  oauth2:
+    github:
+      enabled: false
+      clientId: ""
+      clientSecret: ""
+      redirectUrl: ""
+    google:
+      enabled: false
+      clientId: ""
+      clientSecret: ""
+      redirectUrl: ""
 
 # DB 마이그레이션 (초기 설치 시 테이블 생성)
 migration:
   enabled: true
 
+# =============================================================================
 # Pipeline Agent
+# =============================================================================
 agent:
   replicaCount: 3
   image:
@@ -67,7 +122,9 @@ agent:
     maxReplicas: 20
     targetCPUUtilizationPercentage: 70
 
+# =============================================================================
 # Web UI
+# =============================================================================
 webUI:
   replicaCount: 2
   image:
@@ -85,7 +142,9 @@ webUI:
       cpu: 50m
       memory: 64Mi
 
+# =============================================================================
 # Ingress
+# =============================================================================
 ingress:
   enabled: true
   className: nginx
@@ -103,7 +162,10 @@ ingress:
           service: control-plane
   tls: []
 
+# =============================================================================
 # MySQL (Bitnami subchart)
+# enabled: false 일 때 env.DB_* 설정 사용
+# =============================================================================
 mysql:
   enabled: true
   auth:
@@ -116,15 +178,10 @@ mysql:
       enabled: true
       size: 10Gi
 
-# External Database (mysql.enabled=false 일 때 사용)
-externalDatabase:
-  host: "host.docker.internal"
-  port: 3307
-  user: "conduixuser"
-  password: "conduixpassword"
-  database: "conduix"
-
+# =============================================================================
 # Redis (Bitnami subchart)
+# enabled: false 일 때 env.REDIS_* 설정 사용
+# =============================================================================
 redis:
   enabled: true
   architecture: standalone
@@ -135,19 +192,14 @@ redis:
       enabled: true
       size: 5Gi
 
-# External Redis (redis.enabled=false 일 때 사용)
-externalRedis:
-  host: "host.docker.internal"
-  port: 6379
-  password: ""
-
-# ServiceAccount
+# =============================================================================
+# ServiceAccount & Security
+# =============================================================================
 serviceAccount:
   create: true
   annotations: {}
   name: ""
 
-# Pod Security Context
 podSecurityContext:
   fsGroup: 1000
 
@@ -163,11 +215,3 @@ tolerations: []
 
 # Affinity
 affinity: {}
-
-# Secrets
-secrets:
-  create: true
-  # JWT Secret (자동 생성되지만, 직접 설정 권장)
-  jwtSecret: ""
-  # OAuth2 클라이언트 시크릿
-  oauth2ClientSecret: ""

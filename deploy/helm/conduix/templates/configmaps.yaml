@@ -1,4 +1,91 @@
 ---
+# Control Plane 환경변수 ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "conduix.fullname" . }}-control-plane-env
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+data:
+  # Database
+  {{- if .Values.mysql.enabled }}
+  DB_HOST: "{{ .Release.Name }}-mysql"
+  DB_PORT: "3306"
+  DB_USER: "{{ .Values.mysql.auth.username }}"
+  DB_NAME: "{{ .Values.mysql.auth.database }}"
+  {{- else }}
+  DB_HOST: "{{ .Values.env.DB_HOST }}"
+  DB_PORT: "{{ .Values.env.DB_PORT }}"
+  DB_USER: "{{ .Values.env.DB_USER }}"
+  DB_NAME: "{{ .Values.env.DB_NAME }}"
+  {{- end }}
+
+  # Redis
+  {{- if .Values.redis.enabled }}
+  REDIS_ADDR: "{{ .Release.Name }}-redis-master:6379"
+  {{- else }}
+  REDIS_ADDR: "{{ .Values.env.REDIS_ADDR }}"
+  {{- end }}
+
+  # Application Settings
+  AUTO_MIGRATE: "{{ .Values.env.AUTO_MIGRATE }}"
+  MAX_DATATYPE_DEPTH: "{{ .Values.env.MAX_DATATYPE_DEPTH }}"
+  USERS_CONFIG_PATH: "{{ .Values.env.USERS_CONFIG_PATH }}"
+  FRONTEND_URL: "{{ .Values.env.FRONTEND_URL }}"
+
+  # OAuth2 Redirect URLs
+  {{- if .Values.env.GITHUB_REDIRECT_URL }}
+  GITHUB_REDIRECT_URL: "{{ .Values.env.GITHUB_REDIRECT_URL }}"
+  {{- end }}
+  {{- if .Values.env.GOOGLE_REDIRECT_URL }}
+  GOOGLE_REDIRECT_URL: "{{ .Values.env.GOOGLE_REDIRECT_URL }}"
+  {{- end }}
+  {{- if .Values.env.NAVER_REDIRECT_URL }}
+  NAVER_REDIRECT_URL: "{{ .Values.env.NAVER_REDIRECT_URL }}"
+  {{- end }}
+  {{- if .Values.env.KAKAO_REDIRECT_URL }}
+  KAKAO_REDIRECT_URL: "{{ .Values.env.KAKAO_REDIRECT_URL }}"
+  {{- end }}
+
+  # OAuth2 Client IDs (non-sensitive)
+  {{- if .Values.env.GITHUB_CLIENT_ID }}
+  GITHUB_CLIENT_ID: "{{ .Values.env.GITHUB_CLIENT_ID }}"
+  {{- end }}
+  {{- if .Values.env.GOOGLE_CLIENT_ID }}
+  GOOGLE_CLIENT_ID: "{{ .Values.env.GOOGLE_CLIENT_ID }}"
+  {{- end }}
+  {{- if .Values.env.NAVER_CLIENT_ID }}
+  NAVER_CLIENT_ID: "{{ .Values.env.NAVER_CLIENT_ID }}"
+  {{- end }}
+  {{- if .Values.env.KAKAO_CLIENT_ID }}
+  KAKAO_CLIENT_ID: "{{ .Values.env.KAKAO_CLIENT_ID }}"
+  {{- end }}
+
+---
+# Agent 환경변수 ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "conduix.fullname" . }}-agent-env
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+data:
+  # Redis
+  {{- if .Values.redis.enabled }}
+  REDIS_HOST: "{{ .Release.Name }}-redis-master"
+  REDIS_PORT: "6379"
+  {{- else }}
+  REDIS_HOST: "{{ .Values.env.REDIS_HOST | default (regexReplaceAll ":.*" .Values.env.REDIS_ADDR "") }}"
+  REDIS_PORT: "{{ .Values.env.REDIS_PORT | default "6379" }}"
+  {{- end }}
+
+  HEARTBEAT_INTERVAL: "{{ .Values.agent.env.HEARTBEAT_INTERVAL | default "10s" }}"
+  CONFIG_DIR: "/etc/conduix/configs"
+
+---
+# Agent Config ConfigMap (파이프라인 설정)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,6 +120,7 @@ data:
         encoding: json
 
 ---
+# Nginx ConfigMap
 apiVersion: v1
 kind: ConfigMap
 metadata:

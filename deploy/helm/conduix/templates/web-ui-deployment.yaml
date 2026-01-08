@@ -22,12 +22,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "conduix.serviceAccountName" . }}
-      securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Nginx requires root privileges, so we skip security context for web-ui
       containers:
         - name: web-ui
-          securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.webUI.image.repository }}:{{ .Values.webUI.image.tag }}"
           imagePullPolicy: {{ .Values.webUI.image.pullPolicy }}
           ports:

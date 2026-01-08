@@ -13,6 +13,10 @@ spec:
       app.kubernetes.io/component: control-plane
   template:
     metadata:
+      annotations:
+        # ConfigMap/Secret 변경 시 자동 재시작
+        checksum/config: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
       labels:
         {{- include "conduix.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: control-plane
@@ -34,78 +38,13 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-          env:
-            {{- if .Values.mysql.enabled }}
-            - name: DB_HOST
-              value: "{{ .Release.Name }}-mysql"
-            - name: DB_PORT
-              value: "3306"
-            - name: DB_USER
-              value: "{{ .Values.mysql.auth.username }}"
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-mysql
-                  key: mysql-password
-            - name: DB_NAME
-              value: "{{ .Values.mysql.auth.database }}"
-            {{- else }}
-            - name: DB_HOST
-              value: "{{ .Values.externalDatabase.host }}"
-            - name: DB_PORT
-              value: "{{ .Values.externalDatabase.port | default 3306 }}"
-            - name: DB_USER
-              value: "{{ .Values.externalDatabase.user }}"
-            - name: DB_PASSWORD
-              value: "{{ .Values.externalDatabase.password }}"
-            - name: DB_NAME
-              value: "{{ .Values.externalDatabase.database }}"
-            {{- end }}
-            {{- if .Values.redis.enabled }}
-            - name: REDIS_ADDR
-              value: "{{ .Release.Name }}-redis-master:6379"
-            {{- if .Values.redis.auth.enabled }}
-            - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-redis
-                  key: redis-password
-            {{- end }}
-            {{- else }}
-            - name: REDIS_ADDR
-              value: "{{ .Values.externalRedis.host }}:{{ .Values.externalRedis.port | default 6379 }}"
-            {{- if .Values.externalRedis.password }}
-            - name: REDIS_PASSWORD
-              value: "{{ .Values.externalRedis.password }}"
-            {{- end }}
-            {{- end }}
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "conduix.fullname" . }}-secrets
-                  key: jwt-secret
-            {{- if .Values.controlPlane.oauth2.github.enabled }}
-            - name: GITHUB_CLIENT_ID
-              value: "{{ .Values.controlPlane.oauth2.github.clientId }}"
-            - name: GITHUB_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "conduix.fullname" . }}-secrets
-                  key: github-client-secret
-            - name: GITHUB_REDIRECT_URL
-              value: "{{ .Values.controlPlane.oauth2.github.redirectUrl }}"
-            {{- end }}
-            {{- if .Values.controlPlane.oauth2.google.enabled }}
-            - name: GOOGLE_CLIENT_ID
-              value: "{{ .Values.controlPlane.oauth2.google.clientId }}"
-            - name: GOOGLE_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "conduix.fullname" . }}-secrets
-                  key: google-client-secret
-            - name: GOOGLE_REDIRECT_URL
-              value: "{{ .Values.controlPlane.oauth2.google.redirectUrl }}"
-            {{- end }}
+          envFrom:
+            # ConfigMap에서 일반 환경변수 주입
+            - configMapRef:
+                name: {{ include "conduix.fullname" . }}-control-plane-env
+            # Secret에서 민감한 환경변수 주입
+            - secretRef:
+                name: {{ include "conduix.fullname" . }}-control-plane-secrets
           livenessProbe:
             httpGet:
               path: /health

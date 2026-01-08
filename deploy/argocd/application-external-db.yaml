@@ -17,41 +17,89 @@ spec:
       valueFiles:
         - values.yaml
       parameters:
-        # GHCR 이미지 pull secret
+        # ===========================================
+        # 이미지 설정
+        # ===========================================
         - name: global.imagePullSecrets[0].name
           value: ghcr-secret
 
-        # 내장 MySQL 비활성화, 외부 DB 사용
+        # ===========================================
+        # 내장 MySQL/Redis 비활성화
+        # ===========================================
         - name: mysql.enabled
           value: "false"
-        - name: externalDatabase.host
-          value: "your-mysql-host"
-        - name: externalDatabase.port
-          value: "3306"
-        - name: externalDatabase.user
-          value: "conduixuser"
-        - name: externalDatabase.password
-          value: "your-password"
-        - name: externalDatabase.database
-          value: "conduix"
-
-        # 내장 Redis 비활성화, 외부 Redis 사용
         - name: redis.enabled
           value: "false"
-        - name: externalRedis.host
-          value: "your-redis-host"
-        - name: externalRedis.port
+        - name: migration.enabled
+          value: "false"
+
+        # ===========================================
+        # 환경변수 (ConfigMap으로 주입)
+        # ===========================================
+        # Database
+        - name: env.DB_HOST
+          value: "your-mysql-host.example.com"
+        - name: env.DB_PORT
+          value: "3306"
+        - name: env.DB_USER
+          value: "conduixuser"
+        - name: env.DB_NAME
+          value: "conduix"
+
+        # Redis
+        - name: env.REDIS_ADDR
+          value: "your-redis-host.example.com:6379"
+        - name: env.REDIS_HOST
+          value: "your-redis-host.example.com"
+        - name: env.REDIS_PORT
           value: "6379"
 
-        # 보안 설정 (프로덕션)
+        # Application Settings
+        - name: env.AUTO_MIGRATE
+          value: "false"
+        - name: env.MAX_DATATYPE_DEPTH
+          value: "10"
+        - name: env.FRONTEND_URL
+          value: "https://conduix.yourdomain.com"
+
+        # OAuth2 Client IDs
+        - name: env.GITHUB_CLIENT_ID
+          value: "your-github-client-id"
+        - name: env.GITHUB_REDIRECT_URL
+          value: "https://conduix.yourdomain.com/api/v1/auth/callback"
+        - name: env.GOOGLE_CLIENT_ID
+          value: "your-google-client-id"
+        - name: env.GOOGLE_REDIRECT_URL
+          value: "https://conduix.yourdomain.com/api/v1/auth/callback"
+
+        # ===========================================
+        # Secrets (Secret으로 주입)
+        # 프로덕션에서는 External Secrets Operator 사용 권장
+        # ===========================================
+        - name: secrets.jwtSecret
+          value: "your-secure-32-character-jwt-secret"
+        - name: secrets.dbPassword
+          value: "your-secure-db-password"
+        - name: secrets.redisPassword
+          value: ""
+        - name: secrets.githubClientSecret
+          value: "your-github-client-secret"
+        - name: secrets.googleClientSecret
+          value: "your-google-client-secret"
+
+        # ===========================================
+        # Security Settings (프로덕션)
+        # ===========================================
         - name: securityContext.runAsNonRoot
           value: "true"
         - name: securityContext.runAsUser
           value: "1000"
 
-        # 마이그레이션 비활성화 (수동 실행)
-        - name: migration.enabled
-          value: "false"
+        # ===========================================
+        # Ingress
+        # ===========================================
+        - name: ingress.hosts[0].host
+          value: "conduix.yourdomain.com"
 
   destination:
     server: https://kubernetes.default.svc

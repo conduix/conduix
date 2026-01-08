@@ -32,7 +32,7 @@ kubectl apply -f application.yaml
 #### 옵션 B: 외부 MySQL/Redis 사용 (프로덕션)
 
 ```bash
-# 먼저 application-external-db.yaml의 DB 설정을 수정하세요
+# 먼저 application-external-db.yaml의 설정을 수정하세요
 kubectl apply -f application-external-db.yaml
 ```
 
@@ -46,66 +46,140 @@ argocd app get conduix
 kubectl get pods -n conduix
 ```
 
-## Application 파일 설명
+## 환경변수 설정 구조
 
-| 파일 | 설명 |
-|------|------|
-| `application.yaml` | 기본 설정 (내장 MySQL/Redis) |
-| `application-external-db.yaml` | 외부 DB 사용 설정 |
+### ConfigMap (env.*)
 
-## 주요 설정 옵션
-
-### 이미지 레지스트리
+일반 환경변수는 `env.*` 파라미터로 설정하며, ConfigMap으로 주입됩니다.
 
 ```yaml
 parameters:
-  - name: global.imagePullSecrets[0].name
-    value: ghcr-secret
-```
-
-### 외부 데이터베이스
-
-```yaml
-parameters:
-  - name: mysql.enabled
-    value: "false"
-  - name: externalDatabase.host
+  # Database
+  - name: env.DB_HOST
     value: "your-mysql-host"
-  - name: externalDatabase.port
+  - name: env.DB_PORT
     value: "3306"
-```
+  - name: env.DB_USER
+    value: "conduixuser"
+  - name: env.DB_NAME
+    value: "conduix"
 
-### 외부 Redis
+  # Redis
+  - name: env.REDIS_ADDR
+    value: "your-redis-host:6379"
 
-```yaml
-parameters:
-  - name: redis.enabled
-    value: "false"
-  - name: externalRedis.host
-    value: "your-redis-host"
-```
-
-### Ingress 설정
-
-```yaml
-parameters:
-  - name: ingress.hosts[0].host
-    value: "conduix.yourdomain.com"
-```
-
-### OAuth2 설정 (GitHub)
-
-```yaml
-parameters:
-  - name: controlPlane.oauth2.github.enabled
+  # Application
+  - name: env.AUTO_MIGRATE
     value: "true"
-  - name: controlPlane.oauth2.github.clientId
+  - name: env.FRONTEND_URL
+    value: "https://conduix.yourdomain.com"
+
+  # OAuth2 Client IDs
+  - name: env.GITHUB_CLIENT_ID
     value: "your-client-id"
-  - name: controlPlane.oauth2.github.clientSecret
-    value: "your-client-secret"
+  - name: env.GITHUB_REDIRECT_URL
+    value: "https://conduix.yourdomain.com/api/v1/auth/callback"
+```
+
+### Secret (secrets.*)
+
+민감한 정보는 `secrets.*` 파라미터로 설정하며, Secret으로 주입됩니다.
+
+```yaml
+parameters:
+  # JWT Secret
+  - name: secrets.jwtSecret
+    value: "your-secure-jwt-secret"
+
+  # Database Password
+  - name: secrets.dbPassword
+    value: "your-db-password"
+
+  # Redis Password
+  - name: secrets.redisPassword
+    value: ""
+
+  # OAuth2 Client Secrets
+  - name: secrets.githubClientSecret
+    value: "your-github-client-secret"
+  - name: secrets.googleClientSecret
+    value: "your-google-client-secret"
+```
+
+## 전체 환경변수 목록
+
+### env.* (ConfigMap)
+
+| 파라미터 | 설명 | 기본값 |
+|---------|------|--------|
+| `env.DB_HOST` | MySQL 호스트 | `host.docker.internal` |
+| `env.DB_PORT` | MySQL 포트 | `3307` |
+| `env.DB_USER` | MySQL 사용자 | `conduixuser` |
+| `env.DB_NAME` | 데이터베이스 이름 | `conduix` |
+| `env.REDIS_ADDR` | Redis 주소 | `host.docker.internal:6379` |
+| `env.AUTO_MIGRATE` | 자동 마이그레이션 | `true` |
+| `env.MAX_DATATYPE_DEPTH` | DataType 최대 깊이 | `10` |
+| `env.USERS_CONFIG_PATH` | Users 설정 파일 경로 | `config/users.yaml` |
+| `env.FRONTEND_URL` | 프론트엔드 URL | `http://localhost:3000` |
+| `env.GITHUB_CLIENT_ID` | GitHub OAuth Client ID | - |
+| `env.GITHUB_REDIRECT_URL` | GitHub OAuth Redirect URL | - |
+| `env.GOOGLE_CLIENT_ID` | Google OAuth Client ID | - |
+| `env.GOOGLE_REDIRECT_URL` | Google OAuth Redirect URL | - |
+| `env.NAVER_CLIENT_ID` | Naver OAuth Client ID | - |
+| `env.NAVER_REDIRECT_URL` | Naver OAuth Redirect URL | - |
+
+### secrets.* (Secret)
+
+| 파라미터 | 설명 | 기본값 |
+|---------|------|--------|
+| `secrets.jwtSecret` | JWT 시크릿 키 | 자동 생성 |
+| `secrets.dbPassword` | DB 비밀번호 | `conduixpassword` |
+| `secrets.redisPassword` | Redis 비밀번호 | - |
+| `secrets.githubClientSecret` | GitHub OAuth Secret | - |
+| `secrets.googleClientSecret` | Google OAuth Secret | - |
+| `secrets.naverClientSecret` | Naver OAuth Secret | - |
+| `secrets.kakaoClientSecret` | Kakao OAuth Secret | - |
+
+## 프로덕션 보안 권장사항
+
+### External Secrets Operator 사용
+
+프로덕션 환경에서는 민감한 정보를 Git에 저장하지 않고, External Secrets Operator를 사용하여 AWS Secrets Manager, HashiCorp Vault 등에서 가져오는 것을 권장합니다.
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: conduix-secrets
+  namespace: conduix
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  target:
+    name: conduix-control-plane-secrets
+  data:
+    - secretKey: JWT_SECRET
+      remoteRef:
+        key: conduix/production
+        property: jwt_secret
+    - secretKey: DB_PASSWORD
+      remoteRef:
+        key: conduix/production
+        property: db_password
 ```
 
 ## 트러블슈팅
+
+### ConfigMap/Secret 변경이 반영되지 않을 때
+
+Pod annotation에 checksum이 포함되어 있어 ConfigMap/Secret 변경 시 자동으로 재시작됩니다. 수동 재시작이 필요한 경우:
+
+```bash
+kubectl rollout restart deployment conduix-control-plane -n conduix
+kubectl rollout restart deployment conduix-agent -n conduix
+```
 
 ### Image Pull 실패
 
@@ -120,6 +194,12 @@ kubectl describe pod <pod-name> -n conduix
 ### DB 연결 실패
 
 ```bash
+# ConfigMap 확인
+kubectl get configmap conduix-control-plane-env -n conduix -o yaml
+
+# Secret 확인
+kubectl get secret conduix-control-plane-secrets -n conduix -o yaml
+
 # Control Plane 로그 확인
 kubectl logs -l app.kubernetes.io/component=control-plane -n conduix
 ```

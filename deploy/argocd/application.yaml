@@ -16,16 +16,52 @@ spec:
       releaseName: conduix
       valueFiles:
         - values.yaml
-      # 추가 설정 오버라이드
       parameters:
-        # 이미지 pull secret (GHCR private 이미지용)
+        # ===========================================
+        # 이미지 설정
+        # ===========================================
         - name: global.imagePullSecrets[0].name
           value: ghcr-secret
-        # 내장 MySQL/Redis 비활성화 (외부 DB 사용 시)
-        # - name: mysql.enabled
-        #   value: "false"
-        # - name: redis.enabled
-        #   value: "false"
+
+        # ===========================================
+        # 환경변수 (ConfigMap으로 주입)
+        # ===========================================
+        # Database
+        # - name: env.DB_HOST
+        #   value: "your-mysql-host"
+        # - name: env.DB_PORT
+        #   value: "3306"
+        # - name: env.DB_USER
+        #   value: "conduixuser"
+        # - name: env.DB_NAME
+        #   value: "conduix"
+
+        # Redis
+        # - name: env.REDIS_ADDR
+        #   value: "your-redis-host:6379"
+
+        # Application
+        - name: env.AUTO_MIGRATE
+          value: "true"
+        - name: env.FRONTEND_URL
+          value: "https://conduix.yourdomain.com"
+
+        # OAuth2 (Client IDs)
+        # - name: env.GITHUB_CLIENT_ID
+        #   value: "your-client-id"
+        # - name: env.GITHUB_REDIRECT_URL
+        #   value: "https://conduix.yourdomain.com/api/v1/auth/callback"
+
+        # ===========================================
+        # Secrets (Secret으로 주입)
+        # 프로덕션에서는 External Secrets 사용 권장
+        # ===========================================
+        # - name: secrets.jwtSecret
+        #   value: "your-secure-jwt-secret"
+        # - name: secrets.dbPassword
+        #   value: "your-db-password"
+        # - name: secrets.githubClientSecret
+        #   value: "your-github-client-secret"
 
   destination:
     server: https://kubernetes.default.svc

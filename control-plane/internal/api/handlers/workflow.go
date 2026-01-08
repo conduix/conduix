@@ -387,6 +387,16 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		userIDStr = userID.(string)
 	}
 
+	// 이전에 running 상태로 남아있는 실행 기록 정리 (비정상 종료된 실행)
+	now := time.Now()
+	h.db.Model(&models.WorkflowExecution{}).
+		Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
+		Updates(map[string]any{
+			"status":        string(types.PipelineGroupStatusStopped),
+			"completed_at":  now,
+			"error_message": "Terminated: new execution started",
+		})
+
 	// 실행 기록 생성
 	execution := &models.WorkflowExecution{
 		ID:            uuid.New().String(),

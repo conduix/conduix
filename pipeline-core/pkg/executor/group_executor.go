@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,10 +85,27 @@ func (e *GroupExecutor) Start(ctx context.Context, triggeredBy string) (*types.P
 		durationPtr := &duration
 		e.execution.Duration = durationPtr
 
+		// 파이프라인 결과에서 에러 메시지 수집
+		var errorMessages []string
+		for _, pr := range e.execution.PipelineResults {
+			if pr.ErrorMessage != "" {
+				errorMessages = append(errorMessages, fmt.Sprintf("[%s] %s", pr.PipelineName, pr.ErrorMessage))
+			}
+		}
+
 		if err != nil {
 			e.status = types.PipelineGroupStatusError
 			e.execution.Status = types.PipelineGroupStatusError
-			e.execution.ErrorMessage = err.Error()
+			if len(errorMessages) > 0 {
+				e.execution.ErrorMessage = strings.Join(errorMessages, "; ")
+			} else {
+				e.execution.ErrorMessage = err.Error()
+			}
+		} else if len(errorMessages) > 0 {
+			// 메인 에러는 없지만 파이프라인 에러가 있는 경우
+			e.status = types.PipelineGroupStatusError
+			e.execution.Status = types.PipelineGroupStatusError
+			e.execution.ErrorMessage = strings.Join(errorMessages, "; ")
 		} else {
 			e.status = types.PipelineGroupStatusCompleted
 			e.execution.Status = types.PipelineGroupStatusCompleted

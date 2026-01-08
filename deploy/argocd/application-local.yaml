@@ -1,0 +1,83 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: conduix
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/conduix/conduix.git
+    targetRevision: main
+    path: deploy/helm/conduix
+    helm:
+      releaseName: conduix
+      valueFiles:
+        - values.yaml
+      parameters:
+        # ===========================================
+        # 내장 MySQL/Redis 비활성화 (외부 DB 사용)
+        # ===========================================
+        - name: mysql.enabled
+          value: "false"
+        - name: redis.enabled
+          value: "false"
+        - name: migration.enabled
+          value: "false"
+
+        # ===========================================
+        # 환경변수 (ConfigMap으로 주입)
+        # ===========================================
+        # Database (host.docker.internal for Docker Desktop)
+        - name: env.DB_HOST
+          value: "host.docker.internal"
+        - name: env.DB_PORT
+          value: "3307"
+        - name: env.DB_USER
+          value: "conduixuser"
+        - name: env.DB_NAME
+          value: "conduix"
+
+        # Redis
+        - name: env.REDIS_ADDR
+          value: "host.docker.internal:6379"
+        - name: env.REDIS_HOST
+          value: "host.docker.internal"
+        - name: env.REDIS_PORT
+          value: "6379"
+
+        # Application Settings
+        - name: env.AUTO_MIGRATE
+          value: "true"
+        - name: env.FRONTEND_URL
+          value: "http://localhost:3000"
+
+        # Admin Users (comma-separated emails)
+        # - name: env.CONDUIX_ADMIN_EMAILS
+        #   value: "admin@example.com,admin2@example.com"
+
+        # ===========================================
+        # Secrets
+        # ===========================================
+        - name: secrets.dbPassword
+          value: "conduixpassword"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: conduix
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

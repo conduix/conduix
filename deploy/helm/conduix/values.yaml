@@ -22,8 +22,12 @@ env:
   # Application Settings
   AUTO_MIGRATE: "true"
   MAX_DATATYPE_DEPTH: "10"
-  USERS_CONFIG_PATH: "config/users.yaml"
+  USERS_CONFIG_PATH: ""
   FRONTEND_URL: "http://localhost:3000"
+
+  # Admin Users (comma-separated emails)
+  CONDUIX_ADMIN_EMAILS: ""
+  CONDUIX_OPERATOR_EMAILS: ""
 
   # OAuth2 Client IDs (non-sensitive)
   GITHUB_CLIENT_ID: ""

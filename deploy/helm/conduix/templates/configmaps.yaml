@@ -31,8 +31,18 @@ data:
   # Application Settings
   AUTO_MIGRATE: "{{ .Values.env.AUTO_MIGRATE }}"
   MAX_DATATYPE_DEPTH: "{{ .Values.env.MAX_DATATYPE_DEPTH }}"
+  {{- if .Values.env.USERS_CONFIG_PATH }}
   USERS_CONFIG_PATH: "{{ .Values.env.USERS_CONFIG_PATH }}"
+  {{- end }}
   FRONTEND_URL: "{{ .Values.env.FRONTEND_URL }}"
+
+  # Admin Users (comma-separated emails)
+  {{- if .Values.env.CONDUIX_ADMIN_EMAILS }}
+  CONDUIX_ADMIN_EMAILS: "{{ .Values.env.CONDUIX_ADMIN_EMAILS }}"
+  {{- end }}
+  {{- if .Values.env.CONDUIX_OPERATOR_EMAILS }}
+  CONDUIX_OPERATOR_EMAILS: "{{ .Values.env.CONDUIX_OPERATOR_EMAILS }}"
+  {{- end }}
 
   # OAuth2 Redirect URLs
   {{- if .Values.env.GITHUB_REDIRECT_URL }}

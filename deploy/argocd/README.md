@@ -119,8 +119,9 @@ parameters:
 | `env.REDIS_ADDR` | Redis 주소 | `host.docker.internal:6379` |
 | `env.AUTO_MIGRATE` | 자동 마이그레이션 | `true` |
 | `env.MAX_DATATYPE_DEPTH` | DataType 최대 깊이 | `10` |
-| `env.USERS_CONFIG_PATH` | Users 설정 파일 경로 | `config/users.yaml` |
 | `env.FRONTEND_URL` | 프론트엔드 URL | `http://localhost:3000` |
+| `env.CONDUIX_ADMIN_EMAILS` | Admin 사용자 이메일 (콤마 구분) | - |
+| `env.CONDUIX_OPERATOR_EMAILS` | Operator 사용자 이메일 (콤마 구분) | - |
 | `env.GITHUB_CLIENT_ID` | GitHub OAuth Client ID | - |
 | `env.GITHUB_REDIRECT_URL` | GitHub OAuth Redirect URL | - |
 | `env.GOOGLE_CLIENT_ID` | Google OAuth Client ID | - |

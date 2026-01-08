@@ -858,3 +858,71 @@ func (h *WorkflowHandler) setKafkaSourceToChild(child *types.GroupedPipeline, to
 		},
 	}
 }
+
+// ReceiveExecutionResult POST /api/v1/workflows/:id/executions/:executionId/result
+// Agent에서 실행 결과를 받아 워크플로우 상태를 업데이트
+func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
+	requestID := middleware.GetRequestID(c)
+	workflowID := c.Param("id")
+	executionID := c.Param("executionId")
+
+	var result types.GroupExecutionResult
+	if err := c.ShouldBindJSON(&result); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success":    false,
+			"error":      gin.H{"code": "VALIDATION_ERROR", "message": err.Error()},
+			"request_id": requestID,
+		})
+		return
+	}
+
+	fmt.Printf("[ReceiveExecutionResult] Received result for workflow=%s, execution=%s, status=%s, records=%d\n",
+		workflowID, executionID, result.Status, result.TotalRecords)
+
+	// 워크플로우 상태 업데이트
+	var newStatus string
+	switch result.Status {
+	case types.PipelineGroupStatusCompleted:
+		newStatus = "idle"
+	case types.PipelineGroupStatusError:
+		newStatus = "error"
+	case types.PipelineGroupStatusStopped:
+		newStatus = "stopped"
+	default:
+		newStatus = "idle"
+	}
+
+	// DB에서 워크플로우 업데이트 (status만)
+	if err := h.db.Model(&models.Workflow{}).
+		Where("id = ?", workflowID).
+		Update("status", newStatus).Error; err != nil {
+		fmt.Printf("[ReceiveExecutionResult] Failed to update workflow status: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success":    false,
+			"error":      gin.H{"code": "DB_ERROR", "message": "Failed to update workflow status"},
+			"request_id": requestID,
+		})
+		return
+	}
+
+	// 실행 기록 업데이트
+	if err := h.db.Model(&models.WorkflowExecution{}).
+		Where("id = ?", executionID).
+		Updates(map[string]any{
+			"status":         string(result.Status),
+			"completed_at":   result.CompletedAt,
+			"total_records":  result.TotalRecords,
+			"failed_records": result.FailedRecords,
+			"error_message":  result.ErrorMessage,
+		}).Error; err != nil {
+		fmt.Printf("[ReceiveExecutionResult] Failed to update execution: %v\n", err)
+	}
+
+	fmt.Printf("[ReceiveExecutionResult] Workflow %s status updated to: %s\n", workflowID, newStatus)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"message":    "Execution result received",
+		"request_id": requestID,
+	})
+}

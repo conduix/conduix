@@ -668,17 +668,10 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 
 // reportGroupExecutionResult 그룹 실행 결과 보고
 func (a *Agent) reportGroupExecutionResult(result *types.GroupExecutionResult) error {
-	// Redis로 결과 발행
-	if a.redisClient != nil && a.redisHealthy {
-		channel := fmt.Sprintf("workflow:result:%s", result.WorkflowID)
-		if err := a.redisClient.Publish(a.ctx, channel, result); err != nil {
-			fmt.Printf("Failed to publish result via Redis: %v\n", err)
-		} else {
-			return nil
-		}
-	}
+	fmt.Printf("[reportGroupExecutionResult] Reporting result for workflow=%s, execution=%s, status=%s\n",
+		result.WorkflowID, result.ExecutionID, result.Status)
 
-	// REST API로 결과 보고 (폴백)
+	// REST API로 결과 보고 (직접 DB 업데이트를 위해 우선 사용)
 	if a.controlPlaneURL != "" {
 		url := fmt.Sprintf("%s/api/v1/workflows/%s/executions/%s/result",
 			a.controlPlaneURL, result.WorkflowID, result.ExecutionID)
@@ -696,17 +689,31 @@ func (a *Agent) reportGroupExecutionResult(result *types.GroupExecutionResult) e
 
 		resp, err := a.httpClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("failed to send result: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 400 {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("server returned error: %s", string(body))
+			fmt.Printf("[reportGroupExecutionResult] REST API failed: %v\n", err)
+		} else {
+			defer resp.Body.Close()
+			if resp.StatusCode >= 400 {
+				body, _ := io.ReadAll(resp.Body)
+				fmt.Printf("[reportGroupExecutionResult] REST API error: %s\n", string(body))
+			} else {
+				fmt.Printf("[reportGroupExecutionResult] Result reported successfully via REST API\n")
+				return nil
+			}
 		}
 	}
 
-	return nil
+	// Redis로 결과 발행 (폴백)
+	if a.redisClient != nil && a.redisHealthy {
+		channel := fmt.Sprintf("workflow:result:%s", result.WorkflowID)
+		if err := a.redisClient.Publish(a.ctx, channel, result); err != nil {
+			fmt.Printf("[reportGroupExecutionResult] Failed to publish result via Redis: %v\n", err)
+		} else {
+			fmt.Printf("[reportGroupExecutionResult] Result published via Redis\n")
+			return nil
+		}
+	}
+
+	return fmt.Errorf("failed to report result: no available method")
 }
 
 // GetCommunicationMode 현재 통신 모드 조회

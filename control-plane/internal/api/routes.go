@@ -76,6 +76,12 @@ func (s *Server) setupRoutes() {
 			auth.GET("/callback", s.authHandler.Callback)
 		}
 
+		// Agent 내부 API (인증 불필요 - 클러스터 내부 통신)
+		internal := v1.Group("/workflows")
+		{
+			internal.POST("/:id/executions/:executionId/result", s.workflowHandler.ReceiveExecutionResult)
+		}
+
 		// 인증 필요한 라우트
 		authenticated := v1.Group("")
 		authenticated.Use(middleware.AuthMiddleware(s.jwtSecret))

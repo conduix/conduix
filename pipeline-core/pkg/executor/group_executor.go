@@ -588,22 +588,38 @@ func (e *GroupExecutor) runMultiPartitionSource(ctx context.Context, gs types.Gr
 func (e *GroupExecutor) createSource(gs types.GroupedSource) (source.Source, error) {
 	configJSON, _ := json.Marshal(gs.Config)
 
+	// rate_limit을 config에 주입 (WorkflowSource.RateLimit -> config["rate_limit"])
+	configWithRateLimit := gs.Config
+	if gs.RateLimit != nil && gs.RateLimit.Enabled {
+		configWithRateLimit = make(map[string]any)
+		for k, v := range gs.Config {
+			configWithRateLimit[k] = v
+		}
+		configWithRateLimit["rate_limit"] = map[string]any{
+			"enabled":  gs.RateLimit.Enabled,
+			"rate":     gs.RateLimit.Rate,
+			"interval": gs.RateLimit.Interval,
+			"burst":    gs.RateLimit.Burst,
+			"strategy": gs.RateLimit.Strategy,
+		}
+	}
+
 	// config를 SourceV2 형식으로 변환
 	// 실제 구현에서는 config 패키지의 SourceV2를 사용
 	switch gs.Type {
 	case "kafka":
 		// Kafka 소스 설정
-		return createKafkaSourceFromConfig(gs.Config)
+		return createKafkaSourceFromConfig(configWithRateLimit)
 	case "rest_api", "http":
-		return createHTTPSourceFromConfig(gs.Config)
+		return createHTTPSourceFromConfig(configWithRateLimit)
 	case "sql":
-		return createSQLSourceFromConfig(gs.Config)
+		return createSQLSourceFromConfig(configWithRateLimit)
 	case "sql_event":
-		return createSQLEventSourceFromConfig(gs.Config)
+		return createSQLEventSourceFromConfig(configWithRateLimit)
 	case "cdc":
-		return createCDCSourceFromConfig(gs.Config)
+		return createCDCSourceFromConfig(configWithRateLimit)
 	case "file":
-		return createFileSourceFromConfig(gs.Config)
+		return createFileSourceFromConfig(configWithRateLimit)
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s (config: %s)", gs.Type, string(configJSON))
 	}

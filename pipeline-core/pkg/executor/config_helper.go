@@ -331,5 +331,25 @@ func configToSourceV2(cfg map[string]any) config.SourceV2 {
 		result.SlotName = v
 	}
 
+	// Rate Limit
+	if rateLimitCfg, ok := cfg["rate_limit"].(map[string]any); ok {
+		result.RateLimit = &config.RateLimitSourceConfig{}
+		if v, ok := rateLimitCfg["enabled"].(bool); ok {
+			result.RateLimit.Enabled = v
+		}
+		if v, ok := rateLimitCfg["rate"].(float64); ok {
+			result.RateLimit.Rate = int(v)
+		}
+		if v, ok := rateLimitCfg["interval"].(string); ok {
+			result.RateLimit.Interval = v
+		}
+		if v, ok := rateLimitCfg["burst"].(float64); ok {
+			result.RateLimit.Burst = int(v)
+		}
+		if v, ok := rateLimitCfg["strategy"].(string); ok {
+			result.RateLimit.Strategy = v
+		}
+	}
+
 	return result
 }

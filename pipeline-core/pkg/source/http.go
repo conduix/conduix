@@ -24,12 +24,19 @@ type HTTPSource struct {
 	body       string
 	auth       *config.AuthConfig
 	pagination *config.PaginationConfig
+	rateLimit  *config.RateLimitSourceConfig
 	client     *http.Client
 
 	// OAuth2 토큰 캐시
 	tokenMu     sync.RWMutex
 	accessToken string
 	tokenExpiry time.Time
+
+	// Rate limiting
+	rateLimitMu   sync.Mutex
+	lastRequest   time.Time
+	requestCount  int
+	windowStart   time.Time
 }
 
 // NewHTTPSource HTTP 소스 생성
@@ -41,6 +48,7 @@ func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
 		body:       cfg.Body,
 		auth:       cfg.Auth,
 		pagination: cfg.Pagination,
+		rateLimit:  cfg.RateLimit,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -397,7 +405,67 @@ func (s *HTTPSource) readWithNextURLPagination(ctx context.Context, records chan
 	}
 }
 
+// waitForRateLimit 레이트 리밋 적용
+func (s *HTTPSource) waitForRateLimit(ctx context.Context) error {
+	if s.rateLimit == nil || !s.rateLimit.Enabled || s.rateLimit.Rate <= 0 {
+		return nil
+	}
+
+	s.rateLimitMu.Lock()
+	defer s.rateLimitMu.Unlock()
+
+	// interval을 duration으로 변환
+	var windowDuration time.Duration
+	switch s.rateLimit.Interval {
+	case "second":
+		windowDuration = time.Second
+	case "minute":
+		windowDuration = time.Minute
+	case "hour":
+		windowDuration = time.Hour
+	default:
+		windowDuration = time.Second
+	}
+
+	now := time.Now()
+
+	// 윈도우가 지났으면 리셋
+	if now.Sub(s.windowStart) >= windowDuration {
+		s.windowStart = now
+		s.requestCount = 0
+	}
+
+	// 요청 수가 rate를 초과하면 대기
+	if s.requestCount >= s.rateLimit.Rate {
+		waitTime := windowDuration - now.Sub(s.windowStart)
+		if waitTime > 0 {
+			fmt.Printf("[HTTP] Rate limit reached (%d/%d per %s), waiting %v\n",
+				s.requestCount, s.rateLimit.Rate, s.rateLimit.Interval, waitTime)
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(waitTime):
+			}
+
+			// 대기 후 윈도우 리셋
+			s.windowStart = time.Now()
+			s.requestCount = 0
+		}
+	}
+
+	s.requestCount++
+	s.lastRequest = time.Now()
+
+	return nil
+}
+
 func (s *HTTPSource) doRequest(ctx context.Context, requestURL string) (any, error) {
+	// Rate limiting 적용
+	if err := s.waitForRateLimit(ctx); err != nil {
+		return nil, fmt.Errorf("rate limit wait cancelled: %w", err)
+	}
+
 	var bodyReader io.Reader
 	if s.body != "" {
 		bodyReader = bytes.NewReader([]byte(s.body))

@@ -27,6 +27,15 @@ type PipelineConfigV2 struct {
 }
 
 // SourceV2 데이터 소스 설정
+// RateLimitSourceConfig 소스 레벨 레이트 리밋 설정
+type RateLimitSourceConfig struct {
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	Rate     int    `yaml:"rate" json:"rate"`                       // 단위 시간당 처리량
+	Interval string `yaml:"interval" json:"interval"`               // second, minute, hour
+	Burst    int    `yaml:"burst,omitempty" json:"burst,omitempty"` // 버스트 허용량 (토큰 버킷)
+	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"` // token_bucket, sliding_window, fixed_window
+}
+
 type SourceV2 struct {
 	Type string `yaml:"type"` // file, sql, http, kafka, sql_event, cdc
 
@@ -79,6 +88,9 @@ type SourceV2 struct {
 	Tables   []string `yaml:"tables,omitempty"`    // tables to watch
 	ServerID uint32   `yaml:"server_id,omitempty"` // MySQL server ID for binlog
 	SlotName string   `yaml:"slot_name,omitempty"` // PostgreSQL replication slot
+
+	// Rate Limiting (공통)
+	RateLimit *RateLimitSourceConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 }
 
 // IncrementalConfig 증분 처리 설정 (SQL용)

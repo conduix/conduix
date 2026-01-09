@@ -86,13 +86,23 @@ type WorkflowPipeline struct {
 	ParameterBindings []ParameterBinding `json:"parameter_bindings,omitempty"`  // 부모→자식 파라미터 매핑
 }
 
+// RateLimitConfig 레이트 리밋 설정
+type RateLimitConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Rate     int    `json:"rate"`                // 단위 시간당 처리량
+	Interval string `json:"interval"`            // second, minute, hour
+	Burst    int    `json:"burst,omitempty"`     // 버스트 허용량 (토큰 버킷)
+	Strategy string `json:"strategy,omitempty"`  // token_bucket, sliding_window, fixed_window
+}
+
 // WorkflowSource 워크플로우 내 소스 설정
 type WorkflowSource struct {
-	Type       string            `json:"type"`                 // kafka, cdc, rest_api, sql, file, sql_event
-	Name       string            `json:"name"`                 // 소스 식별자
-	Config     map[string]any    `json:"config"`               // 소스별 설정
-	Partitions []PartitionConfig `json:"partitions,omitempty"` // 파티션 설정 (병렬 처리용)
+	Type       string            `json:"type"`                  // kafka, cdc, rest_api, sql, file, sql_event
+	Name       string            `json:"name"`                  // 소스 식별자
+	Config     map[string]any    `json:"config"`                // 소스별 설정
+	Partitions []PartitionConfig `json:"partitions,omitempty"`  // 파티션 설정 (병렬 처리용)
 	JSONSchema string            `json:"json_schema,omitempty"` // JSON Schema for source data validation
+	RateLimit  *RateLimitConfig  `json:"rate_limit,omitempty"`  // 소스 레벨 rate limiting
 }
 
 // PartitionConfig 파티션 설정

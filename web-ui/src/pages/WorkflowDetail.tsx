@@ -1173,8 +1173,12 @@ export default function WorkflowDetailPage() {
                       title: t('workflow.errorMessage'),
                       dataIndex: 'error_message',
                       key: 'error_message',
-                      ellipsis: true,
-                      render: (msg: string) => msg ? <Text type="danger">{msg}</Text> : '-',
+                      width: 300,
+                      render: (msg: string) => msg ? (
+                        <Text type="danger" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {msg}
+                        </Text>
+                      ) : '-',
                     },
                   ]}
                 />

@@ -692,6 +692,7 @@ func (e *GroupExecutor) applyStage(data map[string]any, stage types.Stage) (map[
 
 	case "remap":
 		// 필드 매핑/변환
+		// 형식 1: mapping - {"target_field": ".source_field"} (VRL 스타일)
 		if mapping, ok := stage.Config["mapping"].(map[string]any); ok {
 			result := make(map[string]any)
 			// 기존 데이터 복사
@@ -710,6 +711,25 @@ func (e *GroupExecutor) applyStage(data map[string]any, stage types.Stage) (map[
 					} else {
 						// 리터럴 값
 						result[newField] = exprStr
+					}
+				}
+			}
+			return result, nil
+		}
+		// 형식 2: mappings - {"source_field": "target_field"} (간단한 리네임)
+		if mappings, ok := stage.Config["mappings"].(map[string]any); ok {
+			result := make(map[string]any)
+			// 매핑되지 않은 필드는 그대로 bypass
+			for k, v := range data {
+				if _, mapped := mappings[k]; !mapped {
+					result[k] = v
+				}
+			}
+			// 매핑된 필드는 새 이름으로 변환
+			for srcField, targetField := range mappings {
+				if targetFieldStr, ok := targetField.(string); ok {
+					if val, exists := data[srcField]; exists {
+						result[targetFieldStr] = val
 					}
 				}
 			}

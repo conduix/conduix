@@ -103,14 +103,72 @@ func (h *DataTypeHandler) GetDataType(c *gin.Context) {
 	id := c.Param("id")
 
 	var dataType models.DataType
-	if err := h.db.Preload("Preworks").Preload("Parent").First(&dataType, "id = ?", id).Error; err != nil {
+	if err := h.db.Preload("Preworks").Preload("Parent").Preload("Project").First(&dataType, "id = ?", id).Error; err != nil {
 		errorResponse(c, http.StatusNotFound, types.ErrCodeNotFound, "데이터 유형을 찾을 수 없습니다", "Data type not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, types.APIResponse[models.DataType]{
+	// JSON 문자열 필드를 객체로 파싱하여 반환
+	response := map[string]any{
+		"id":           dataType.ID,
+		"project_id":   dataType.ProjectID,
+		"parent_id":    dataType.ParentID,
+		"name":         dataType.Name,
+		"display_name": dataType.DisplayName,
+		"description":  dataType.Description,
+		"category":     dataType.Category,
+		"json_schema":  dataType.JSONSchema,
+		"created_by":   dataType.CreatedBy,
+		"created_at":   dataType.CreatedAt,
+		"updated_at":   dataType.UpdatedAt,
+		"project":      dataType.Project,
+		"parent":       dataType.Parent,
+		"preworks":     dataType.Preworks,
+	}
+
+	// id_fields 파싱
+	if dataType.IDFields != "" {
+		var idFields []string
+		if err := json.Unmarshal([]byte(dataType.IDFields), &idFields); err == nil {
+			response["id_fields"] = idFields
+		} else {
+			response["id_fields"] = dataType.IDFields
+		}
+	}
+
+	// schema 파싱 (DataTypeSchema 객체로)
+	if dataType.Schema != "" {
+		var schema types.DataTypeSchema
+		if err := json.Unmarshal([]byte(dataType.Schema), &schema); err == nil {
+			response["schema"] = schema
+		} else {
+			response["schema"] = dataType.Schema
+		}
+	}
+
+	// delete_strategy 파싱
+	if dataType.DeleteStrategy != "" {
+		var deleteStrategy types.DeleteStrategy
+		if err := json.Unmarshal([]byte(dataType.DeleteStrategy), &deleteStrategy); err == nil {
+			response["delete_strategy"] = deleteStrategy
+		} else {
+			response["delete_strategy"] = dataType.DeleteStrategy
+		}
+	}
+
+	// storage 파싱
+	if dataType.Storage != "" {
+		var storage types.DataTypeStorage
+		if err := json.Unmarshal([]byte(dataType.Storage), &storage); err == nil {
+			response["storage"] = storage
+		} else {
+			response["storage"] = dataType.Storage
+		}
+	}
+
+	c.JSON(http.StatusOK, types.APIResponse[map[string]any]{
 		Success: true,
-		Data:    dataType,
+		Data:    response,
 	})
 }
 

@@ -1,8 +1,78 @@
 package executor
 
 import (
+	"fmt"
+	"net/url"
+	"strings"
+
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
+
+// parseConnectionString connection_string을 driver와 dsn으로 파싱
+// 지원 형식:
+//   - mysql://user:pass@host:3306/dbname
+//   - postgres://user:pass@host:5432/dbname?sslmode=disable
+//
+// 반환:
+//   - driver: mysql, postgres
+//   - dsn: Go SQL driver에서 사용하는 DSN 형식
+func parseConnectionString(connStr string) (driver string, dsn string, err error) {
+	// URL 파싱
+	u, err := url.Parse(connStr)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid connection string: %w", err)
+	}
+
+	driver = u.Scheme
+	if driver == "" {
+		return "", "", fmt.Errorf("connection string must have a scheme (mysql:// or postgres://)")
+	}
+
+	// 사용자 정보
+	username := u.User.Username()
+	password, _ := u.User.Password()
+
+	// 호스트:포트
+	host := u.Hostname()
+	port := u.Port()
+
+	// 데이터베이스 (경로에서 추출, 맨 앞 / 제거)
+	database := strings.TrimPrefix(u.Path, "/")
+
+	// 쿼리 파라미터
+	query := u.RawQuery
+
+	switch driver {
+	case "mysql":
+		// MySQL DSN 형식: user:password@tcp(host:port)/dbname?params
+		if port == "" {
+			port = "3306"
+		}
+		dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", username, password, host, port, database)
+		if query != "" {
+			dsn += "?" + query
+		}
+
+	case "postgres", "postgresql":
+		driver = "postgres"
+		// PostgreSQL DSN 형식: user:password@host:port/dbname?params
+		if port == "" {
+			port = "5432"
+		}
+		dsn = fmt.Sprintf("%s:%s@%s:%s/%s", username, password, host, port, database)
+		if query != "" {
+			dsn += "?" + query
+		} else {
+			// sslmode 기본값 추가
+			dsn += "?sslmode=disable"
+		}
+
+	default:
+		return "", "", fmt.Errorf("unsupported database driver: %s (supported: mysql, postgres)", driver)
+	}
+
+	return driver, dsn, nil
+}
 
 // configToSourceV2 map[string]any를 config.SourceV2로 변환
 func configToSourceV2(cfg map[string]any) config.SourceV2 {

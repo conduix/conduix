@@ -773,6 +773,18 @@ func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error
 
 	// Config에서 필드 매핑
 	if stage.Config != nil {
+		// connection_string이 있으면 파싱하여 driver/dsn 설정
+		if connStr, ok := stage.Config["connection_string"].(string); ok && connStr != "" {
+			connStr = os.ExpandEnv(connStr)
+			driver, dsn, err := parseConnectionString(connStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse connection_string: %w", err)
+			}
+			cfg.Driver = driver
+			cfg.DSN = dsn
+		}
+
+		// 명시적 driver/dsn이 있으면 덮어쓰기 (우선순위 높음)
 		if driver, ok := stage.Config["driver"].(string); ok {
 			cfg.Driver = driver
 		}
@@ -788,6 +800,18 @@ func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error
 		}
 		if onConflict, ok := stage.Config["on_conflict"].(string); ok {
 			cfg.OnConflict = onConflict
+		}
+		// upsert가 true이면 on_conflict를 "update"로 설정
+		if upsert, ok := stage.Config["upsert"].(bool); ok && upsert {
+			cfg.OnConflict = "update"
+		}
+		// conflict_columns 처리
+		if conflictCols, ok := stage.Config["conflict_columns"].([]any); ok {
+			for _, col := range conflictCols {
+				if colStr, ok := col.(string); ok {
+					cfg.ConflictColumns = append(cfg.ConflictColumns, colStr)
+				}
+			}
 		}
 		if columnMap, ok := stage.Config["column_map"].(map[string]any); ok {
 			cfg.ColumnMap = make(map[string]string)

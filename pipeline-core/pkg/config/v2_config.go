@@ -241,6 +241,7 @@ type OutputConfig struct {
 	BatchSize       int               `yaml:"batch_size,omitempty"`       // batch insert size (default: 100)
 	OnConflict      string            `yaml:"on_conflict,omitempty"`      // ignore, update, error (default: error)
 	ConflictColumns []string          `yaml:"conflict_columns,omitempty"` // columns to check for conflict (upsert key)
+	CreateTable     string            `yaml:"create_table,omitempty"`     // CREATE TABLE SQL to execute on open
 }
 
 // MetricsOutputConfig 메트릭 출력 설정

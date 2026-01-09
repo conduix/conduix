@@ -821,6 +821,10 @@ func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error
 				}
 			}
 		}
+		// create_table SQL 처리
+		if createTable, ok := stage.Config["create_table"].(string); ok {
+			cfg.CreateTable = createTable
+		}
 	}
 
 	return sink.NewSink(cfg)

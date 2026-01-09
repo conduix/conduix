@@ -52,6 +52,11 @@ import './StageEditor.css'
 
 const { Title, Text } = Typography
 
+// SQL 식별자 인용 (MySQL 백틱)
+const quoteSQLIdentifier = (name: string): string => {
+  return '`' + name.replace(/`/g, '``') + '`'
+}
+
 // JSON Schema 타입을 SQL 타입으로 변환
 const jsonSchemaTypeToSQL = (type: string, format?: string): string => {
   switch (type) {
@@ -84,31 +89,34 @@ const jsonSchemaTypeToSQL = (type: string, format?: string): string => {
 
 // DataTypeField 배열에서 CREATE TABLE 생성
 const generateCreateTableFromFields = (tableName: string, fields: DataTypeField[], idFields?: string[]): string => {
+  const quotedTable = quoteSQLIdentifier(tableName)
   if (!fields || fields.length === 0) {
-    return `-- No fields defined in schema\nCREATE TABLE ${tableName} (\n  id SERIAL PRIMARY KEY\n);`
+    return `-- No fields defined in schema\nCREATE TABLE IF NOT EXISTS ${quotedTable} (\n  id SERIAL PRIMARY KEY\n);`
   }
 
   const columnDefs = fields.map(field => {
     const sqlType = jsonSchemaTypeToSQL(field.type)
     const nullable = field.required ? ' NOT NULL' : ''
-    return `  ${field.name} ${sqlType}${nullable}`
+    return `  ${quoteSQLIdentifier(field.name)} ${sqlType}${nullable}`
   })
 
   // Add primary key constraint if id_fields are defined
   let primaryKeyClause = ''
   if (idFields && idFields.length > 0) {
-    primaryKeyClause = `,\n  PRIMARY KEY (${idFields.join(', ')})`
+    const quotedIdFields = idFields.map(f => quoteSQLIdentifier(f))
+    primaryKeyClause = `,\n  PRIMARY KEY (${quotedIdFields.join(', ')})`
   }
 
-  return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columnDefs.join(',\n')}${primaryKeyClause}\n);`
+  return `CREATE TABLE IF NOT EXISTS ${quotedTable} (\n${columnDefs.join(',\n')}${primaryKeyClause}\n);`
 }
 
 // JSON Schema에서 CREATE TABLE 생성
 const generateCreateTableFromJsonSchema = (tableName: string, schemaStr: string, idFields?: string[]): string => {
+  const quotedTable = quoteSQLIdentifier(tableName)
   try {
     const schema = JSON.parse(schemaStr)
     if (!schema.properties) {
-      return `-- Invalid JSON Schema: no properties found\nCREATE TABLE ${tableName} (\n  id SERIAL PRIMARY KEY\n);`
+      return `-- Invalid JSON Schema: no properties found\nCREATE TABLE IF NOT EXISTS ${quotedTable} (\n  id SERIAL PRIMARY KEY\n);`
     }
 
     const columnDefs: string[] = []
@@ -118,18 +126,19 @@ const generateCreateTableFromJsonSchema = (tableName: string, schemaStr: string,
       const prop = propDef as { type?: string; format?: string }
       const sqlType = jsonSchemaTypeToSQL(prop.type || 'string', prop.format)
       const nullable = required.includes(propName) ? ' NOT NULL' : ''
-      columnDefs.push(`  ${propName} ${sqlType}${nullable}`)
+      columnDefs.push(`  ${quoteSQLIdentifier(propName)} ${sqlType}${nullable}`)
     }
 
     // Add primary key constraint if id_fields are defined
     let primaryKeyClause = ''
     if (idFields && idFields.length > 0) {
-      primaryKeyClause = `,\n  PRIMARY KEY (${idFields.join(', ')})`
+      const quotedIdFields = idFields.map(f => quoteSQLIdentifier(f))
+      primaryKeyClause = `,\n  PRIMARY KEY (${quotedIdFields.join(', ')})`
     }
 
-    return `CREATE TABLE IF NOT EXISTS ${tableName} (\n${columnDefs.join(',\n')}${primaryKeyClause}\n);`
+    return `CREATE TABLE IF NOT EXISTS ${quotedTable} (\n${columnDefs.join(',\n')}${primaryKeyClause}\n);`
   } catch {
-    return `-- Failed to parse JSON Schema\nCREATE TABLE ${tableName} (\n  id SERIAL PRIMARY KEY\n);`
+    return `-- Failed to parse JSON Schema\nCREATE TABLE IF NOT EXISTS ${quotedTable} (\n  id SERIAL PRIMARY KEY\n);`
   }
 }
 

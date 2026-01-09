@@ -20,13 +20,14 @@ import (
 
 // SQLSink SQL 데이터베이스 출력
 type SQLSink struct {
-	driver     string
-	dsn        string
-	table      string
-	columns    []string
-	columnMap  map[string]string
-	batchSize  int
-	onConflict string
+	driver      string
+	dsn         string
+	table       string
+	columns     []string
+	columnMap   map[string]string
+	batchSize   int
+	onConflict  string
+	createTable string
 
 	db     *sql.DB
 	buffer []source.Record
@@ -57,14 +58,15 @@ func NewSQLSink(cfg config.OutputConfig) (*SQLSink, error) {
 	}
 
 	return &SQLSink{
-		driver:     cfg.Driver,
-		dsn:        cfg.DSN,
-		table:      cfg.Table,
-		columns:    cfg.Columns,
-		columnMap:  cfg.ColumnMap,
-		batchSize:  batchSize,
-		onConflict: onConflict,
-		buffer:     make([]source.Record, 0, batchSize),
+		driver:      cfg.Driver,
+		dsn:         cfg.DSN,
+		table:       cfg.Table,
+		columns:     cfg.Columns,
+		columnMap:   cfg.ColumnMap,
+		batchSize:   batchSize,
+		onConflict:  onConflict,
+		createTable: cfg.CreateTable,
+		buffer:      make([]source.Record, 0, batchSize),
 	}, nil
 }
 
@@ -89,6 +91,16 @@ func (s *SQLSink) Open(ctx context.Context) error {
 	}
 
 	s.db = db
+
+	// CREATE TABLE 실행 (설정된 경우)
+	if s.createTable != "" {
+		log.Printf("[sql] Executing CREATE TABLE: %s", s.createTable)
+		if _, err := s.db.ExecContext(ctx, s.createTable); err != nil {
+			return fmt.Errorf("failed to execute CREATE TABLE: %w", err)
+		}
+		log.Printf("[sql] CREATE TABLE executed successfully")
+	}
+
 	log.Printf("[sql] Sink opened (driver=%s, table=%s, batch_size=%d)",
 		s.driver, s.table, s.batchSize)
 	return nil

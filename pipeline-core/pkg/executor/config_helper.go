@@ -134,6 +134,16 @@ func configToSourceV2(cfg map[string]any) config.SourceV2 {
 	if v, ok := cfg["dsn"].(string); ok {
 		result.DSN = v
 	}
+	// connection_string 파싱 (driver와 dsn이 없고 connection_string이 있는 경우)
+	if result.Driver == "" && result.DSN == "" {
+		if connStr, ok := cfg["connection_string"].(string); ok && connStr != "" {
+			driver, dsn, err := parseConnectionString(connStr)
+			if err == nil {
+				result.Driver = driver
+				result.DSN = dsn
+			}
+		}
+	}
 	if v, ok := cfg["query"].(string); ok {
 		result.Query = v
 	}

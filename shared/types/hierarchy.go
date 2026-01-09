@@ -107,6 +107,7 @@ type PartitionConfig struct {
 // Stage는 input → output 인터페이스를 가지며, 구현에 따라 역할이 결정됨
 // (filter, remap, aggregate, elasticsearch, kafka, trigger 등)
 type Stage struct {
+	ID     string         `json:"id,omitempty"` // 프론트엔드용 고유 ID
 	Name   string         `json:"name"`
 	Type   string         `json:"type"` // filter, remap, sample, aggregate, elasticsearch, kafka, trigger, etc.
 	Config map[string]any `json:"config"`

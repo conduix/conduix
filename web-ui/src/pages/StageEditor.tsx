@@ -172,25 +172,54 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
   file: { color: 'purple', icon: <ExportOutlined />, label: 'File Output' },
 }
 
-// Output 타입별 설정 placeholder
-const getOutputConfigPlaceholder = (outputType: StageType): string => {
+// Output 타입별 기본 설정값 (placeholder가 아닌 실제 기본값)
+const getOutputConfigDefault = (outputType: StageType): Record<string, unknown> => {
   switch (outputType) {
     case 'sql':
-      return '{"connection_string": "postgres://...", "table": "my_table", "batch_size": 100}'
+      return {
+        connection_string: 'postgres://user:password@localhost:5432/dbname?sslmode=disable',
+        table: 'my_table',
+        batch_size: 100,
+        upsert: true,
+        conflict_columns: [],
+        create_table: '',
+      }
     case 'elasticsearch':
-      return '{"addresses": ["http://localhost:9200"], "index": "my-index", "batch_size": 100}'
+      return {
+        addresses: ['http://localhost:9200'],
+        index: 'my-index',
+        batch_size: 100,
+      }
     case 'kafka':
-      return '{"brokers": ["localhost:9092"], "topic": "my-topic"}'
+      return {
+        brokers: ['localhost:9092'],
+        topic: 'my-topic',
+      }
     case 'mongodb':
-      return '{"uri": "mongodb://localhost:27017", "database": "mydb", "collection": "mycollection"}'
+      return {
+        uri: 'mongodb://localhost:27017',
+        database: 'mydb',
+        collection: 'mycollection',
+      }
     case 's3':
-      return '{"bucket": "my-bucket", "region": "us-east-1", "prefix": "data/"}'
+      return {
+        bucket: 'my-bucket',
+        region: 'us-east-1',
+        prefix: 'data/',
+      }
     case 'rest_api':
-      return '{"url": "https://api.example.com/data", "method": "POST", "headers": {}}'
+      return {
+        url: 'https://api.example.com/data',
+        method: 'POST',
+        headers: {},
+      }
     case 'file':
-      return '{"path": "/data/output", "format": "json"}'
+      return {
+        path: '/data/output',
+        format: 'json',
+      }
     default:
-      return '{}'
+      return {}
   }
 }
 
@@ -411,6 +440,31 @@ export default function StageEditorPage() {
     setStageModalVisible(true)
   }
 
+  // 타입 변경 시 기본값 설정
+  const handleStageTypeChange = (type: StageType) => {
+    // Output stage인 경우 기본값 설정
+    const outputTypes: StageType[] = ['sql', 'elasticsearch', 'kafka', 'mongodb', 's3', 'rest_api', 'file']
+    if (outputTypes.includes(type)) {
+      const defaultConfig = getOutputConfigDefault(type)
+
+      // SQL인 경우 개별 필드로 설정
+      if (type === 'sql') {
+        stageForm.setFieldsValue({
+          sql_connection_string: defaultConfig.connection_string,
+          sql_table: defaultConfig.table,
+          sql_batch_size: defaultConfig.batch_size,
+          sql_upsert: defaultConfig.upsert,
+          sql_conflict_columns: (defaultConfig.conflict_columns as string[])?.join(', ') || '',
+          sql_create_table: defaultConfig.create_table || '',
+        })
+      } else {
+        stageForm.setFieldsValue({
+          output_config: JSON.stringify(defaultConfig, null, 2),
+        })
+      }
+    }
+  }
+
   const handleEditStage = (stage: Stage) => {
     setEditingStage(stage)
     stageForm.setFieldsValue({
@@ -467,8 +521,15 @@ export default function StageEditorPage() {
       // validate
       schema: stage.config?.schema ? JSON.stringify(stage.config.schema, null, 2) : '',
       drop_on_fail: stage.config?.drop_on_fail || false,
-      // output stages - config is directly in stage.config
-      output_config: stage.config ? JSON.stringify(stage.config, null, 2) : '',
+      // SQL output - 개별 필드로 설정
+      sql_connection_string: stage.config?.connection_string || '',
+      sql_table: stage.config?.table || '',
+      sql_batch_size: stage.config?.batch_size || 100,
+      sql_upsert: stage.config?.upsert ?? true,
+      sql_conflict_columns: (stage.config?.conflict_columns as string[])?.join(', ') || '',
+      sql_create_table: stage.config?.create_table || '',
+      // other output stages - config is directly in stage.config
+      output_config: stage.config && stage.type !== 'sql' ? JSON.stringify(stage.config, null, 2) : '',
     })
     setStageModalVisible(true)
   }
@@ -477,8 +538,8 @@ export default function StageEditorPage() {
     setStages(stages.filter(s => s.id !== id))
   }
 
-  // Generate CREATE TABLE from target data model schema
-  const handleGenerateCreateTable = async () => {
+  // Generate CREATE TABLE from target data model schema (for SQL individual fields)
+  const handleGenerateCreateTableForFields = async () => {
     if (!pipeline?.target_data_type_id) {
       message.warning(t('stage.noTargetDataModel'))
       return
@@ -492,29 +553,20 @@ export default function StageEditorPage() {
         let createTableSQL = ''
 
         if (dataType.schema?.fields && dataType.schema.fields.length > 0) {
-          // Use fields array
           createTableSQL = generateCreateTableFromFields(tableName, dataType.schema.fields, dataType.id_fields)
         } else if (dataType.schema?.definition) {
-          // Use JSON Schema definition
           createTableSQL = generateCreateTableFromJsonSchema(tableName, dataType.schema.definition, dataType.id_fields)
         } else {
           message.warning(t('stage.noSchemaDefinition'))
           return
         }
 
-        // Get current config and add create_table
-        const currentConfig = stageForm.getFieldValue('output_config')
-        let config: Record<string, unknown> = {}
-        try {
-          config = currentConfig ? JSON.parse(currentConfig) : {}
-        } catch {
-          config = {}
-        }
-
-        config.create_table = createTableSQL
-        config.table = tableName
-
-        stageForm.setFieldValue('output_config', JSON.stringify(config, null, 2))
+        // Update individual fields
+        stageForm.setFieldsValue({
+          sql_table: tableName,
+          sql_create_table: createTableSQL,
+          sql_conflict_columns: dataType.id_fields?.join(', ') || '',
+        })
         message.success(t('stage.createTableGenerated'))
       }
     } catch (error) {
@@ -638,8 +690,20 @@ export default function StageEditorPage() {
             config = { schema: {} }
           }
           break
-        // Output stages - each has its own specific config
+        // SQL Output stage - 개별 필드에서 config 생성
         case 'sql':
+          config = {
+            connection_string: values.sql_connection_string || '',
+            table: values.sql_table || '',
+            batch_size: values.sql_batch_size ? Number(values.sql_batch_size) : 100,
+            upsert: values.sql_upsert ?? true,
+            conflict_columns: values.sql_conflict_columns
+              ? values.sql_conflict_columns.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+            create_table: values.sql_create_table || '',
+          }
+          break
+        // Other Output stages - config is in JSON textarea
         case 'elasticsearch':
         case 'kafka':
         case 'mongodb':
@@ -1234,18 +1298,71 @@ export default function StageEditorPage() {
             </Form.Item>
           </>
         )
-      // SQL Output stage - with CREATE TABLE generation
+      // SQL Output stage - 개별 필드로 표시
       case 'sql':
         return (
           <>
             <Form.Item
-              name="output_config"
-              label={t('stage.outputConfig')}
-              extra={t('stage.outputConfigHelp')}
+              name="sql_connection_string"
+              label={t('stage.sqlConnectionString')}
+              extra={t('stage.sqlConnectionStringHelp')}
+              rules={[{ required: true, message: t('stage.sqlConnectionStringRequired') }]}
+            >
+              <Input
+                placeholder="postgres://user:password@localhost:5432/dbname?sslmode=disable"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="sql_table"
+              label={t('stage.sqlTable')}
+              rules={[{ required: true, message: t('stage.sqlTableRequired') }]}
+            >
+              <Input
+                placeholder="my_table"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="sql_batch_size"
+              label={t('stage.sqlBatchSize')}
+              extra={t('stage.sqlBatchSizeHelp')}
+            >
+              <Input
+                type="number"
+                min={1}
+                max={10000}
+                style={{ width: 150 }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="sql_upsert"
+              label={t('stage.sqlUpsert')}
+              extra={t('stage.sqlUpsertHelp')}
+            >
+              <Select style={{ width: 150 }}>
+                <Select.Option value={true}>{t('common.yes')}</Select.Option>
+                <Select.Option value={false}>{t('common.no')}</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="sql_conflict_columns"
+              label={t('stage.sqlConflictColumns')}
+              extra={t('stage.sqlConflictColumnsHelp')}
+            >
+              <Input
+                placeholder="id, external_id"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="sql_create_table"
+              label={t('stage.sqlCreateTable')}
+              extra={t('stage.sqlCreateTableHelp')}
             >
               <Input.TextArea
-                rows={8}
-                placeholder={getOutputConfigPlaceholder(watchedStageType)}
+                rows={6}
+                placeholder="CREATE TABLE IF NOT EXISTS my_table (...);"
                 style={{ fontFamily: 'monospace' }}
               />
             </Form.Item>
@@ -1253,7 +1370,7 @@ export default function StageEditorPage() {
               <Button
                 type="dashed"
                 icon={<DatabaseOutlined />}
-                onClick={handleGenerateCreateTable}
+                onClick={handleGenerateCreateTableForFields}
                 style={{ marginBottom: 16 }}
               >
                 {t('stage.generateCreateTable')}
@@ -1276,7 +1393,7 @@ export default function StageEditorPage() {
           >
             <Input.TextArea
               rows={5}
-              placeholder={getOutputConfigPlaceholder(watchedStageType)}
+              placeholder={JSON.stringify(getOutputConfigDefault(watchedStageType), null, 2)}
               style={{ fontFamily: 'monospace' }}
             />
           </Form.Item>
@@ -1468,7 +1585,7 @@ export default function StageEditorPage() {
             label={t('stage.type')}
             rules={[{ required: true, message: t('stage.typeRequired') }]}
           >
-            <Select placeholder={t('stage.typePlaceholder')}>
+            <Select placeholder={t('stage.typePlaceholder')} onChange={handleStageTypeChange}>
               <Select.Option value="filter">
                 <Space>
                   <FilterOutlined style={{ color: '#1890ff' }} />

@@ -125,6 +125,7 @@ type CreateDataTypeRequest struct {
 	DeleteStrategy *types.DeleteStrategy  `json:"delete_strategy,omitempty"`
 	IDFields       []string               `json:"id_fields,omitempty"` // 복합키 필드 (예: ["board_id", "post_id"])
 	Schema         *types.DataTypeSchema  `json:"schema,omitempty"`
+	JSONSchema     string                 `json:"json_schema,omitempty"`
 	Storage        *types.DataTypeStorage `json:"storage,omitempty"`
 	Preworks       []PreworkRequest       `json:"preworks,omitempty"`
 }
@@ -139,6 +140,7 @@ type UpdateDataTypeRequest struct {
 	DeleteStrategy *types.DeleteStrategy  `json:"delete_strategy,omitempty"`
 	IDFields       []string               `json:"id_fields,omitempty"`
 	Schema         *types.DataTypeSchema  `json:"schema,omitempty"`
+	JSONSchema     string                 `json:"json_schema,omitempty"`
 	Storage        *types.DataTypeStorage `json:"storage,omitempty"`
 }
 
@@ -257,6 +259,7 @@ func (h *DataTypeHandler) CreateDataType(c *gin.Context) {
 		DeleteStrategy: deleteStrategyJSON,
 		IDFields:       idFieldsJSON,
 		Schema:         schemaJSON,
+		JSONSchema:     req.JSONSchema,
 		Storage:        storageJSON,
 		CreatedBy:      userID,
 		CreatedAt:      time.Now(),
@@ -383,6 +386,10 @@ func (h *DataTypeHandler) UpdateDataType(c *gin.Context) {
 		if b, err := json.Marshal(req.Schema); err == nil {
 			updates["schema"] = string(b)
 		}
+	}
+
+	if req.JSONSchema != "" {
+		updates["json_schema"] = req.JSONSchema
 	}
 
 	if req.Storage != nil {

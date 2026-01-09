@@ -95,6 +95,7 @@ export default function SourceEditorPage() {
   const [source, setSource] = useState<WorkflowSource | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
 
   // Edit mode
   const [editMode, setEditMode] = useState<'visual' | 'yaml'>('visual')
@@ -413,6 +414,81 @@ export default function SourceEditorPage() {
     }
   }
 
+  // Test REST API Connection
+  const handleTestRESTAPI = async () => {
+    const url = form.getFieldValue('url')
+    if (!url) {
+      message.warning(t('source.testConnectionNoUrl'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testRESTAPI({
+        url,
+        method: form.getFieldValue('method') || 'GET',
+      })
+      if (result.success) {
+        message.success(`${t('source.testConnectionSuccess')} (${result.latency}) - ${result.message}`)
+      } else {
+        message.error(`${t('source.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('source.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Test Kafka Connection
+  const handleTestKafka = async () => {
+    const brokers = form.getFieldValue('brokers')
+    if (!brokers) {
+      message.warning(t('source.testConnectionNoBroker'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testKafka({
+        brokers: brokers.split(',').map((s: string) => s.trim()).filter(Boolean),
+        topic: form.getFieldValue('topic'),
+      })
+      if (result.success) {
+        message.success(`${t('source.testConnectionSuccess')} (${result.latency}) - ${result.message}`)
+      } else {
+        message.error(`${t('source.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('source.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Test DB Connection (for sql, cdc, sql_event)
+  const handleTestDBConnection = async () => {
+    const connectionString = form.getFieldValue('connection_string')
+    if (!connectionString) {
+      message.warning(t('source.testConnectionNoString'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testDBConnection(connectionString)
+      if (result.success) {
+        message.success(`${t('source.testConnectionSuccess')} (${result.latency})`)
+      } else {
+        message.error(`${t('source.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('source.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
   // Source 타입별 폼 필드 렌더링
   const renderSourceConfigFields = () => {
     switch (watchedSourceType) {
@@ -431,6 +507,16 @@ export default function SourceEditorPage() {
                 <Select.Option value="GET">GET</Select.Option>
                 <Select.Option value="POST">POST</Select.Option>
               </Select>
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestRESTAPI}
+              >
+                {t('source.testConnection')}
+              </Button>
             </Form.Item>
             <Form.Item
               name="headers"
@@ -620,6 +706,16 @@ export default function SourceEditorPage() {
             >
               <Input placeholder="localhost:9092,localhost:9093" />
             </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestKafka}
+              >
+                {t('source.testConnection')}
+              </Button>
+            </Form.Item>
             <Form.Item
               name="topic"
               label={t('source.topic')}
@@ -648,6 +744,16 @@ export default function SourceEditorPage() {
               rules={[{ required: true, message: t('source.connectionStringRequired') }]}
             >
               <Input.Password placeholder="postgres://user:pass@host:5432/db" />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestDBConnection}
+              >
+                {t('source.testConnection')}
+              </Button>
             </Form.Item>
             <Form.Item
               name="database"
@@ -678,6 +784,16 @@ export default function SourceEditorPage() {
               rules={[{ required: true, message: t('source.connectionStringRequired') }]}
             >
               <Input.Password placeholder="postgres://user:pass@host:5432/db" />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestDBConnection}
+              >
+                {t('source.testConnection')}
+              </Button>
             </Form.Item>
             <Form.Item
               name="query"
@@ -724,6 +840,16 @@ export default function SourceEditorPage() {
               rules={[{ required: true, message: t('source.connectionStringRequired') }]}
             >
               <Input.Password placeholder="postgres://user:pass@host:5432/db" />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestDBConnection}
+              >
+                {t('source.testConnection')}
+              </Button>
             </Form.Item>
             <Form.Item
               name="query"

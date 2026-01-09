@@ -215,10 +215,15 @@ func (s *Server) setupRoutes() {
 				agents.GET("/:id", s.agentHandler.GetAgent)
 			}
 
-			// 유틸리티
+			// 유틸리티 (연결 테스트)
 			utils := authenticated.Group("/utils")
 			{
 				utils.POST("/test-db-connection", s.utilsHandler.TestDBConnection)
+				utils.POST("/test-elasticsearch", s.utilsHandler.TestElasticsearch)
+				utils.POST("/test-kafka", s.utilsHandler.TestKafka)
+				utils.POST("/test-mongodb", s.utilsHandler.TestMongoDB)
+				utils.POST("/test-s3", s.utilsHandler.TestS3)
+				utils.POST("/test-rest-api", s.utilsHandler.TestRESTAPI)
 			}
 		}
 	}

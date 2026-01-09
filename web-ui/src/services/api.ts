@@ -449,11 +449,55 @@ class ApiService {
     return response.data
   }
 
-  // 유틸리티
+  // 유틸리티 - 연결 테스트
   async testDBConnection(connectionString: string) {
     const response = await this.client.post('/utils/test-db-connection', {
       connection_string: connectionString,
     })
+    return response.data
+  }
+
+  async testElasticsearch(data: {
+    addresses: string[]
+    username?: string
+    password?: string
+    index?: string
+  }) {
+    const response = await this.client.post('/utils/test-elasticsearch', data)
+    return response.data
+  }
+
+  async testKafka(data: { brokers: string[]; topic?: string }) {
+    const response = await this.client.post('/utils/test-kafka', data)
+    return response.data
+  }
+
+  async testMongoDB(data: {
+    uri: string
+    database?: string
+    collection?: string
+  }) {
+    const response = await this.client.post('/utils/test-mongodb', data)
+    return response.data
+  }
+
+  async testS3(data: {
+    bucket: string
+    region: string
+    access_key_id?: string
+    secret_access_key?: string
+    endpoint?: string
+  }) {
+    const response = await this.client.post('/utils/test-s3', data)
+    return response.data
+  }
+
+  async testRESTAPI(data: {
+    url: string
+    method?: string
+    headers?: Record<string, string>
+  }) {
+    const response = await this.client.post('/utils/test-rest-api', data)
     return response.data
   }
 }

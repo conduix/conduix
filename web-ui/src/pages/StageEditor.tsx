@@ -445,12 +445,10 @@ export default function StageEditorPage() {
   // 타입 변경 시 기본값 설정
   const handleStageTypeChange = (type: StageType) => {
     // Output stage인 경우 기본값 설정
-    const outputTypes: StageType[] = ['sql', 'elasticsearch', 'kafka', 'mongodb', 's3', 'rest_api', 'file']
-    if (outputTypes.includes(type)) {
-      const defaultConfig = getOutputConfigDefault(type)
+    const defaultConfig = getOutputConfigDefault(type)
 
-      // SQL인 경우 개별 필드로 설정
-      if (type === 'sql') {
+    switch (type) {
+      case 'sql':
         stageForm.setFieldsValue({
           sql_connection_string: defaultConfig.connection_string,
           sql_table: defaultConfig.table,
@@ -459,11 +457,50 @@ export default function StageEditorPage() {
           sql_conflict_columns: (defaultConfig.conflict_columns as string[])?.join(', ') || '',
           sql_create_table: defaultConfig.create_table || '',
         })
-      } else {
+        break
+      case 'elasticsearch':
         stageForm.setFieldsValue({
-          output_config: JSON.stringify(defaultConfig, null, 2),
+          es_addresses: (defaultConfig.addresses as string[])?.join(', ') || '',
+          es_index: defaultConfig.index || '',
+          es_batch_size: defaultConfig.batch_size || 100,
+          es_username: '',
+          es_password: '',
         })
-      }
+        break
+      case 'kafka':
+        stageForm.setFieldsValue({
+          kafka_brokers: (defaultConfig.brokers as string[])?.join(', ') || '',
+          kafka_topic: defaultConfig.topic || '',
+        })
+        break
+      case 'mongodb':
+        stageForm.setFieldsValue({
+          mongodb_uri: defaultConfig.uri || '',
+          mongodb_database: defaultConfig.database || '',
+          mongodb_collection: defaultConfig.collection || '',
+        })
+        break
+      case 's3':
+        stageForm.setFieldsValue({
+          s3_bucket: defaultConfig.bucket || '',
+          s3_region: defaultConfig.region || '',
+          s3_prefix: defaultConfig.prefix || '',
+          s3_endpoint: '',
+        })
+        break
+      case 'rest_api':
+        stageForm.setFieldsValue({
+          rest_url: defaultConfig.url || '',
+          rest_method: defaultConfig.method || 'POST',
+          rest_headers: defaultConfig.headers ? JSON.stringify(defaultConfig.headers, null, 2) : '{}',
+        })
+        break
+      case 'file':
+        stageForm.setFieldsValue({
+          file_path: defaultConfig.path || '',
+          file_format: defaultConfig.format || 'json',
+        })
+        break
     }
   }
 
@@ -530,8 +567,31 @@ export default function StageEditorPage() {
       sql_upsert: stage.config?.upsert ?? true,
       sql_conflict_columns: (stage.config?.conflict_columns as string[])?.join(', ') || '',
       sql_create_table: stage.config?.create_table || '',
-      // other output stages - config is directly in stage.config
-      output_config: stage.config && stage.type !== 'sql' ? JSON.stringify(stage.config, null, 2) : '',
+      // Elasticsearch output
+      es_addresses: (stage.config?.addresses as string[])?.join(', ') || '',
+      es_index: stage.config?.index || '',
+      es_batch_size: stage.config?.batch_size || 100,
+      es_username: stage.config?.username || '',
+      es_password: stage.config?.password || '',
+      // Kafka output
+      kafka_brokers: (stage.config?.brokers as string[])?.join(', ') || '',
+      kafka_topic: stage.config?.topic || '',
+      // MongoDB output
+      mongodb_uri: stage.config?.uri || '',
+      mongodb_database: stage.config?.database || '',
+      mongodb_collection: stage.config?.collection || '',
+      // S3 output
+      s3_bucket: stage.config?.bucket || '',
+      s3_region: stage.config?.region || '',
+      s3_prefix: stage.config?.prefix || '',
+      s3_endpoint: stage.config?.endpoint || '',
+      // REST API output
+      rest_url: stage.config?.url || '',
+      rest_method: stage.config?.method || 'POST',
+      rest_headers: stage.config?.headers ? JSON.stringify(stage.config.headers, null, 2) : '{}',
+      // File output
+      file_path: stage.config?.path || '',
+      file_format: stage.config?.format || 'json',
     })
     setStageModalVisible(true)
   }
@@ -553,6 +613,140 @@ export default function StageEditorPage() {
       const result = await api.testDBConnection(connectionString)
       if (result.success) {
         message.success(`${t('stage.testConnectionSuccess')} (${result.latency})`)
+      } else {
+        message.error(`${t('stage.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('stage.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Test Elasticsearch Connection
+  const handleTestElasticsearch = async () => {
+    const addresses = stageForm.getFieldValue('es_addresses')
+    if (!addresses) {
+      message.warning(t('stage.testConnectionNoAddress'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testElasticsearch({
+        addresses: addresses.split(',').map((s: string) => s.trim()).filter(Boolean),
+        username: stageForm.getFieldValue('es_username'),
+        password: stageForm.getFieldValue('es_password'),
+      })
+      if (result.success) {
+        message.success(`${t('stage.testConnectionSuccess')} (${result.latency}) - ${result.message}`)
+      } else {
+        message.error(`${t('stage.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('stage.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Test Kafka Connection
+  const handleTestKafka = async () => {
+    const brokers = stageForm.getFieldValue('kafka_brokers')
+    if (!brokers) {
+      message.warning(t('stage.testConnectionNoBroker'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testKafka({
+        brokers: brokers.split(',').map((s: string) => s.trim()).filter(Boolean),
+        topic: stageForm.getFieldValue('kafka_topic'),
+      })
+      if (result.success) {
+        message.success(`${t('stage.testConnectionSuccess')} (${result.latency}) - ${result.message}`)
+      } else {
+        message.error(`${t('stage.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('stage.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Test MongoDB Connection
+  const handleTestMongoDB = async () => {
+    const uri = stageForm.getFieldValue('mongodb_uri')
+    if (!uri) {
+      message.warning(t('stage.testConnectionNoUri'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testMongoDB({
+        uri,
+        database: stageForm.getFieldValue('mongodb_database'),
+        collection: stageForm.getFieldValue('mongodb_collection'),
+      })
+      if (result.success) {
+        message.success(`${t('stage.testConnectionSuccess')} (${result.latency}) - ${result.message}`)
+      } else {
+        message.error(`${t('stage.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('stage.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Test S3 Connection
+  const handleTestS3 = async () => {
+    const bucket = stageForm.getFieldValue('s3_bucket')
+    const region = stageForm.getFieldValue('s3_region')
+    if (!bucket || !region) {
+      message.warning(t('stage.testConnectionNoS3'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testS3({
+        bucket,
+        region,
+        endpoint: stageForm.getFieldValue('s3_endpoint'),
+      })
+      if (result.success) {
+        message.success(`${t('stage.testConnectionSuccess')} (${result.latency}) - ${result.message}`)
+      } else {
+        message.error(`${t('stage.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('stage.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Test REST API Connection
+  const handleTestRESTAPI = async () => {
+    const url = stageForm.getFieldValue('rest_url')
+    if (!url) {
+      message.warning(t('stage.testConnectionNoUrl'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testRESTAPI({
+        url,
+        method: stageForm.getFieldValue('rest_method') || 'GET',
+      })
+      if (result.success) {
+        message.success(`${t('stage.testConnectionSuccess')} (${result.latency}) - ${result.message}`)
       } else {
         message.error(`${t('stage.testConnectionFailed')}: ${result.error}`)
       }
@@ -715,7 +909,7 @@ export default function StageEditorPage() {
             config = { schema: {} }
           }
           break
-        // SQL Output stage - 개별 필드에서 config 생성
+        // SQL Output stage
         case 'sql':
           config = {
             connection_string: values.sql_connection_string || '',
@@ -728,17 +922,65 @@ export default function StageEditorPage() {
             create_table: values.sql_create_table || '',
           }
           break
-        // Other Output stages - config is in JSON textarea
+        // Elasticsearch Output stage
         case 'elasticsearch':
+          config = {
+            addresses: values.es_addresses
+              ? values.es_addresses.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+            index: values.es_index || '',
+            batch_size: values.es_batch_size ? Number(values.es_batch_size) : 100,
+            username: values.es_username || undefined,
+            password: values.es_password || undefined,
+          }
+          break
+        // Kafka Output stage
         case 'kafka':
+          config = {
+            brokers: values.kafka_brokers
+              ? values.kafka_brokers.split(',').map((s: string) => s.trim()).filter(Boolean)
+              : [],
+            topic: values.kafka_topic || '',
+          }
+          break
+        // MongoDB Output stage
         case 'mongodb':
+          config = {
+            uri: values.mongodb_uri || '',
+            database: values.mongodb_database || '',
+            collection: values.mongodb_collection || '',
+          }
+          break
+        // S3 Output stage
         case 's3':
+          config = {
+            bucket: values.s3_bucket || '',
+            region: values.s3_region || '',
+            prefix: values.s3_prefix || '',
+            endpoint: values.s3_endpoint || undefined,
+          }
+          break
+        // REST API Output stage
         case 'rest_api':
-        case 'file':
           try {
-            config = values.output_config ? JSON.parse(values.output_config) : {}
+            config = {
+              url: values.rest_url || '',
+              method: values.rest_method || 'POST',
+              headers: values.rest_headers ? JSON.parse(values.rest_headers) : {},
+            }
           } catch {
-            config = {}
+            config = {
+              url: values.rest_url || '',
+              method: values.rest_method || 'POST',
+              headers: {},
+            }
+          }
+          break
+        // File Output stage
+        case 'file':
+          config = {
+            path: values.file_path || '',
+            format: values.file_format || 'json',
           }
           break
       }
@@ -1413,25 +1655,283 @@ export default function StageEditorPage() {
             )}
           </>
         )
-      // Other Output stages
+      // Elasticsearch Output stage
       case 'elasticsearch':
+        return (
+          <>
+            <Form.Item
+              name="es_addresses"
+              label={t('stage.esAddresses')}
+              extra={t('stage.esAddressesHelp')}
+              rules={[{ required: true, message: t('stage.esAddressesRequired') }]}
+            >
+              <Input
+                placeholder="http://localhost:9200, http://localhost:9201"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestElasticsearch}
+              >
+                {t('stage.testConnection')}
+              </Button>
+            </Form.Item>
+            <Form.Item
+              name="es_index"
+              label={t('stage.esIndex')}
+              rules={[{ required: true, message: t('stage.esIndexRequired') }]}
+            >
+              <Input
+                placeholder="my-index"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="es_batch_size"
+              label={t('stage.esBatchSize')}
+            >
+              <Input
+                type="number"
+                min={1}
+                max={10000}
+                style={{ width: 150 }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="es_username"
+              label={t('stage.esUsername')}
+            >
+              <Input placeholder="elastic" />
+            </Form.Item>
+            <Form.Item
+              name="es_password"
+              label={t('stage.esPassword')}
+            >
+              <Input.Password placeholder="password" />
+            </Form.Item>
+          </>
+        )
+      // Kafka Output stage
       case 'kafka':
+        return (
+          <>
+            <Form.Item
+              name="kafka_brokers"
+              label={t('stage.kafkaBrokers')}
+              extra={t('stage.kafkaBrokersHelp')}
+              rules={[{ required: true, message: t('stage.kafkaBrokersRequired') }]}
+            >
+              <Input
+                placeholder="localhost:9092, localhost:9093"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestKafka}
+              >
+                {t('stage.testConnection')}
+              </Button>
+            </Form.Item>
+            <Form.Item
+              name="kafka_topic"
+              label={t('stage.kafkaTopic')}
+              rules={[{ required: true, message: t('stage.kafkaTopicRequired') }]}
+            >
+              <Input
+                placeholder="my-topic"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+          </>
+        )
+      // MongoDB Output stage
       case 'mongodb':
+        return (
+          <>
+            <Form.Item
+              name="mongodb_uri"
+              label={t('stage.mongodbUri')}
+              extra={t('stage.mongodbUriHelp')}
+              rules={[{ required: true, message: t('stage.mongodbUriRequired') }]}
+            >
+              <Input
+                placeholder="mongodb://localhost:27017"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestMongoDB}
+              >
+                {t('stage.testConnection')}
+              </Button>
+            </Form.Item>
+            <Form.Item
+              name="mongodb_database"
+              label={t('stage.mongodbDatabase')}
+              rules={[{ required: true, message: t('stage.mongodbDatabaseRequired') }]}
+            >
+              <Input
+                placeholder="mydb"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="mongodb_collection"
+              label={t('stage.mongodbCollection')}
+              rules={[{ required: true, message: t('stage.mongodbCollectionRequired') }]}
+            >
+              <Input
+                placeholder="mycollection"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+          </>
+        )
+      // S3 Output stage
       case 's3':
+        return (
+          <>
+            <Form.Item
+              name="s3_bucket"
+              label={t('stage.s3Bucket')}
+              rules={[{ required: true, message: t('stage.s3BucketRequired') }]}
+            >
+              <Input
+                placeholder="my-bucket"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="s3_region"
+              label={t('stage.s3Region')}
+              rules={[{ required: true, message: t('stage.s3RegionRequired') }]}
+            >
+              <Select placeholder="Select region" style={{ width: 200 }}>
+                <Select.Option value="us-east-1">us-east-1</Select.Option>
+                <Select.Option value="us-west-2">us-west-2</Select.Option>
+                <Select.Option value="eu-west-1">eu-west-1</Select.Option>
+                <Select.Option value="ap-northeast-1">ap-northeast-1</Select.Option>
+                <Select.Option value="ap-northeast-2">ap-northeast-2</Select.Option>
+                <Select.Option value="ap-southeast-1">ap-southeast-1</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestS3}
+              >
+                {t('stage.testConnection')}
+              </Button>
+            </Form.Item>
+            <Form.Item
+              name="s3_prefix"
+              label={t('stage.s3Prefix')}
+              extra={t('stage.s3PrefixHelp')}
+            >
+              <Input
+                placeholder="data/"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="s3_endpoint"
+              label={t('stage.s3Endpoint')}
+              extra={t('stage.s3EndpointHelp')}
+            >
+              <Input
+                placeholder="https://s3.custom.endpoint.com"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+          </>
+        )
+      // REST API Output stage
       case 'rest_api':
+        return (
+          <>
+            <Form.Item
+              name="rest_url"
+              label={t('stage.restUrl')}
+              rules={[{ required: true, message: t('stage.restUrlRequired') }]}
+            >
+              <Input
+                placeholder="https://api.example.com/data"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="rest_method"
+              label={t('stage.restMethod')}
+            >
+              <Select style={{ width: 120 }}>
+                <Select.Option value="GET">GET</Select.Option>
+                <Select.Option value="POST">POST</Select.Option>
+                <Select.Option value="PUT">PUT</Select.Option>
+                <Select.Option value="PATCH">PATCH</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestRESTAPI}
+              >
+                {t('stage.testConnection')}
+              </Button>
+            </Form.Item>
+            <Form.Item
+              name="rest_headers"
+              label={t('stage.restHeaders')}
+              extra={t('stage.restHeadersHelp')}
+            >
+              <Input.TextArea
+                rows={3}
+                placeholder='{"Authorization": "Bearer token", "Content-Type": "application/json"}'
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+          </>
+        )
+      // File Output stage (no connection test needed)
       case 'file':
         return (
-          <Form.Item
-            name="output_config"
-            label={t('stage.outputConfig')}
-            extra={t('stage.outputConfigHelp')}
-          >
-            <Input.TextArea
-              rows={5}
-              placeholder={JSON.stringify(getOutputConfigDefault(watchedStageType), null, 2)}
-              style={{ fontFamily: 'monospace' }}
-            />
-          </Form.Item>
+          <>
+            <Form.Item
+              name="file_path"
+              label={t('stage.filePath')}
+              rules={[{ required: true, message: t('stage.filePathRequired') }]}
+            >
+              <Input
+                placeholder="/data/output"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+            <Form.Item
+              name="file_format"
+              label={t('stage.fileFormat')}
+            >
+              <Select style={{ width: 150 }}>
+                <Select.Option value="json">JSON</Select.Option>
+                <Select.Option value="csv">CSV</Select.Option>
+                <Select.Option value="parquet">Parquet</Select.Option>
+              </Select>
+            </Form.Item>
+          </>
         )
       default:
         return null

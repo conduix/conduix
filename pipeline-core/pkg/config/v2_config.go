@@ -30,9 +30,9 @@ type PipelineConfigV2 struct {
 // RateLimitSourceConfig 소스 레벨 레이트 리밋 설정
 type RateLimitSourceConfig struct {
 	Enabled  bool   `yaml:"enabled" json:"enabled"`
-	Rate     int    `yaml:"rate" json:"rate"`                       // 단위 시간당 처리량
-	Interval string `yaml:"interval" json:"interval"`               // second, minute, hour
-	Burst    int    `yaml:"burst,omitempty" json:"burst,omitempty"` // 버스트 허용량 (토큰 버킷)
+	Rate     int    `yaml:"rate" json:"rate"`                             // 단위 시간당 처리량
+	Interval string `yaml:"interval" json:"interval"`                     // second, minute, hour
+	Burst    int    `yaml:"burst,omitempty" json:"burst,omitempty"`       // 버스트 허용량 (토큰 버킷)
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"` // token_bucket, sliding_window, fixed_window
 }
 

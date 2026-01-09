@@ -33,10 +33,10 @@ type HTTPSource struct {
 	tokenExpiry time.Time
 
 	// Rate limiting
-	rateLimitMu   sync.Mutex
-	lastRequest   time.Time
-	requestCount  int
-	windowStart   time.Time
+	rateLimitMu  sync.Mutex
+	lastRequest  time.Time
+	requestCount int
+	windowStart  time.Time
 }
 
 // NewHTTPSource HTTP 소스 생성
@@ -463,7 +463,7 @@ func (s *HTTPSource) waitForRateLimit(ctx context.Context) error {
 func (s *HTTPSource) doRequest(ctx context.Context, requestURL string) (any, error) {
 	// Rate limiting 적용
 	if err := s.waitForRateLimit(ctx); err != nil {
-		return nil, fmt.Errorf("rate limit wait cancelled: %w", err)
+		return nil, fmt.Errorf("rate limit wait canceled: %w", err)
 	}
 
 	var bodyReader io.Reader

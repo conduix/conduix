@@ -359,7 +359,18 @@ class ApiService {
       description?: string
       priority: number
       depends_on?: string[]
-      source: { type: string; name: string; config: Record<string, unknown> }
+      source: {
+        type: string
+        name: string
+        config: Record<string, unknown>
+        rate_limit?: {
+          enabled: boolean
+          rate: number
+          interval: string
+          burst?: number
+          strategy?: string
+        }
+      }
       transforms?: Array<{ name: string; type: string; config: Record<string, unknown> }>
       stages?: Array<{ id: string; name: string; type: string; config: Record<string, unknown> }>
       weight?: number

@@ -68,7 +68,7 @@ controlPlane:
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
-    type: LoadBalancer
+    type: ClusterIP
     port: 8080
   resources:
     limits:
@@ -136,8 +136,8 @@ webUI:
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
-    type: LoadBalancer
-    port: 3000
+    type: ClusterIP
+    port: 80
   resources:
     limits:
       cpu: 200m

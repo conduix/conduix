@@ -131,6 +131,25 @@ export default function DataModelDetailPage() {
     setHasChanges(true)
   }, [])
 
+  // Auto-save when schema is generated from sample data
+  const handleSchemaGenerateComplete = useCallback(async (newSchema: DataTypeSchema, newJsonSchema: string) => {
+    try {
+      const updateData = {
+        schema: newSchema,
+        json_schema: newJsonSchema,
+      }
+      const response = await api.updateDataType(id!, updateData)
+      if (response.success) {
+        message.success(t('dataModel.schemaAutoSaved'))
+        setHasChanges(false)
+      } else {
+        message.error(response.error || t('dataModel.updateError'))
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.error || t('dataModel.updateError'))
+    }
+  }, [id, t])
+
   const handleSave = async () => {
     try {
       setSaving(true)
@@ -287,6 +306,7 @@ export default function DataModelDetailPage() {
             schema={schema}
             jsonSchema={jsonSchema}
             onChange={handleSchemaChange}
+            onGenerateComplete={handleSchemaGenerateComplete}
             idFields={getIdFields()}
           />
         </Card>

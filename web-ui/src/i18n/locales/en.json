@@ -365,6 +365,7 @@
     "deleteWarning": "Cannot delete if there are pipelines using this data model.",
     "createSuccess": "Data model created successfully",
     "updateSuccess": "Data model updated successfully",
+    "schemaAutoSaved": "Schema saved automatically",
     "deleteSuccess": "Data model deleted successfully",
     "createError": "Failed to create data model",
     "updateError": "Failed to update data model",

@@ -365,6 +365,7 @@
     "deleteWarning": "이 데이터 모델을 사용하는 파이프라인이 있으면 삭제할 수 없습니다.",
     "createSuccess": "데이터 모델이 생성되었습니다",
     "updateSuccess": "데이터 모델이 수정되었습니다",
+    "schemaAutoSaved": "스키마가 자동 저장되었습니다",
     "deleteSuccess": "데이터 모델이 삭제되었습니다",
     "createError": "데이터 모델 생성에 실패했습니다",
     "updateError": "데이터 모델 수정에 실패했습니다",

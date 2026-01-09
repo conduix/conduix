@@ -15,6 +15,7 @@ interface SchemaEditorProps {
   schema?: DataTypeSchema
   jsonSchema?: string
   onChange: (schema: DataTypeSchema, jsonSchema: string) => void
+  onGenerateComplete?: (schema: DataTypeSchema, jsonSchema: string) => void
   idFields?: string[]
 }
 
@@ -164,7 +165,7 @@ function inferSchemaFromSample(sampleJson: string): DataTypeField[] {
   return fields
 }
 
-export default function SchemaEditor({ schema, jsonSchema, onChange, idFields = [] }: SchemaEditorProps) {
+export default function SchemaEditor({ schema, jsonSchema, onChange, onGenerateComplete, idFields = [] }: SchemaEditorProps) {
   const { t } = useTranslation()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
   const [fields, setFields] = useState<DataTypeField[]>(schema?.fields || [])
@@ -252,15 +253,17 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, idFields = 
       setFields(inferredFields)
       const newJson = fieldsToJsonSchema(inferredFields)
       setJsonContent(newJson)
-      onChange(
-        { type: 'json_schema', fields: inferredFields, definition: newJson },
-        newJson
-      )
+      const newSchema = { type: 'json_schema' as const, fields: inferredFields, definition: newJson }
+      onChange(newSchema, newJson)
       setSampleModalOpen(false)
       setSampleInput('')
       setSampleError(null)
       setEditMode('visual')
       message.success(t('dataModel.schema.generateSuccess', { count: inferredFields.length }))
+      // Call onGenerateComplete to trigger auto-save
+      if (onGenerateComplete) {
+        onGenerateComplete(newSchema, newJson)
+      }
     } catch (e) {
       setSampleError((e as Error).message)
     }

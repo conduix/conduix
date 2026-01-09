@@ -334,10 +334,24 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		StartedAt:    time.Now(),
 	}
 
+	// 에러 메시지 수집용 (최대 10개)
+	var sinkErrors []string
+	var sinkErrorsMu sync.Mutex
+	maxSinkErrors := 10
+
+	addSinkError := func(errMsg string) {
+		sinkErrorsMu.Lock()
+		defer sinkErrorsMu.Unlock()
+		if len(sinkErrors) < maxSinkErrors {
+			sinkErrors = append(sinkErrors, errMsg)
+		}
+	}
+
 	// Stages에서 sink 타입 찾아서 미리 생성 및 열기
 	sinkStages := make(map[string]sink.Sink) // stage name -> sink
 	for _, stage := range pipeline.Stages {
 		if isSinkStageType(stage.Type) {
+			fmt.Printf("[runPipeline] Creating sink stage: %s (type: %s), config: %+v\n", stage.Name, stage.Type, stage.Config)
 			s, err := e.createSinkFromStage(stage)
 			if err != nil {
 				result.Status = "failed"
@@ -416,6 +430,17 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				result.RecordsWritten = stats.RecordsProcessed
 				result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
 				result.Statistics = stats
+
+				// sink 에러가 있으면 error message에 추가
+				sinkErrorsMu.Lock()
+				if len(sinkErrors) > 0 {
+					result.ErrorMessage = strings.Join(sinkErrors, "; ")
+					if stats.ProcessingErrors > int64(len(sinkErrors)) {
+						result.ErrorMessage += fmt.Sprintf(" (... and %d more errors)", stats.ProcessingErrors-int64(len(sinkErrors)))
+					}
+				}
+				sinkErrorsMu.Unlock()
+
 				fmt.Printf("[runPipeline] Completed: read=%d, written=%d, errors=%d\n",
 					result.RecordsRead, result.RecordsWritten, result.ErrorCount)
 				return result, nil
@@ -445,7 +470,9 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 					if s, ok := sinkStages[stage.Name]; ok {
 						if err := e.sendToSink(ctx, data, s); err != nil {
 							statsCollector.RecordProcessingError()
+							errMsg := fmt.Sprintf("[%s] %v", stage.Name, err)
 							fmt.Printf("[runPipeline] Sink stage %s write error: %v\n", stage.Name, err)
+							addSinkError(errMsg)
 						} else {
 							statsCollector.RecordProcessed()
 						}

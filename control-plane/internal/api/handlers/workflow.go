@@ -944,16 +944,28 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 		return
 	}
 
+	// 파이프라인 결과 JSON 직렬화
+	var pipelineResultsJSON string
+	if len(result.PipelineResults) > 0 {
+		pipelineResultsBytes, _ := json.Marshal(result.PipelineResults)
+		pipelineResultsJSON = string(pipelineResultsBytes)
+	}
+
 	// 실행 기록 업데이트
+	updates := map[string]any{
+		"status":         string(result.Status),
+		"completed_at":   result.CompletedAt,
+		"total_records":  result.TotalRecords,
+		"failed_records": result.FailedRecords,
+		"error_message":  result.ErrorMessage,
+	}
+	if pipelineResultsJSON != "" {
+		updates["pipeline_results"] = pipelineResultsJSON
+	}
+
 	if err := h.db.Model(&models.WorkflowExecution{}).
 		Where("id = ?", executionID).
-		Updates(map[string]any{
-			"status":         string(result.Status),
-			"completed_at":   result.CompletedAt,
-			"total_records":  result.TotalRecords,
-			"failed_records": result.FailedRecords,
-			"error_message":  result.ErrorMessage,
-		}).Error; err != nil {
+		Updates(updates).Error; err != nil {
 		fmt.Printf("[ReceiveExecutionResult] Failed to update execution: %v\n", err)
 	}
 

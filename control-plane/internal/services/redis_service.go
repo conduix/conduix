@@ -209,9 +209,29 @@ func (s *RedisService) GetAgentHeartbeat(agentID string) (*types.AgentHeartbeat,
 
 // GetAllAgentHeartbeats 모든 에이전트 하트비트 조회
 func (s *RedisService) GetAllAgentHeartbeats() (map[string]*types.AgentHeartbeat, error) {
-	// 실제 구현에서는 Redis SCAN을 사용해야 함
-	// 여기서는 간단한 구현
-	return nil, fmt.Errorf("not implemented - use database query with last_heartbeat")
+	// Redis SCAN으로 agent:*:heartbeat 패턴의 키들 조회
+	keys, err := s.client.Keys(s.ctx, "agent:*:heartbeat")
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan agent heartbeat keys: %w", err)
+	}
+
+	heartbeats := make(map[string]*types.AgentHeartbeat)
+	for _, key := range keys {
+		// key format: agent:{agentID}:heartbeat
+		data, err := s.client.Get(s.ctx, key)
+		if err != nil {
+			continue // 키가 만료되었을 수 있음
+		}
+
+		var heartbeat types.AgentHeartbeat
+		if err := json.Unmarshal([]byte(data), &heartbeat); err != nil {
+			continue
+		}
+
+		heartbeats[heartbeat.AgentID] = &heartbeat
+	}
+
+	return heartbeats, nil
 }
 
 // SetPipelineCheckpoint 파이프라인 체크포인트 저장

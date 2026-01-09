@@ -162,6 +162,11 @@ func (a *Agent) Start() error {
 	a.Status = types.AgentStatusOnline
 	a.mu.Unlock()
 
+	// Control Plane에 등록
+	if err := a.registerToControlPlane(); err != nil {
+		fmt.Printf("Warning: Failed to register to control plane: %v\n", err)
+	}
+
 	// 하트비트 시작
 	go a.heartbeatLoop()
 
@@ -169,6 +174,46 @@ func (a *Agent) Start() error {
 	go a.commandLoop()
 
 	fmt.Printf("Agent started: %s (%s)\n", a.ID, a.Hostname)
+	return nil
+}
+
+// registerToControlPlane Control Plane에 에이전트 등록
+func (a *Agent) registerToControlPlane() error {
+	if a.controlPlaneURL == "" {
+		return fmt.Errorf("control plane URL not configured")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/agents/register", a.controlPlaneURL)
+
+	reqBody := map[string]interface{}{
+		"id":       a.ID,
+		"hostname": a.Hostname,
+		"labels":   a.config.Labels,
+	}
+
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(a.ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned error %d: %s", resp.StatusCode, string(body))
+	}
+
+	fmt.Printf("Agent registered to control plane: %s\n", a.ID)
 	return nil
 }
 
@@ -374,6 +419,7 @@ func (a *Agent) sendHeartbeat() {
 
 	heartbeat := types.AgentHeartbeat{
 		AgentID:       a.ID,
+		Hostname:      a.Hostname,
 		Timestamp:     time.Now(),
 		Pipelines:     pipelineIDs,
 		PipelineStats: pipelineStats,

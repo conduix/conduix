@@ -25,14 +25,15 @@ type Agent struct {
 
 // AgentHeartbeat 에이전트 하트비트
 type AgentHeartbeat struct {
-	AgentID          string                    `json:"agent_id"`
-	Timestamp        time.Time                 `json:"timestamp"`
-	CPUUsage         float64                   `json:"cpu_usage"`
-	MemoryUsage      float64                   `json:"memory_usage"`
-	DiskUsage        float64                   `json:"disk_usage"`
-	Pipelines        []string                  `json:"pipelines"`
-	PipelineStats    []PipelineStatShort       `json:"pipeline_stats,omitempty"`
-	RunningExecs     []RunningExecutionInfo    `json:"running_execs,omitempty"`     // 실행 중인 워크플로우
+	AgentID       string                 `json:"agent_id"`
+	Hostname      string                 `json:"hostname"`
+	Timestamp     time.Time              `json:"timestamp"`
+	CPUUsage      float64                `json:"cpu_usage"`
+	MemoryUsage   float64                `json:"memory_usage"`
+	DiskUsage     float64                `json:"disk_usage"`
+	Pipelines     []string               `json:"pipelines"`
+	PipelineStats []PipelineStatShort    `json:"pipeline_stats,omitempty"`
+	RunningExecs  []RunningExecutionInfo `json:"running_execs,omitempty"` // 실행 중인 워크플로우
 }
 
 // RunningExecutionInfo 실행 중인 워크플로우 정보

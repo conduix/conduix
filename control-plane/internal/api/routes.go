@@ -84,6 +84,13 @@ func (s *Server) setupRoutes() {
 			internal.POST("/:id/executions/:executionId/result", s.workflowHandler.ReceiveExecutionResult)
 		}
 
+		// 에이전트 내부 API (인증 불필요 - 클러스터 내부 통신)
+		internalAgents := v1.Group("/agents")
+		{
+			internalAgents.POST("/register", s.agentHandler.RegisterAgent)
+			internalAgents.POST("/:id/heartbeat", s.agentHandler.Heartbeat)
+		}
+
 		// 인증 필요한 라우트
 		authenticated := v1.Group("")
 		authenticated.Use(middleware.AuthMiddleware(s.jwtSecret))

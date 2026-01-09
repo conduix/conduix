@@ -741,3 +741,33 @@ func (rc *ResilientClient) Close() error {
 func (rc *ResilientClient) IsHealthy() bool {
 	return rc.GetConnectionState() == StateConnected && rc.circuitState != CircuitOpen
 }
+
+// Keys 패턴에 맞는 키 목록 조회 (SCAN 사용)
+func (rc *ResilientClient) Keys(ctx context.Context, pattern string) ([]string, error) {
+	if !rc.canExecute() {
+		return nil, fmt.Errorf("circuit breaker open")
+	}
+
+	rc.metrics.mu.Lock()
+	rc.metrics.TotalRequests++
+	rc.metrics.mu.Unlock()
+
+	var keys []string
+	var cursor uint64
+	for {
+		var batch []string
+		var err error
+		batch, cursor, err = rc.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			rc.recordFailure(err)
+			return nil, err
+		}
+		keys = append(keys, batch...)
+		if cursor == 0 {
+			break
+		}
+	}
+
+	rc.recordSuccess()
+	return keys, nil
+}

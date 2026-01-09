@@ -591,6 +591,11 @@
     "sqlConflictColumnsHelp": "Comma-separated columns for conflict detection (e.g., id, external_id)",
     "sqlCreateTable": "CREATE TABLE Query",
     "sqlCreateTableHelp": "SQL query to create the table if it doesn't exist",
+    "testConnection": "Test Connection",
+    "testConnectionNoString": "Please enter connection string first",
+    "testConnectionSuccess": "Connection successful",
+    "testConnectionFailed": "Connection failed",
+    "testConnectionError": "Failed to test connection",
     "saveSuccess": "Stages saved successfully",
     "saveError": "Failed to save stages",
     "yamlParseError": "Invalid YAML format"

@@ -40,6 +40,7 @@ import {
   ForkOutlined,
   DatabaseOutlined,
   StopOutlined,
+  ApiOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
@@ -237,6 +238,7 @@ export default function StageEditorPage() {
   const [stages, setStages] = useState<Stage[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
 
   // Edit mode
   const [editMode, setEditMode] = useState<'visual' | 'yaml'>('visual')
@@ -536,6 +538,29 @@ export default function StageEditorPage() {
 
   const handleDeleteStage = (id: string) => {
     setStages(stages.filter(s => s.id !== id))
+  }
+
+  // Test DB Connection
+  const handleTestDBConnection = async () => {
+    const connectionString = stageForm.getFieldValue('sql_connection_string')
+    if (!connectionString) {
+      message.warning(t('stage.testConnectionNoString'))
+      return
+    }
+
+    setTestingConnection(true)
+    try {
+      const result = await api.testDBConnection(connectionString)
+      if (result.success) {
+        message.success(`${t('stage.testConnectionSuccess')} (${result.latency})`)
+      } else {
+        message.error(`${t('stage.testConnectionFailed')}: ${result.error}`)
+      }
+    } catch (error) {
+      message.error(t('stage.testConnectionError'))
+    } finally {
+      setTestingConnection(false)
+    }
   }
 
   // Generate CREATE TABLE from target data model schema (for SQL individual fields)
@@ -1312,6 +1337,16 @@ export default function StageEditorPage() {
                 placeholder="postgres://user:password@localhost:5432/dbname?sslmode=disable"
                 style={{ fontFamily: 'monospace' }}
               />
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="default"
+                icon={<ApiOutlined />}
+                loading={testingConnection}
+                onClick={handleTestDBConnection}
+              >
+                {t('stage.testConnection')}
+              </Button>
             </Form.Item>
             <Form.Item
               name="sql_table"

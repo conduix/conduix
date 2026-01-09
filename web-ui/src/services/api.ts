@@ -448,6 +448,14 @@ class ApiService {
     const response = await this.client.delete(`/permissions/${id}`)
     return response.data
   }
+
+  // 유틸리티
+  async testDBConnection(connectionString: string) {
+    const response = await this.client.post('/utils/test-db-connection', {
+      connection_string: connectionString,
+    })
+    return response.data
+  }
 }
 
 export const api = new ApiService()

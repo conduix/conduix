@@ -28,6 +28,7 @@ type Server struct {
 	userHandler      *handlers.UserHandler
 	projectHandler   *handlers.ProjectHandler
 	agentHandler     *handlers.AgentHandler
+	utilsHandler     *handlers.UtilsHandler
 }
 
 // NewServer 새 서버 생성
@@ -50,6 +51,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		userHandler:      handlers.NewUserHandler(db),
 		projectHandler:   handlers.NewProjectHandler(db),
 		agentHandler:     handlers.NewAgentHandler(db, redisService),
+		utilsHandler:     handlers.NewUtilsHandler(),
 	}
 
 	s.setupRoutes()
@@ -211,6 +213,12 @@ func (s *Server) setupRoutes() {
 			{
 				agents.GET("", s.agentHandler.ListAgents)
 				agents.GET("/:id", s.agentHandler.GetAgent)
+			}
+
+			// 유틸리티
+			utils := authenticated.Group("/utils")
+			{
+				utils.POST("/test-db-connection", s.utilsHandler.TestDBConnection)
 			}
 		}
 	}

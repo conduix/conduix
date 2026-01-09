@@ -10,13 +10,45 @@ import (
 
 // parseConnectionString connection_string을 driver와 dsn으로 파싱
 // 지원 형식:
-//   - mysql://user:pass@host:3306/dbname
-//   - postgres://user:pass@host:5432/dbname?sslmode=disable
+//   - URL 형식: mysql://user:pass@host:3306/dbname, postgres://user:pass@host:5432/dbname
+//   - Go MySQL DSN: user:pass@tcp(host:3306)/dbname
+//   - Go PostgreSQL DSN: user:pass@host:5432/dbname?sslmode=disable
 //
 // 반환:
 //   - driver: mysql, postgres
 //   - dsn: Go SQL driver에서 사용하는 DSN 형식
 func parseConnectionString(connStr string) (driver string, dsn string, err error) {
+	// URL 형식인지 확인 (scheme:// 으로 시작)
+	if strings.HasPrefix(connStr, "mysql://") || strings.HasPrefix(connStr, "postgres://") || strings.HasPrefix(connStr, "postgresql://") {
+		return parseURLConnectionString(connStr)
+	}
+
+	// Go DSN 형식 감지
+	// MySQL: user:pass@tcp(host:port)/dbname
+	// PostgreSQL: user:pass@host:port/dbname
+	if strings.Contains(connStr, "@tcp(") {
+		// MySQL Go DSN 형식
+		return "mysql", connStr, nil
+	}
+
+	// PostgreSQL Go DSN 형식 (user:pass@host:port/dbname)
+	if strings.Contains(connStr, "@") && strings.Contains(connStr, "/") {
+		// sslmode가 없으면 추가
+		if !strings.Contains(connStr, "sslmode=") {
+			if strings.Contains(connStr, "?") {
+				connStr += "&sslmode=disable"
+			} else {
+				connStr += "?sslmode=disable"
+			}
+		}
+		return "postgres", connStr, nil
+	}
+
+	return "", "", fmt.Errorf("invalid connection string format: %s (use mysql://... or postgres://... or Go DSN format)", connStr)
+}
+
+// parseURLConnectionString URL 형식의 connection string 파싱
+func parseURLConnectionString(connStr string) (driver string, dsn string, err error) {
 	// URL 파싱
 	u, err := url.Parse(connStr)
 	if err != nil {
@@ -24,9 +56,6 @@ func parseConnectionString(connStr string) (driver string, dsn string, err error
 	}
 
 	driver = u.Scheme
-	if driver == "" {
-		return "", "", fmt.Errorf("connection string must have a scheme (mysql:// or postgres://)")
-	}
 
 	// 사용자 정보
 	username := u.User.Username()

@@ -20,6 +20,12 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
 
+// podCheckpoint Pod별 체크포인트 (마지막 처리 타임스탬프)
+type podCheckpoint struct {
+	lastTimestamp time.Time
+	lineCount     int64
+}
+
 // KubernetesSource Kubernetes Pod 로그 소스
 type KubernetesSource struct {
 	namespace     string
@@ -34,8 +40,9 @@ type KubernetesSource struct {
 	logFormat     string // auto, json, text
 	logPattern    *regexp.Regexp
 
-	clientset *kubernetes.Clientset
-	mu        sync.RWMutex
+	clientset   *kubernetes.Clientset
+	checkpoints map[string]*podCheckpoint // key: "namespace/pod/container"
+	mu          sync.RWMutex
 }
 
 // NewKubernetesSource Kubernetes 소스 생성
@@ -68,6 +75,7 @@ func NewKubernetesSource(cfg config.SourceV2) (*KubernetesSource, error) {
 		context:       cfg.K8sContext,
 		logFormat:     logFormat,
 		logPattern:    logPattern,
+		checkpoints:   make(map[string]*podCheckpoint),
 	}, nil
 }
 
@@ -144,12 +152,12 @@ func (s *KubernetesSource) Read(ctx context.Context) (<-chan Record, <-chan erro
 
 		var wg sync.WaitGroup
 
-		// 각 Pod의 로그 스트리밍
+		// 각 Pod의 로그 스트리밍 (재연결 로직 포함)
 		for _, pod := range pods {
 			wg.Add(1)
 			go func(p corev1.Pod) {
 				defer wg.Done()
-				s.streamPodLogs(ctx, clientset, p, records, errs)
+				s.streamPodLogsWithRetry(ctx, clientset, p, records, errs)
 			}(pod)
 		}
 
@@ -195,41 +203,20 @@ func (s *KubernetesSource) listPods(ctx context.Context, clientset *kubernetes.C
 	return runningPods, nil
 }
 
-func (s *KubernetesSource) streamPodLogs(ctx context.Context, clientset *kubernetes.Clientset, pod corev1.Pod, records chan<- Record, errs chan<- error) {
-	// 컨테이너 결정
+// streamPodLogsWithRetry 재연결 및 재시도 로직이 포함된 로그 스트리밍
+func (s *KubernetesSource) streamPodLogsWithRetry(ctx context.Context, clientset *kubernetes.Clientset, pod corev1.Pod, records chan<- Record, errs chan<- error) {
 	containerName := s.containerName
 	if containerName == "" && len(pod.Spec.Containers) > 0 {
 		containerName = pod.Spec.Containers[0].Name
 	}
 
-	// PodLogOptions 구성
-	opts := &corev1.PodLogOptions{
-		Container:  containerName,
-		Follow:     s.follow,
-		Timestamps: true, // 타임스탬프 포함
-	}
+	checkpointKey := fmt.Sprintf("%s/%s/%s", pod.Namespace, pod.Name, containerName)
 
-	if s.sinceSeconds > 0 {
-		opts.SinceSeconds = &s.sinceSeconds
-	}
-	if s.tailLines > 0 {
-		opts.TailLines = &s.tailLines
-	}
-
-	// 로그 스트림 요청
-	req := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, opts)
-	stream, err := req.Stream(ctx)
-	if err != nil {
-		select {
-		case errs <- fmt.Errorf("failed to get log stream for pod %s: %w", pod.Name, err):
-		default:
-		}
-		return
-	}
-	defer stream.Close()
-
-	reader := bufio.NewReader(stream)
-	lineNum := int64(0)
+	// 재시도 설정
+	maxRetries := 10
+	baseDelay := 1 * time.Second
+	maxDelay := 60 * time.Second
+	retryCount := 0
 
 	for {
 		select {
@@ -238,21 +225,110 @@ func (s *KubernetesSource) streamPodLogs(ctx context.Context, clientset *kuberne
 		default:
 		}
 
+		// 스트리밍 실행
+		err := s.streamPodLogs(ctx, clientset, pod, containerName, checkpointKey, records)
+
+		if err == nil {
+			// 정상 종료 (follow=false인 경우)
+			return
+		}
+
+		// context 취소인 경우 종료
+		if ctx.Err() != nil {
+			return
+		}
+
+		// 재시도 가능한 에러인지 확인
+		retryCount++
+		if retryCount > maxRetries {
+			select {
+			case errs <- fmt.Errorf("max retries exceeded for pod %s: %w", pod.Name, err):
+			default:
+			}
+			return
+		}
+
+		// Exponential backoff
+		delay := baseDelay * time.Duration(1<<uint(retryCount-1))
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+
+		select {
+		case errs <- fmt.Errorf("reconnecting to pod %s (attempt %d/%d) after error: %v", pod.Name, retryCount, maxRetries, err):
+		default:
+		}
+
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// streamPodLogs 실제 로그 스트리밍 (체크포인트 기반)
+func (s *KubernetesSource) streamPodLogs(ctx context.Context, clientset *kubernetes.Clientset, pod corev1.Pod, containerName, checkpointKey string, records chan<- Record) error {
+	// 체크포인트 확인
+	s.mu.RLock()
+	checkpoint := s.checkpoints[checkpointKey]
+	s.mu.RUnlock()
+
+	// PodLogOptions 구성
+	opts := &corev1.PodLogOptions{
+		Container:  containerName,
+		Follow:     s.follow,
+		Timestamps: true, // 타임스탬프 포함 (체크포인트용 필수)
+	}
+
+	if checkpoint != nil && !checkpoint.lastTimestamp.IsZero() {
+		// 체크포인트가 있으면 해당 시점 이후부터 가져오기
+		// 1나노초 추가하여 마지막 로그 중복 방지
+		sinceTime := metav1.NewTime(checkpoint.lastTimestamp.Add(1 * time.Nanosecond))
+		opts.SinceTime = &sinceTime
+	} else {
+		// 초기 연결: tail_lines 또는 since_seconds 사용
+		if s.sinceSeconds > 0 {
+			opts.SinceSeconds = &s.sinceSeconds
+		}
+		if s.tailLines > 0 {
+			opts.TailLines = &s.tailLines
+		}
+	}
+
+	// 로그 스트림 요청
+	req := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, opts)
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get log stream for pod %s: %w", pod.Name, err)
+	}
+	defer stream.Close()
+
+	reader := bufio.NewReader(stream)
+
+	// 현재 체크포인트의 라인 카운트 가져오기
+	var lineNum int64
+	if checkpoint != nil {
+		lineNum = checkpoint.lineCount
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				if !s.follow {
-					return // 배치 모드에서는 EOF에서 종료
+					return nil // 배치 모드에서는 정상 종료
 				}
-				// follow 모드에서는 잠시 대기 후 계속
-				time.Sleep(100 * time.Millisecond)
-				continue
+				// follow 모드에서 EOF는 연결 끊김을 의미
+				return fmt.Errorf("stream EOF, reconnecting")
 			}
-			select {
-			case errs <- fmt.Errorf("error reading log from pod %s: %w", pod.Name, err):
-			default:
-			}
-			return
+			return fmt.Errorf("error reading log: %w", err)
 		}
 
 		line = strings.TrimSuffix(line, "\n")
@@ -263,7 +339,17 @@ func (s *KubernetesSource) streamPodLogs(ctx context.Context, clientset *kuberne
 		lineNum++
 
 		// 타임스탬프와 메시지 분리 (K8s 로그 형식: "2024-01-01T00:00:00.000000000Z message")
-		timestamp, message := parseK8sLogLine(line)
+		timestampStr, message := parseK8sLogLine(line)
+
+		// 타임스탬프 파싱 및 체크포인트 업데이트
+		var logTime time.Time
+		if timestampStr != "" {
+			if parsed, parseErr := time.Parse(time.RFC3339Nano, timestampStr); parseErr == nil {
+				logTime = parsed
+				// 체크포인트 업데이트
+				s.updateCheckpoint(checkpointKey, logTime, lineNum)
+			}
+		}
 
 		// 레코드 생성
 		data := s.parseLogMessage(message)
@@ -272,7 +358,7 @@ func (s *KubernetesSource) streamPodLogs(ctx context.Context, clientset *kuberne
 		data["_pod_name"] = pod.Name
 		data["_pod_namespace"] = pod.Namespace
 		data["_container_name"] = containerName
-		data["_timestamp"] = timestamp
+		data["_timestamp"] = timestampStr
 		data["_node_name"] = pod.Spec.NodeName
 
 		// 레이블 추가
@@ -285,7 +371,7 @@ func (s *KubernetesSource) streamPodLogs(ctx context.Context, clientset *kuberne
 			Metadata: Metadata{
 				Source:    "kubernetes",
 				Origin:    fmt.Sprintf("%s/%s/%s", pod.Namespace, pod.Name, containerName),
-				Offset:    fmt.Sprintf("%d", lineNum),
+				Offset:    timestampStr, // 타임스탬프를 오프셋으로 사용
 				Timestamp: time.Now().UnixMilli(),
 			},
 		}
@@ -293,9 +379,33 @@ func (s *KubernetesSource) streamPodLogs(ctx context.Context, clientset *kuberne
 		select {
 		case records <- record:
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
+}
+
+// updateCheckpoint 체크포인트 업데이트
+func (s *KubernetesSource) updateCheckpoint(key string, timestamp time.Time, lineCount int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.checkpoints[key] = &podCheckpoint{
+		lastTimestamp: timestamp,
+		lineCount:     lineCount,
+	}
+}
+
+// GetCheckpoint 특정 Pod의 체크포인트 조회 (디버깅/모니터링용)
+func (s *KubernetesSource) GetCheckpoint(namespace, podName, containerName string) (time.Time, int64) {
+	key := fmt.Sprintf("%s/%s/%s", namespace, podName, containerName)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if cp := s.checkpoints[key]; cp != nil {
+		return cp.lastTimestamp, cp.lineCount
+	}
+	return time.Time{}, 0
 }
 
 // parseLogMessage 로그 메시지를 파싱하여 map으로 변환
@@ -419,6 +529,7 @@ func (s *KubernetesSource) Close() error {
 	defer s.mu.Unlock()
 
 	s.clientset = nil
+	s.checkpoints = make(map[string]*podCheckpoint)
 	return nil
 }
 

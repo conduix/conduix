@@ -51,6 +51,8 @@ func NewSource(cfg config.SourceV2) (Source, error) {
 		return NewSQLEventSource(cfg)
 	case "cdc":
 		return NewCDCSource(cfg)
+	case "kubernetes", "k8s_logs":
+		return NewKubernetesSource(cfg)
 	default:
 		return nil, &UnsupportedSourceError{Type: cfg.Type}
 	}

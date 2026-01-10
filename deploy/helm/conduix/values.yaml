@@ -204,6 +204,11 @@ serviceAccount:
   annotations: {}
   name: ""
 
+# RBAC for Kubernetes Log Source
+# Grants cluster-wide pod/log read access to the agent
+rbac:
+  create: true
+
 podSecurityContext:
   fsGroup: 1000
 

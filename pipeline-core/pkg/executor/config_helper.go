@@ -341,6 +341,45 @@ func configToSourceV2(cfg map[string]any) config.SourceV2 {
 		result.SlotName = v
 	}
 
+	// Kubernetes Logs
+	if v, ok := cfg["namespace"].(string); ok {
+		result.K8sNamespace = v
+	}
+	if v, ok := cfg["pod_selector"].(string); ok {
+		result.K8sPodSelector = v
+	}
+	if v, ok := cfg["pod_names"].([]any); ok {
+		for _, p := range v {
+			if ps, ok := p.(string); ok {
+				result.K8sPodNames = append(result.K8sPodNames, ps)
+			}
+		}
+	}
+	if v, ok := cfg["container_name"].(string); ok {
+		result.K8sContainerName = v
+	}
+	if v, ok := cfg["follow"].(bool); ok {
+		result.K8sFollow = v
+	}
+	if v, ok := cfg["since_seconds"].(float64); ok {
+		result.K8sSinceSeconds = int64(v)
+	}
+	if v, ok := cfg["tail_lines"].(float64); ok {
+		result.K8sTailLines = int64(v)
+	}
+	if v, ok := cfg["kubeconfig"].(string); ok {
+		result.K8sKubeconfig = v
+	}
+	if v, ok := cfg["context"].(string); ok {
+		result.K8sContext = v
+	}
+	if v, ok := cfg["log_format"].(string); ok {
+		result.K8sLogFormat = v
+	}
+	if v, ok := cfg["log_pattern"].(string); ok {
+		result.K8sLogPattern = v
+	}
+
 	// Rate Limit
 	if rateLimitCfg, ok := cfg["rate_limit"].(map[string]any); ok {
 		result.RateLimit = &config.RateLimitSourceConfig{}

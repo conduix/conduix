@@ -89,6 +89,19 @@ type SourceV2 struct {
 	ServerID uint32   `yaml:"server_id,omitempty"` // MySQL server ID for binlog
 	SlotName string   `yaml:"slot_name,omitempty"` // PostgreSQL replication slot
 
+	// Kubernetes Logs
+	K8sNamespace     string   `yaml:"namespace,omitempty" json:"namespace,omitempty"`           // target namespace (empty = all namespaces)
+	K8sPodSelector   string   `yaml:"pod_selector,omitempty" json:"pod_selector,omitempty"`     // label selector (e.g., "app=nginx")
+	K8sPodNames      []string `yaml:"pod_names,omitempty" json:"pod_names,omitempty"`           // specific pod names
+	K8sContainerName string   `yaml:"container_name,omitempty" json:"container_name,omitempty"` // container name (for multi-container pods)
+	K8sFollow        bool     `yaml:"follow,omitempty" json:"follow,omitempty"`                 // stream logs (realtime)
+	K8sSinceSeconds  int64    `yaml:"since_seconds,omitempty" json:"since_seconds,omitempty"`   // logs from last N seconds
+	K8sTailLines     int64    `yaml:"tail_lines,omitempty" json:"tail_lines,omitempty"`         // last N lines
+	K8sKubeconfig    string   `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`         // external cluster kubeconfig path
+	K8sContext       string   `yaml:"context,omitempty" json:"context,omitempty"`               // kubeconfig context name
+	K8sLogFormat     string   `yaml:"log_format,omitempty" json:"log_format,omitempty"`         // auto, json, text (default: auto)
+	K8sLogPattern    string   `yaml:"log_pattern,omitempty" json:"log_pattern,omitempty"`       // regex pattern with named groups for text logs
+
 	// Rate Limiting (공통)
 	RateLimit *RateLimitSourceConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
 }
@@ -414,6 +427,16 @@ func (c *PipelineConfigV2) validateSource() error {
 		}
 		if c.Source.ServerID == 0 {
 			c.Source.ServerID = 101
+		}
+
+	case "kubernetes", "k8s_logs":
+		// pod_selector 또는 pod_names 중 하나는 필수
+		if c.Source.K8sPodSelector == "" && len(c.Source.K8sPodNames) == 0 {
+			return fmt.Errorf("kubernetes source requires pod_selector or pod_names")
+		}
+		// 기본값 설정
+		if c.Source.K8sTailLines == 0 && c.Source.K8sSinceSeconds == 0 && !c.Source.K8sFollow {
+			c.Source.K8sTailLines = 100 // 기본: 최근 100줄
 		}
 
 	default:

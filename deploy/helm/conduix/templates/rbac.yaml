@@ -1,0 +1,37 @@
+{{- if .Values.rbac.create -}}
+# ClusterRole for reading pod logs across namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "conduix.fullname" . }}-pod-log-reader
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+rules:
+  # Pod 목록 조회 및 로그 읽기
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list", "watch"]
+  # Namespace 목록 조회 (선택적)
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+---
+# ClusterRoleBinding to grant the ServiceAccount cluster-wide pod log access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "conduix.fullname" . }}-pod-log-reader
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "conduix.fullname" . }}-pod-log-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "conduix.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -511,6 +511,35 @@ class ApiService {
     const response = await this.client.post('/utils/test-rest-api', data)
     return response.data
   }
+
+  // 체크포인트 (소스 오프셋 관리)
+  async getWorkflowCheckpoints(workflowId: string) {
+    const response = await this.client.get(`/workflows/${workflowId}/checkpoints`)
+    return response.data
+  }
+
+  async getPipelineCheckpoints(pipelineId: string) {
+    const response = await this.client.get(`/pipelines/${pipelineId}/checkpoints`)
+    return response.data
+  }
+
+  async resetPipelineCheckpoints(pipelineId: string, data: {
+    mode: 'specific_time' | 'beginning' | 'specific_offset'
+    timestamp?: string
+    offset_value?: string
+    partition_keys?: string[]
+  }) {
+    const response = await this.client.put(`/pipelines/${pipelineId}/checkpoints/reset`, data)
+    return response.data
+  }
+
+  async deletePipelineCheckpoints(pipelineId: string, partitionKey?: string) {
+    const url = partitionKey
+      ? `/pipelines/${pipelineId}/checkpoints?partition_key=${encodeURIComponent(partitionKey)}`
+      : `/pipelines/${pipelineId}/checkpoints`
+    const response = await this.client.delete(url)
+    return response.data
+  }
 }
 
 export const api = new ApiService()

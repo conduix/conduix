@@ -13,22 +13,23 @@ import (
 
 // Server API 서버
 type Server struct {
-	router           *gin.Engine
-	db               *database.DB
-	redisService     *services.RedisService
-	schedulerService *services.SchedulerService
-	jwtSecret        []byte
-	pipelineHandler  *handlers.PipelineHandler
-	authHandler      *handlers.AuthHandler
-	workflowHandler  *handlers.WorkflowHandler
-	statsHandler     *handlers.StatsHandler
-	scheduleHandler  *handlers.ScheduleHandler
-	graphHandler     *handlers.GraphHandler
-	dataTypeHandler  *handlers.DataTypeHandler
-	userHandler      *handlers.UserHandler
-	projectHandler   *handlers.ProjectHandler
-	agentHandler     *handlers.AgentHandler
-	utilsHandler     *handlers.UtilsHandler
+	router            *gin.Engine
+	db                *database.DB
+	redisService      *services.RedisService
+	schedulerService  *services.SchedulerService
+	jwtSecret         []byte
+	pipelineHandler   *handlers.PipelineHandler
+	authHandler       *handlers.AuthHandler
+	workflowHandler   *handlers.WorkflowHandler
+	statsHandler      *handlers.StatsHandler
+	scheduleHandler   *handlers.ScheduleHandler
+	graphHandler      *handlers.GraphHandler
+	dataTypeHandler   *handlers.DataTypeHandler
+	userHandler       *handlers.UserHandler
+	projectHandler    *handlers.ProjectHandler
+	agentHandler      *handlers.AgentHandler
+	utilsHandler      *handlers.UtilsHandler
+	checkpointHandler *handlers.CheckpointHandler
 }
 
 // NewServer 새 서버 생성
@@ -36,22 +37,23 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 	gin.SetMode(gin.ReleaseMode)
 
 	s := &Server{
-		router:           gin.New(),
-		db:               db,
-		redisService:     redisService,
-		schedulerService: schedulerService,
-		jwtSecret:        []byte(jwtSecret),
-		pipelineHandler:  handlers.NewPipelineHandler(db, redisService),
-		authHandler:      handlers.NewAuthHandler(db, jwtSecret, usersConfig, frontendURL),
-		workflowHandler:  handlers.NewWorkflowHandler(db, redisService),
-		statsHandler:     handlers.NewStatsHandler(db),
-		scheduleHandler:  handlers.NewScheduleHandler(db, schedulerService),
-		graphHandler:     handlers.NewGraphHandler(db, redisService),
-		dataTypeHandler:  handlers.NewDataTypeHandler(db),
-		userHandler:      handlers.NewUserHandler(db),
-		projectHandler:   handlers.NewProjectHandler(db),
-		agentHandler:     handlers.NewAgentHandler(db, redisService),
-		utilsHandler:     handlers.NewUtilsHandler(),
+		router:            gin.New(),
+		db:                db,
+		redisService:      redisService,
+		schedulerService:  schedulerService,
+		jwtSecret:         []byte(jwtSecret),
+		pipelineHandler:   handlers.NewPipelineHandler(db, redisService),
+		authHandler:       handlers.NewAuthHandler(db, jwtSecret, usersConfig, frontendURL),
+		workflowHandler:   handlers.NewWorkflowHandler(db, redisService),
+		statsHandler:      handlers.NewStatsHandler(db),
+		scheduleHandler:   handlers.NewScheduleHandler(db, schedulerService),
+		graphHandler:      handlers.NewGraphHandler(db, redisService),
+		dataTypeHandler:   handlers.NewDataTypeHandler(db),
+		userHandler:       handlers.NewUserHandler(db),
+		projectHandler:    handlers.NewProjectHandler(db),
+		agentHandler:      handlers.NewAgentHandler(db, redisService),
+		utilsHandler:      handlers.NewUtilsHandler(),
+		checkpointHandler: handlers.NewCheckpointHandler(db),
 	}
 
 	s.setupRoutes()
@@ -86,6 +88,13 @@ func (s *Server) setupRoutes() {
 			internal.POST("/:id/executions/:executionId/result", s.workflowHandler.ReceiveExecutionResult)
 		}
 
+		// 파이프라인 체크포인트 내부 API (Agent에서 호출)
+		internalPipelines := v1.Group("/pipelines")
+		{
+			internalPipelines.POST("/:id/checkpoints", s.checkpointHandler.UpdateCheckpoint)
+			internalPipelines.GET("/:id/checkpoints", s.checkpointHandler.ListCheckpoints)
+		}
+
 		// 에이전트 내부 API (인증 불필요 - 클러스터 내부 통신)
 		internalAgents := v1.Group("/agents")
 		{
@@ -117,6 +126,10 @@ func (s *Server) setupRoutes() {
 				pipelines.GET("/:id/graph", s.graphHandler.GetPipelineGraph)
 				pipelines.PUT("/:id/graph", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.graphHandler.UpdatePipelineGraph)
 				pipelines.GET("/:id/actor-metrics", s.graphHandler.GetActorMetrics)
+				// 체크포인트 (소스 오프셋 관리)
+				pipelines.GET("/:id/checkpoints", s.checkpointHandler.ListCheckpoints)
+				pipelines.PUT("/:id/checkpoints/reset", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.checkpointHandler.ResetCheckpoints)
+				pipelines.DELETE("/:id/checkpoints", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.checkpointHandler.DeleteCheckpoints)
 			}
 
 			// 워크플로우
@@ -141,6 +154,8 @@ func (s *Server) setupRoutes() {
 				workflows.POST("/:id/schedule/enable", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.scheduleHandler.EnableSchedule)
 				workflows.POST("/:id/schedule/disable", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.scheduleHandler.DisableSchedule)
 				workflows.POST("/:id/trigger", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.scheduleHandler.TriggerNow)
+				// 체크포인트 (워크플로우 내 모든 파이프라인)
+				workflows.GET("/:id/checkpoints", s.checkpointHandler.GetCheckpointsByWorkflow)
 			}
 
 			// 통계

@@ -24,7 +24,8 @@
     "owner": "Owner",
     "saveSuccess": "Saved successfully",
     "saveError": "Failed to save",
-    "close": "Close"
+    "close": "Close",
+    "refresh": "Refresh"
   },
   "auth": {
     "login": "Login",
@@ -657,6 +658,34 @@
     "tokenBucket": "Token Bucket",
     "slidingWindow": "Sliding Window",
     "fixedWindow": "Fixed Window"
+  },
+  "checkpoint": {
+    "title": "Checkpoints",
+    "description": "Checkpoints track source offsets to ensure no data loss when restarting pipelines. You can reset checkpoints to re-collect data from a specific point.",
+    "partition": "Partition",
+    "partitions": "partitions",
+    "offset": "Offset",
+    "recordCount": "Records",
+    "reset": "Reset",
+    "resetTitle": "Reset Checkpoints",
+    "resetWarning": "Resetting checkpoints will affect data collection. Make sure the workflow is stopped before resetting.",
+    "resetMode": "Reset Mode",
+    "resetModeSpecificTime": "Reset to specific time",
+    "resetModeBeginning": "Reset to beginning (use tail_lines/since_seconds settings)",
+    "resetModeSpecificOffset": "Reset to specific offset value",
+    "resetTimestamp": "Timestamp",
+    "resetTimestampRequired": "Please select a timestamp",
+    "resetTimestampPlaceholder": "Select date and time",
+    "resetOffsetValue": "Offset Value",
+    "resetOffsetRequired": "Please enter an offset value",
+    "resetOffsetPlaceholder": "e.g., 2024-01-09T00:00:00Z or 12345",
+    "resetSuccess": "Checkpoints reset successfully",
+    "resetError": "Failed to reset checkpoints",
+    "deleteConfirm": "Are you sure you want to delete all checkpoints for this pipeline? The next run will start fresh.",
+    "deleteSuccess": "Checkpoints deleted successfully",
+    "deleteError": "Failed to delete checkpoints",
+    "noCheckpoints": "No checkpoints yet",
+    "noCheckpointsHelp": "Checkpoints will be created when the realtime pipeline starts collecting data."
   },
   "source": {
     "title": "Source",

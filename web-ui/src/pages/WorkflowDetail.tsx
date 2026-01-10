@@ -20,6 +20,8 @@ import {
   Popconfirm,
   Collapse,
   Alert,
+  DatePicker,
+  Radio,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -39,6 +41,8 @@ import {
   StopOutlined,
   EyeOutlined,
   ExclamationCircleOutlined,
+  DatabaseOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -118,6 +122,21 @@ interface ExecutionDetail {
   pipeline_results?: PipelineExecutionResult[]
 }
 
+interface SourceCheckpoint {
+  id: string
+  workflow_id: string
+  pipeline_id: string
+  pipeline_name: string
+  source_type: string
+  partition_key: string
+  offset_value: string
+  offset_type: string
+  record_count: number
+  metadata?: string
+  created_at: string
+  updated_at: string
+}
+
 export default function WorkflowDetailPage() {
   const { t } = useTranslation()
   const { id, workflowId } = useParams<{ id?: string; workflowId?: string }>()
@@ -141,6 +160,14 @@ export default function WorkflowDetailPage() {
   const [executionDetailVisible, setExecutionDetailVisible] = useState(false)
   const [executionDetail, setExecutionDetail] = useState<ExecutionDetail | null>(null)
   const [executionDetailLoading, setExecutionDetailLoading] = useState(false)
+
+  // Checkpoint states
+  const [checkpoints, setCheckpoints] = useState<SourceCheckpoint[]>([])
+  const [checkpointsLoading, setCheckpointsLoading] = useState(false)
+  const [resetModalVisible, setResetModalVisible] = useState(false)
+  const [resetPipelineId, setResetPipelineId] = useState<string | null>(null)
+  const [resetForm] = Form.useForm()
+  const [resetting, setResetting] = useState(false)
 
   useEffect(() => {
     if (effectiveId) {
@@ -183,6 +210,75 @@ export default function WorkflowDetailPage() {
       message.error(t('workflow.loadError'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchCheckpoints = async () => {
+    if (!effectiveId) return
+    try {
+      setCheckpointsLoading(true)
+      const res = await api.getWorkflowCheckpoints(effectiveId)
+      if (res.success && res.data) {
+        setCheckpoints(res.data.checkpoints || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch checkpoints:', error)
+    } finally {
+      setCheckpointsLoading(false)
+    }
+  }
+
+  const handleResetCheckpoint = (pipelineId: string) => {
+    setResetPipelineId(pipelineId)
+    resetForm.resetFields()
+    resetForm.setFieldsValue({ mode: 'specific_time' })
+    setResetModalVisible(true)
+  }
+
+  const handleResetSubmit = async () => {
+    if (!resetPipelineId) return
+    try {
+      const values = await resetForm.validateFields()
+      setResetting(true)
+
+      const data: {
+        mode: 'specific_time' | 'beginning' | 'specific_offset'
+        timestamp?: string
+        offset_value?: string
+      } = { mode: values.mode }
+
+      if (values.mode === 'specific_time' && values.timestamp) {
+        data.timestamp = values.timestamp.toISOString()
+      } else if (values.mode === 'specific_offset' && values.offset_value) {
+        data.offset_value = values.offset_value
+      }
+
+      const res = await api.resetPipelineCheckpoints(resetPipelineId, data)
+      if (res.success) {
+        message.success(t('checkpoint.resetSuccess'))
+        setResetModalVisible(false)
+        fetchCheckpoints()
+      } else {
+        message.error(res.error?.message || t('checkpoint.resetError'))
+      }
+    } catch (error) {
+      message.error(t('checkpoint.resetError'))
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  const handleDeleteCheckpoints = async (pipelineId: string) => {
+    try {
+      const res = await api.deletePipelineCheckpoints(pipelineId)
+      if (res.success) {
+        message.success(t('checkpoint.deleteSuccess'))
+        fetchCheckpoints()
+      } else {
+        message.error(res.error?.message || t('checkpoint.deleteError'))
+      }
+    } catch (error) {
+      message.error(t('checkpoint.deleteError'))
     }
   }
 
@@ -799,8 +895,207 @@ export default function WorkflowDetailPage() {
               </Card>
             ),
           },
+          // Checkpoints tab - only for realtime workflows
+          ...(workflow?.type === 'realtime' ? [{
+            key: 'checkpoints',
+            label: (
+              <span>
+                <DatabaseOutlined />
+                {t('checkpoint.title')}
+              </span>
+            ),
+            children: (
+              <Card
+                title={t('checkpoint.title')}
+                extra={
+                  <Button
+                    icon={<ReloadOutlined />}
+                    onClick={fetchCheckpoints}
+                    loading={checkpointsLoading}
+                  >
+                    {t('common.refresh')}
+                  </Button>
+                }
+              >
+                <Alert
+                  type="info"
+                  message={t('checkpoint.description')}
+                  style={{ marginBottom: 16 }}
+                  showIcon
+                />
+                {checkpointsLoading ? (
+                  <div style={{ textAlign: 'center', padding: 40 }}>
+                    <Spin />
+                  </div>
+                ) : checkpoints.length > 0 ? (
+                  <>
+                    {/* Group by pipeline */}
+                    {Object.entries(
+                      checkpoints.reduce((acc, cp) => {
+                        const key = cp.pipeline_name || cp.pipeline_id
+                        if (!acc[key]) acc[key] = { pipeline_id: cp.pipeline_id, pipeline_name: cp.pipeline_name, items: [] }
+                        acc[key].items.push(cp)
+                        return acc
+                      }, {} as Record<string, { pipeline_id: string; pipeline_name: string; items: SourceCheckpoint[] }>)
+                    ).map(([key, group]) => (
+                      <Card
+                        key={key}
+                        size="small"
+                        title={
+                          <Space>
+                            <span>{group.pipeline_name || group.pipeline_id}</span>
+                            <Tag>{group.items[0]?.source_type}</Tag>
+                            <Tag color="blue">{group.items.length} {t('checkpoint.partitions')}</Tag>
+                          </Space>
+                        }
+                        extra={
+                          <Space>
+                            <Button
+                              size="small"
+                              onClick={() => handleResetCheckpoint(group.pipeline_id)}
+                            >
+                              {t('checkpoint.reset')}
+                            </Button>
+                            <Popconfirm
+                              title={t('checkpoint.deleteConfirm')}
+                              onConfirm={() => handleDeleteCheckpoints(group.pipeline_id)}
+                              okText={t('common.delete')}
+                              cancelText={t('common.cancel')}
+                            >
+                              <Button size="small" danger>
+                                {t('common.delete')}
+                              </Button>
+                            </Popconfirm>
+                          </Space>
+                        }
+                        style={{ marginBottom: 16 }}
+                      >
+                        <Table
+                          dataSource={group.items}
+                          rowKey="id"
+                          size="small"
+                          pagination={false}
+                          columns={[
+                            {
+                              title: t('checkpoint.partition'),
+                              dataIndex: 'partition_key',
+                              key: 'partition_key',
+                              render: (key: string) => <code style={{ fontSize: 11 }}>{key}</code>,
+                            },
+                            {
+                              title: t('checkpoint.offset'),
+                              dataIndex: 'offset_value',
+                              key: 'offset_value',
+                              render: (value: string, record: SourceCheckpoint) => (
+                                <Space>
+                                  <code style={{ fontSize: 11 }}>{value}</code>
+                                  <Tag>{record.offset_type}</Tag>
+                                </Space>
+                              ),
+                            },
+                            {
+                              title: t('checkpoint.recordCount'),
+                              dataIndex: 'record_count',
+                              key: 'record_count',
+                              align: 'right' as const,
+                              render: (count: number) => count?.toLocaleString() || 0,
+                            },
+                            {
+                              title: t('common.updatedAt'),
+                              dataIndex: 'updated_at',
+                              key: 'updated_at',
+                              render: (date: string) => new Date(date).toLocaleString(),
+                            },
+                          ]}
+                        />
+                      </Card>
+                    ))}
+                  </>
+                ) : (
+                  <Empty description={t('checkpoint.noCheckpoints')}>
+                    <Text type="secondary">{t('checkpoint.noCheckpointsHelp')}</Text>
+                  </Empty>
+                )}
+              </Card>
+            ),
+          }] : []),
         ]}
       />
+
+      {/* Checkpoint Reset Modal */}
+      <Modal
+        title={t('checkpoint.resetTitle')}
+        open={resetModalVisible}
+        onOk={handleResetSubmit}
+        onCancel={() => setResetModalVisible(false)}
+        okText={t('checkpoint.reset')}
+        cancelText={t('common.cancel')}
+        confirmLoading={resetting}
+      >
+        <Alert
+          type="warning"
+          message={t('checkpoint.resetWarning')}
+          style={{ marginBottom: 16 }}
+          showIcon
+        />
+        <Form form={resetForm} layout="vertical">
+          <Form.Item
+            name="mode"
+            label={t('checkpoint.resetMode')}
+            rules={[{ required: true }]}
+          >
+            <Radio.Group>
+              <Space direction="vertical">
+                <Radio value="specific_time">
+                  {t('checkpoint.resetModeSpecificTime')}
+                </Radio>
+                <Radio value="beginning">
+                  {t('checkpoint.resetModeBeginning')}
+                </Radio>
+                <Radio value="specific_offset">
+                  {t('checkpoint.resetModeSpecificOffset')}
+                </Radio>
+              </Space>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) => prevValues.mode !== currentValues.mode}
+          >
+            {({ getFieldValue }) => {
+              const mode = getFieldValue('mode')
+              if (mode === 'specific_time') {
+                return (
+                  <Form.Item
+                    name="timestamp"
+                    label={t('checkpoint.resetTimestamp')}
+                    rules={[{ required: true, message: t('checkpoint.resetTimestampRequired') }]}
+                  >
+                    <DatePicker
+                      showTime
+                      style={{ width: '100%' }}
+                      placeholder={t('checkpoint.resetTimestampPlaceholder')}
+                    />
+                  </Form.Item>
+                )
+              }
+              if (mode === 'specific_offset') {
+                return (
+                  <Form.Item
+                    name="offset_value"
+                    label={t('checkpoint.resetOffsetValue')}
+                    rules={[{ required: true, message: t('checkpoint.resetOffsetRequired') }]}
+                  >
+                    <Input placeholder={t('checkpoint.resetOffsetPlaceholder')} />
+                  </Form.Item>
+                )
+              }
+              return null
+            }}
+          </Form.Item>
+        </Form>
+      </Modal>
 
       {/* Pipeline Create/Edit Modal */}
       <Modal

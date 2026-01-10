@@ -482,3 +482,28 @@ type Connection struct {
 func (Connection) TableName() string {
 	return "connections"
 }
+
+// SourceCheckpoint 소스 체크포인트 모델
+// Realtime 파이프라인 소스의 오프셋을 추적하여 재시작 시 연속성 보장
+type SourceCheckpoint struct {
+	ID           string    `gorm:"primaryKey;size:36" json:"id"`
+	WorkflowID   string    `gorm:"size:36;not null;index:idx_checkpoint_workflow" json:"workflow_id"`
+	PipelineID   string    `gorm:"size:36;not null;index:idx_checkpoint_pipeline" json:"pipeline_id"`
+	PipelineName string    `gorm:"size:255" json:"pipeline_name"`
+	SourceType   string    `gorm:"size:50;not null" json:"source_type"`                                            // kubernetes, kafka, cdc, sql_event
+	PartitionKey string    `gorm:"size:255;not null;index:idx_checkpoint_partition,unique" json:"partition_key"`   // ns/pod/container, topic/partition
+	OffsetValue  string    `gorm:"size:255;not null" json:"offset_value"`                                          // timestamp, offset number
+	OffsetType   string    `gorm:"size:50;not null" json:"offset_type"`                                            // timestamp, numeric
+	RecordCount  int64     `gorm:"default:0" json:"record_count"`                                                  // 누적 처리 레코드 수
+	Metadata     string    `gorm:"type:text" json:"metadata,omitempty"`                                            // JSON - 추가 정보
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+
+	// Unique constraint: workflow_id + pipeline_id + partition_key
+	// index:idx_checkpoint_partition,unique 에 포함
+}
+
+// TableName 테이블 이름
+func (SourceCheckpoint) TableName() string {
+	return "source_checkpoints"
+}

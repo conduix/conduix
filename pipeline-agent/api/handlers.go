@@ -37,6 +37,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.POST("/pipelines/:id/pause", h.PausePipeline)
 		api.POST("/pipelines/:id/resume", h.ResumePipeline)
 		api.GET("/pipelines/:id/status", h.GetPipelineStatus)
+
+		// 모니터링
+		api.GET("/monitoring", h.GetAllMonitoring)
+		api.GET("/monitoring/:executionId", h.GetExecutionMonitoring)
 	}
 }
 
@@ -202,5 +206,33 @@ func (h *Handler) GetPipelineStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, types.APIResponse[PipelineInfo]{
 		Success: true,
 		Data:    info,
+	})
+}
+
+// GetAllMonitoring 모든 실행의 모니터링 정보 조회
+func (h *Handler) GetAllMonitoring(c *gin.Context) {
+	monitoring := h.agent.GetAllExecutionMonitoring()
+	c.JSON(http.StatusOK, types.APIResponse[[]*types.ExecutionMonitoringInfo]{
+		Success: true,
+		Data:    monitoring,
+	})
+}
+
+// GetExecutionMonitoring 특정 실행의 모니터링 정보 조회
+func (h *Handler) GetExecutionMonitoring(c *gin.Context) {
+	executionID := c.Param("executionId")
+
+	monitoring := h.agent.GetExecutionMonitoring(executionID)
+	if monitoring == nil {
+		c.JSON(http.StatusNotFound, types.APIResponse[any]{
+			Success: false,
+			Error:   types.NewAPIError(types.ErrCodeNotFound, "Execution not found or not running"),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, types.APIResponse[*types.ExecutionMonitoringInfo]{
+		Success: true,
+		Data:    monitoring,
 	})
 }

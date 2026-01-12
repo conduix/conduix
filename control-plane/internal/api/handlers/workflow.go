@@ -977,3 +977,99 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 		"request_id": requestID,
 	})
 }
+
+// GetExecutionMonitoring GET /api/v1/workflows/:id/executions/:executionId/monitoring
+// 실행 중인 워크플로우의 실시간 모니터링 정보 조회 (Agent에 프록시)
+func (h *WorkflowHandler) GetExecutionMonitoring(c *gin.Context) {
+	requestID := middleware.GetRequestID(c)
+	workflowID := c.Param("id")
+	executionID := c.Param("executionId")
+
+	// 실행 정보 조회
+	var execution models.WorkflowExecution
+	if err := h.db.Where("id = ? AND workflow_id = ?", executionID, workflowID).First(&execution).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success":    false,
+			"error":      gin.H{"code": "NOT_FOUND", "message": "Execution not found"},
+			"request_id": requestID,
+		})
+		return
+	}
+
+	// 실행 중인지 확인
+	if execution.Status != "running" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success":    false,
+			"error":      gin.H{"code": "NOT_RUNNING", "message": "Execution is not running"},
+			"request_id": requestID,
+		})
+		return
+	}
+
+	// Redis에서 모니터링 정보 조회 시도 (빠른 응답)
+	if h.redisService != nil {
+		// Redis에서 모든 Agent의 하트비트 조회하여 실행 중인 Agent 찾기
+		heartbeats, err := h.redisService.GetAllAgentHeartbeats()
+		if err == nil {
+			// 각 Agent의 모니터링 정보 확인
+			for agentID := range heartbeats {
+				monitoringInfo, err := h.redisService.GetExecutionMonitoring(agentID, executionID)
+				if err == nil && monitoringInfo != nil {
+					// Redis에서 찾았으면 즉시 반환
+					c.JSON(http.StatusOK, gin.H{
+						"success":    true,
+						"data":       monitoringInfo,
+						"request_id": requestID,
+					})
+					return
+				}
+			}
+		}
+	}
+
+	// Redis에서 찾지 못한 경우 Agent HTTP 호출 (폴백)
+	// Agent 정보 조회 (실행 중인 Agent 찾기)
+	var agents []models.Agent
+	if err := h.db.Where("status = ?", "online").Find(&agents).Error; err != nil || len(agents) == 0 {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success":    false,
+			"error":      gin.H{"code": "NO_AGENT", "message": "No online agent available"},
+			"request_id": requestID,
+		})
+		return
+	}
+
+	// 첫 번째 온라인 Agent에게 모니터링 정보 요청
+	agent := agents[0]
+	// Agent 포트는 기본값 8081 사용 (또는 Redis 하트비트에서 가져올 수 있음)
+	agentHost := agent.IPAddress
+	if agentHost == "" {
+		agentHost = agent.Hostname
+	}
+	agentPort := 8081 // 기본 포트
+	monitoringURL := fmt.Sprintf("http://%s:%d/api/v1/monitoring/%s", agentHost, agentPort, executionID)
+
+	resp, err := http.Get(monitoringURL)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success":    false,
+			"error":      gin.H{"code": "AGENT_ERROR", "message": "Failed to connect to agent: " + err.Error()},
+			"request_id": requestID,
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Agent 응답 전달
+	var agentResp map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success":    false,
+			"error":      gin.H{"code": "PARSE_ERROR", "message": "Failed to parse agent response"},
+			"request_id": requestID,
+		})
+		return
+	}
+
+	c.JSON(resp.StatusCode, agentResp)
+}

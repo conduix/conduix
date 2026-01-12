@@ -490,12 +490,12 @@ type SourceCheckpoint struct {
 	WorkflowID   string    `gorm:"size:36;not null;index:idx_checkpoint_workflow" json:"workflow_id"`
 	PipelineID   string    `gorm:"size:36;not null;index:idx_checkpoint_pipeline" json:"pipeline_id"`
 	PipelineName string    `gorm:"size:255" json:"pipeline_name"`
-	SourceType   string    `gorm:"size:50;not null" json:"source_type"`                                            // kubernetes, kafka, cdc, sql_event
-	PartitionKey string    `gorm:"size:255;not null;index:idx_checkpoint_partition,unique" json:"partition_key"`   // ns/pod/container, topic/partition
-	OffsetValue  string    `gorm:"size:255;not null" json:"offset_value"`                                          // timestamp, offset number
-	OffsetType   string    `gorm:"size:50;not null" json:"offset_type"`                                            // timestamp, numeric
-	RecordCount  int64     `gorm:"default:0" json:"record_count"`                                                  // 누적 처리 레코드 수
-	Metadata     string    `gorm:"type:text" json:"metadata,omitempty"`                                            // JSON - 추가 정보
+	SourceType   string    `gorm:"size:50;not null" json:"source_type"`                                          // kubernetes, kafka, cdc, sql_event
+	PartitionKey string    `gorm:"size:255;not null;index:idx_checkpoint_partition,unique" json:"partition_key"` // ns/pod/container, topic/partition
+	OffsetValue  string    `gorm:"size:255;not null" json:"offset_value"`                                        // timestamp, offset number
+	OffsetType   string    `gorm:"size:50;not null" json:"offset_type"`                                          // timestamp, numeric
+	RecordCount  int64     `gorm:"default:0" json:"record_count"`                                                // 누적 처리 레코드 수
+	Metadata     string    `gorm:"type:text" json:"metadata,omitempty"`                                          // JSON - 추가 정보
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 

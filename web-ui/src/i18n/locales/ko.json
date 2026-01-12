@@ -237,7 +237,17 @@
     "recordsWritten": "저장 건수",
     "pipelineConfigSnapshot": "실행 시점 파이프라인 설정",
     "pipelineConfigSnapshotHelp": "이 실행이 시작될 때 적용된 파이프라인 설정입니다. 현재 설정과 다를 수 있습니다.",
-    "noExecutionDetail": "실행 상세 정보가 없습니다"
+    "noExecutionDetail": "실행 상세 정보가 없습니다",
+    "monitoring": "실시간 모니터링",
+    "recentDataSamples": "최근 처리 데이터",
+    "timestamp": "타임스탬프",
+    "data": "데이터",
+    "statistics": "통계",
+    "recordsCollected": "수집 건수",
+    "recordsProcessed": "처리 건수",
+    "collectionErrors": "수집 오류",
+    "processingErrors": "처리 오류",
+    "noMonitoringData": "모니터링 데이터가 없습니다"
   },
   "agent": {
     "title": "에이전트",
@@ -448,6 +458,9 @@
     "delete": "Stage 삭제",
     "deleteConfirm": "정말 이 Stage를 삭제하시겠습니까?",
     "noStages": "설정된 Stage가 없습니다",
+    "inputCount": "입력 건수",
+    "outputCount": "출력 건수",
+    "errorCount": "오류 건수",
     "types": {
       "filter": "필터",
       "remap": "필드 매핑",
@@ -662,6 +675,7 @@
   "checkpoint": {
     "title": "체크포인트",
     "description": "체크포인트는 파이프라인 재시작 시 데이터 손실 없이 이어서 수집할 수 있도록 소스 오프셋을 추적합니다. 특정 시점으로 리셋하여 데이터를 다시 수집할 수 있습니다.",
+    "sourceCheckpoints": "소스 체크포인트",
     "partition": "파티션",
     "partitions": "파티션",
     "offset": "오프셋",

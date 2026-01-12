@@ -301,6 +301,60 @@ func (s *SQLEventSource) SetCheckpoint(checkpoint map[string]any) error {
 	return nil
 }
 
+// SourceType 소스 타입 반환 (CheckpointableSource 구현)
+func (s *SQLEventSource) SourceType() string {
+	return "sql_event"
+}
+
+// GetSourceCheckpoints 현재 모든 체크포인트 반환 (CheckpointableSource 구현)
+func (s *SQLEventSource) GetSourceCheckpoints() []*SourceCheckpoint {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// SQL Event Source는 단일 파티션
+	return []*SourceCheckpoint{
+		{
+			PartitionKey: s.table, // 테이블명을 파티션 키로 사용
+			OffsetValue:  fmt.Sprintf("%d", s.lastID),
+			OffsetType:   "numeric",
+			RecordCount:  s.lastID,
+			UpdatedAt:    time.Now(),
+		},
+	}
+}
+
+// SetSourceCheckpoints 체크포인트 설정 (CheckpointableSource 구현)
+func (s *SQLEventSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, cp := range checkpoints {
+		if cp.PartitionKey != s.table {
+			continue // 테이블 이름이 다르면 무시
+		}
+
+		if cp.OffsetType == "numeric" {
+			lastID, err := ParseNumeric(cp.OffsetValue)
+			if err != nil {
+				fmt.Printf("[sql_event] Failed to parse checkpoint offset %s: %v\n", cp.OffsetValue, err)
+				continue
+			}
+			s.lastID = lastID
+			fmt.Printf("[sql_event] Restored checkpoint: %s -> %d\n", cp.PartitionKey, lastID)
+		} else if cp.OffsetType == "timestamp" {
+			ts, err := ParseTimestamp(cp.OffsetValue)
+			if err != nil {
+				fmt.Printf("[sql_event] Failed to parse checkpoint timestamp %s: %v\n", cp.OffsetValue, err)
+				continue
+			}
+			s.lastTimestamp = ts
+			fmt.Printf("[sql_event] Restored checkpoint timestamp: %s -> %s\n", cp.PartitionKey, ts.Format(time.RFC3339Nano))
+		}
+	}
+
+	return nil
+}
+
 func (s *SQLEventSource) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

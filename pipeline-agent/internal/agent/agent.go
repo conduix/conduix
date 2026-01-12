@@ -31,9 +31,10 @@ const (
 
 // RunningExecution 실행 중인 워크플로우 실행 정보
 type RunningExecution struct {
-	ExecutionID string
-	WorkflowID  string
-	StartedAt   time.Time
+	ExecutionID   string
+	WorkflowID    string
+	StartedAt     time.Time
+	GroupExecutor *executor.GroupExecutor // 모니터링용 GroupExecutor 참조
 }
 
 // Agent 파이프라인 에이전트
@@ -450,6 +451,54 @@ func (a *Agent) sendHeartbeat() {
 	if redisErr != nil && restErr != nil {
 		fmt.Printf("All heartbeat methods failed - Redis: %v, REST: %v\n", redisErr, restErr)
 	}
+
+	// 모니터링 정보도 Redis에 저장 (하트비트와 별도로 업데이트)
+	a.updateMonitoringInfo()
+}
+
+// updateMonitoringInfo 실행 중인 모든 워크플로우의 모니터링 정보를 Redis에 저장
+func (a *Agent) updateMonitoringInfo() {
+	if a.redisClient == nil || (a.commMode != ModeRedis && a.commMode != ModeHybrid) {
+		return
+	}
+
+	a.execMu.RLock()
+	execs := make([]*RunningExecution, 0, len(a.runningExecs))
+	for _, exec := range a.runningExecs {
+		execs = append(execs, exec)
+	}
+	a.execMu.RUnlock()
+
+	// 각 실행의 모니터링 정보를 Redis에 저장
+	for _, exec := range execs {
+		if exec.GroupExecutor == nil {
+			continue
+		}
+
+		monitoringInfo := exec.GroupExecutor.GetMonitoringInfo()
+		if monitoringInfo == nil {
+			continue
+		}
+
+		// 데이터 샘플 개수 제한 (성능 최적화)
+		for i := range monitoringInfo.Pipelines {
+			for j := range monitoringInfo.Pipelines[i].Stages {
+				samples := monitoringInfo.Pipelines[i].Stages[j].Samples
+				if len(samples) > 10 {
+					// 최근 10개만 유지
+					monitoringInfo.Pipelines[i].Stages[j].Samples = samples[len(samples)-10:]
+				}
+			}
+		}
+
+		key := fmt.Sprintf("agent:%s:monitoring:%s", a.ID, exec.ExecutionID)
+		// 5초 TTL (하트비트보다 짧게, 빠른 갱신)
+		err := a.redisClient.Set(a.ctx, key, monitoringInfo, 5*time.Second)
+		if err != nil {
+			// 조용히 실패 (하트비트는 성공했으므로)
+			continue
+		}
+	}
 }
 
 // sendHeartbeatREST REST API를 통한 하트비트 전송
@@ -644,12 +693,16 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 
 	fmt.Printf("Starting group execution: %s (%s)\n", workflow.Name, workflow.ID)
 
-	// 실행 추적 시작
+	// GroupExecutor를 사용하여 파이프라인 그룹 실행
+	groupExecutor := executor.NewGroupExecutor(workflow)
+
+	// 실행 추적 시작 (GroupExecutor 포함)
 	a.execMu.Lock()
 	a.runningExecs[cmd.ExecutionID] = &RunningExecution{
-		ExecutionID: cmd.ExecutionID,
-		WorkflowID:  cmd.WorkflowID,
-		StartedAt:   startTime,
+		ExecutionID:   cmd.ExecutionID,
+		WorkflowID:    cmd.WorkflowID,
+		StartedAt:     startTime,
+		GroupExecutor: groupExecutor,
 	}
 	a.execMu.Unlock()
 
@@ -659,9 +712,6 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 		delete(a.runningExecs, cmd.ExecutionID)
 		a.execMu.Unlock()
 	}()
-
-	// GroupExecutor를 사용하여 파이프라인 그룹 실행
-	groupExecutor := executor.NewGroupExecutor(workflow)
 
 	// 실행 시작
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -820,4 +870,33 @@ func (a *Agent) GetRedisMetrics() *redisclient.Metrics {
 	}
 	metrics := a.redisClient.GetMetrics()
 	return &metrics
+}
+
+// GetExecutionMonitoring 특정 실행의 모니터링 정보 조회
+func (a *Agent) GetExecutionMonitoring(executionID string) *types.ExecutionMonitoringInfo {
+	a.execMu.RLock()
+	exec, ok := a.runningExecs[executionID]
+	a.execMu.RUnlock()
+
+	if !ok || exec.GroupExecutor == nil {
+		return nil
+	}
+
+	return exec.GroupExecutor.GetMonitoringInfo()
+}
+
+// GetAllExecutionMonitoring 모든 실행의 모니터링 정보 조회
+func (a *Agent) GetAllExecutionMonitoring() []*types.ExecutionMonitoringInfo {
+	a.execMu.RLock()
+	defer a.execMu.RUnlock()
+
+	result := make([]*types.ExecutionMonitoringInfo, 0, len(a.runningExecs))
+	for _, exec := range a.runningExecs {
+		if exec.GroupExecutor != nil {
+			if info := exec.GroupExecutor.GetMonitoringInfo(); info != nil {
+				result = append(result, info)
+			}
+		}
+	}
+	return result
 }

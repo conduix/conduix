@@ -408,6 +408,56 @@ func (s *KubernetesSource) GetCheckpoint(namespace, podName, containerName strin
 	return time.Time{}, 0
 }
 
+// SourceType 소스 타입 반환 (CheckpointableSource 구현)
+func (s *KubernetesSource) SourceType() string {
+	return "kubernetes"
+}
+
+// GetSourceCheckpoints 현재 모든 체크포인트 반환 (CheckpointableSource 구현)
+func (s *KubernetesSource) GetSourceCheckpoints() []*SourceCheckpoint {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	checkpoints := make([]*SourceCheckpoint, 0, len(s.checkpoints))
+	for key, cp := range s.checkpoints {
+		checkpoints = append(checkpoints, &SourceCheckpoint{
+			PartitionKey: key,
+			OffsetValue:  cp.lastTimestamp.Format(time.RFC3339Nano),
+			OffsetType:   "timestamp",
+			RecordCount:  cp.lineCount,
+			UpdatedAt:    time.Now(),
+		})
+	}
+	return checkpoints
+}
+
+// SetSourceCheckpoints 체크포인트 설정 (CheckpointableSource 구현)
+func (s *KubernetesSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, cp := range checkpoints {
+		if cp.OffsetType != "timestamp" {
+			continue // Kubernetes 소스는 타임스탬프만 지원
+		}
+
+		timestamp, err := ParseTimestamp(cp.OffsetValue)
+		if err != nil {
+			fmt.Printf("[kubernetes] Failed to parse checkpoint timestamp %s: %v\n", cp.OffsetValue, err)
+			continue
+		}
+
+		s.checkpoints[cp.PartitionKey] = &podCheckpoint{
+			lastTimestamp: timestamp,
+			lineCount:     cp.RecordCount,
+		}
+		fmt.Printf("[kubernetes] Restored checkpoint: %s -> %s (records: %d)\n",
+			cp.PartitionKey, timestamp.Format(time.RFC3339Nano), cp.RecordCount)
+	}
+
+	return nil
+}
+
 // parseLogMessage 로그 메시지를 파싱하여 map으로 변환
 func (s *KubernetesSource) parseLogMessage(message string) map[string]any {
 	switch s.logFormat {

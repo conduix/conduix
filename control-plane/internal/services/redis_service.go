@@ -307,3 +307,48 @@ func (s *RedisService) Set(ctx context.Context, key, value string, expiration ti
 func (s *RedisService) Get(ctx context.Context, key string) (string, error) {
 	return s.client.Get(ctx, key)
 }
+
+// GetExecutionMonitoring Redis에서 실행 모니터링 정보 조회
+func (s *RedisService) GetExecutionMonitoring(agentID, executionID string) (*types.ExecutionMonitoringInfo, error) {
+	key := fmt.Sprintf("agent:%s:monitoring:%s", agentID, executionID)
+
+	data, err := s.client.Get(s.ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get monitoring info: %w", err)
+	}
+
+	var monitoringInfo types.ExecutionMonitoringInfo
+	if err := json.Unmarshal([]byte(data), &monitoringInfo); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal monitoring info: %w", err)
+	}
+
+	return &monitoringInfo, nil
+}
+
+// GetAllExecutionMonitoring 모든 Agent의 실행 모니터링 정보 조회
+func (s *RedisService) GetAllExecutionMonitoring() (map[string]*types.ExecutionMonitoringInfo, error) {
+	// Redis SCAN으로 agent:*:monitoring:* 패턴의 키들 조회
+	keys, err := s.client.Keys(s.ctx, "agent:*:monitoring:*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan monitoring keys: %w", err)
+	}
+
+	monitoringInfos := make(map[string]*types.ExecutionMonitoringInfo)
+	for _, key := range keys {
+		data, err := s.client.Get(s.ctx, key)
+		if err != nil {
+			continue // 키가 만료되었을 수 있음
+		}
+
+		var monitoringInfo types.ExecutionMonitoringInfo
+		if err := json.Unmarshal([]byte(data), &monitoringInfo); err != nil {
+			continue
+		}
+
+		// key format: agent:{agentID}:monitoring:{executionID}
+		// executionID를 키로 사용
+		monitoringInfos[monitoringInfo.ExecutionID] = &monitoringInfo
+	}
+
+	return monitoringInfos, nil
+}

@@ -169,11 +169,58 @@ export default function WorkflowDetailPage() {
   const [resetForm] = Form.useForm()
   const [resetting, setResetting] = useState(false)
 
+  // Monitoring states
+  const [monitoringData, setMonitoringData] = useState<any>(null)
+  const [monitoringLoading, setMonitoringLoading] = useState(false)
+  const [monitoringInterval, setMonitoringInterval] = useState<ReturnType<typeof setInterval> | null>(null)
+  const [runningExecutionId, setRunningExecutionId] = useState<string | null>(null)
+
   useEffect(() => {
     if (effectiveId) {
       fetchWorkflowData()
     }
   }, [effectiveId])
+
+  // 실행 중인 execution 찾기 및 모니터링 시작
+  useEffect(() => {
+    const runningExec = executions.find(e => e.status === 'running')
+    if (runningExec && runningExec.id !== runningExecutionId) {
+      setRunningExecutionId(runningExec.id)
+      fetchMonitoringData(runningExec.id)
+      // 실시간 업데이트 (5초마다)
+      const interval = setInterval(() => {
+        fetchMonitoringData(runningExec.id)
+      }, 5000)
+      setMonitoringInterval(interval)
+    } else if (!runningExec && monitoringInterval) {
+      // 실행 중인 execution이 없으면 인터벌 정리
+      clearInterval(monitoringInterval)
+      setMonitoringInterval(null)
+      setRunningExecutionId(null)
+      setMonitoringData(null)
+    }
+    return () => {
+      if (monitoringInterval) {
+        clearInterval(monitoringInterval)
+      }
+    }
+  }, [executions, runningExecutionId])
+
+  const fetchMonitoringData = async (executionId: string) => {
+    if (!effectiveId) return
+    try {
+      setMonitoringLoading(true)
+      const res = await api.getWorkflowExecutionMonitoring(effectiveId, executionId)
+      if (res.success && res.data) {
+        setMonitoringData(res.data)
+      }
+    } catch (error) {
+      // 실행이 종료되었거나 에러가 발생한 경우 조용히 처리
+      console.error('Failed to fetch monitoring data:', error)
+    } finally {
+      setMonitoringLoading(false)
+    }
+  }
 
   const fetchWorkflowData = async () => {
     try {
@@ -895,6 +942,215 @@ export default function WorkflowDetailPage() {
               </Card>
             ),
           },
+          // Monitoring tab - only for running executions
+          ...(runningExecutionId ? [{
+            key: 'monitoring',
+            label: (
+              <span>
+                <SyncOutlined spin={monitoringLoading} />
+                {t('workflow.monitoring')} {monitoringLoading && <Spin size="small" style={{ marginLeft: 8 }} />}
+              </span>
+            ),
+            children: (
+              <Card
+                title={t('workflow.monitoring')}
+                extra={
+                  <Button
+                    icon={<ReloadOutlined />}
+                    onClick={() => runningExecutionId && fetchMonitoringData(runningExecutionId)}
+                    loading={monitoringLoading}
+                  >
+                    {t('common.refresh')}
+                  </Button>
+                }
+              >
+                {monitoringLoading && !monitoringData ? (
+                  <div style={{ textAlign: 'center', padding: 40 }}>
+                    <Spin size="large" />
+                  </div>
+                ) : monitoringData?.data ? (
+                  <div>
+                    {monitoringData.data.pipelines?.map((pipeline: any) => (
+                      <Card
+                        key={pipeline.pipeline_id}
+                        title={
+                          <Space>
+                            <span>{pipeline.pipeline_name || pipeline.pipeline_id}</span>
+                            <Tag color={pipeline.status === 'running' ? 'green' : 'default'}>
+                              {pipeline.status}
+                            </Tag>
+                          </Space>
+                        }
+                        style={{ marginBottom: 16 }}
+                        size="small"
+                      >
+                        {/* Source Checkpoints */}
+                        {pipeline.checkpoints && pipeline.checkpoints.length > 0 && (
+                          <div style={{ marginBottom: 16 }}>
+                            <Title level={5}>
+                              <DatabaseOutlined /> {t('checkpoint.sourceCheckpoints')}
+                            </Title>
+                            <Table
+                              dataSource={pipeline.checkpoints}
+                              rowKey="partition_key"
+                              size="small"
+                              pagination={false}
+                              columns={[
+                                {
+                                  title: t('checkpoint.partition'),
+                                  dataIndex: 'partition_key',
+                                  key: 'partition_key',
+                                  render: (key: string) => <code style={{ fontSize: 11 }}>{key}</code>,
+                                },
+                                {
+                                  title: t('checkpoint.offset'),
+                                  dataIndex: 'offset_value',
+                                  key: 'offset_value',
+                                  render: (value: string, record: any) => (
+                                    <Space>
+                                      <code style={{ fontSize: 11 }}>{value}</code>
+                                      <Tag>{record.offset_type}</Tag>
+                                    </Space>
+                                  ),
+                                },
+                                {
+                                  title: t('checkpoint.recordCount'),
+                                  dataIndex: 'record_count',
+                                  key: 'record_count',
+                                  align: 'right' as const,
+                                  render: (count: number) => count?.toLocaleString() || 0,
+                                },
+                              ]}
+                            />
+                          </div>
+                        )}
+
+                        {/* Stages with Data Samples */}
+                        {pipeline.stages && pipeline.stages.length > 0 && (
+                          <div>
+                            <Title level={5}>{t('stage.title')}</Title>
+                            <Collapse>
+                              {pipeline.stages.map((stage: any) => (
+                                <Collapse.Panel
+                                  key={stage.name}
+                                  header={
+                                    <Space>
+                                      <span>{stage.name}</span>
+                                      <Tag>{stage.type}</Tag>
+                                      <Tag color="blue">입력: {stage.input_count?.toLocaleString() || 0}</Tag>
+                                      <Tag color="green">출력: {stage.output_count?.toLocaleString() || 0}</Tag>
+                                      {stage.error_count > 0 && (
+                                        <Tag color="red">에러: {stage.error_count}</Tag>
+                                      )}
+                                    </Space>
+                                  }
+                                >
+                                  {/* Stage Statistics */}
+                                  <Descriptions bordered column={3} size="small" style={{ marginBottom: 16 }}>
+                                    <Descriptions.Item label={t('stage.inputCount')}>
+                                      {stage.input_count?.toLocaleString() || 0}
+                                    </Descriptions.Item>
+                                    <Descriptions.Item label={t('stage.outputCount')}>
+                                      {stage.output_count?.toLocaleString() || 0}
+                                    </Descriptions.Item>
+                                    <Descriptions.Item label={t('stage.errorCount')}>
+                                      {stage.error_count > 0 ? (
+                                        <Text type="danger">{stage.error_count}</Text>
+                                      ) : (
+                                        stage.error_count || 0
+                                      )}
+                                    </Descriptions.Item>
+                                  </Descriptions>
+
+                                  {/* Recent Data Samples */}
+                                  {stage.samples && stage.samples.length > 0 && (
+                                    <div>
+                                      <Title level={5}>{t('workflow.recentDataSamples')}</Title>
+                                      <Table
+                                        dataSource={stage.samples}
+                                        rowKey={(_, index) => `${stage.name}-${index}`}
+                                        size="small"
+                                        pagination={{ pageSize: 5 }}
+                                        columns={[
+                                          {
+                                            title: t('workflow.timestamp'),
+                                            dataIndex: 'timestamp',
+                                            key: 'timestamp',
+                                            width: 180,
+                                            render: (ts: number) => new Date(ts).toLocaleString(),
+                                          },
+                                          {
+                                            title: t('workflow.data'),
+                                            dataIndex: 'data',
+                                            key: 'data',
+                                            render: (data: any) => (
+                                              <pre
+                                                style={{
+                                                  margin: 0,
+                                                  fontSize: 11,
+                                                  maxHeight: 200,
+                                                  overflow: 'auto',
+                                                  background: '#f5f5f5',
+                                                  padding: 8,
+                                                  borderRadius: 4,
+                                                  whiteSpace: 'pre-wrap',
+                                                  wordBreak: 'break-word',
+                                                }}
+                                              >
+                                                {JSON.stringify(data, null, 2)}
+                                              </pre>
+                                            ),
+                                          },
+                                        ]}
+                                      />
+                                    </div>
+                                  )}
+                                </Collapse.Panel>
+                              ))}
+                            </Collapse>
+                          </div>
+                        )}
+
+                        {/* Pipeline Statistics */}
+                        {pipeline.statistics && (
+                          <div style={{ marginTop: 16 }}>
+                            <Title level={5}>{t('workflow.statistics')}</Title>
+                            <Descriptions bordered column={2} size="small">
+                              <Descriptions.Item label={t('workflow.recordsCollected')}>
+                                {pipeline.statistics.records_collected?.toLocaleString() || 0}
+                              </Descriptions.Item>
+                              <Descriptions.Item label={t('workflow.recordsProcessed')}>
+                                {pipeline.statistics.records_processed?.toLocaleString() || 0}
+                              </Descriptions.Item>
+                              <Descriptions.Item label={t('workflow.collectionErrors')}>
+                                {pipeline.statistics.collection_errors > 0 ? (
+                                  <Text type="danger">{pipeline.statistics.collection_errors}</Text>
+                                ) : (
+                                  pipeline.statistics.collection_errors || 0
+                                )}
+                              </Descriptions.Item>
+                              <Descriptions.Item label={t('workflow.processingErrors')}>
+                                {pipeline.statistics.processing_errors > 0 ? (
+                                  <Text type="danger">{pipeline.statistics.processing_errors}</Text>
+                                ) : (
+                                  pipeline.statistics.processing_errors || 0
+                                )}
+                              </Descriptions.Item>
+                            </Descriptions>
+                          </div>
+                        )}
+                      </Card>
+                    ))}
+                    {(!monitoringData.data.pipelines || monitoringData.data.pipelines.length === 0) && (
+                      <Empty description={t('workflow.noMonitoringData')} />
+                    )}
+                  </div>
+                ) : (
+                  <Empty description={t('workflow.noMonitoringData')} />
+                )}
+              </Card>
+            ),
+          }] : []),
           // Checkpoints tab - only for realtime workflows
           ...(workflow?.type === 'realtime' ? [{
             key: 'checkpoints',

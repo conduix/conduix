@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/sink"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
@@ -29,17 +30,46 @@ type GroupExecutor struct {
 	cancelFunc      context.CancelFunc
 	resultCh        chan *types.PipelineExecutionResult
 	errorCh         chan error
+
+	// Checkpoint 관련
+	checkpointClient *checkpoint.Client
+	activeSources    map[string]source.Source // pipelineID -> source
+	sourcesMu        sync.RWMutex
+
+	// Monitoring 관련
+	sampleBuffers   map[string]*SampleBuffer   // pipelineID -> SampleBuffer
+	statsCollectors map[string]*StatsCollector // pipelineID -> StatsCollector
+	monitoringMu    sync.RWMutex
+}
+
+// GroupExecutorOption GroupExecutor 옵션
+type GroupExecutorOption func(*GroupExecutor)
+
+// WithCheckpointClient 체크포인트 클라이언트 설정
+func WithCheckpointClient(client *checkpoint.Client) GroupExecutorOption {
+	return func(e *GroupExecutor) {
+		e.checkpointClient = client
+	}
 }
 
 // NewGroupExecutor 그룹 실행기 생성
-func NewGroupExecutor(group *types.PipelineGroup) *GroupExecutor {
-	return &GroupExecutor{
+func NewGroupExecutor(group *types.PipelineGroup, opts ...GroupExecutorOption) *GroupExecutor {
+	e := &GroupExecutor{
 		group:           group,
 		pipelineRunners: make(map[string]*PipelineRunner),
 		status:          types.PipelineGroupStatusIdle,
 		resultCh:        make(chan *types.PipelineExecutionResult, len(group.Pipelines)),
 		errorCh:         make(chan error, len(group.Pipelines)),
+		activeSources:   make(map[string]source.Source),
+		sampleBuffers:   make(map[string]*SampleBuffer),
+		statsCollectors: make(map[string]*StatsCollector),
 	}
+
+	for _, opt := range opts {
+		opt(e)
+	}
+
+	return e
 }
 
 // Start 그룹 실행 시작
@@ -327,6 +357,23 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	// 통계 수집기 초기화
 	statsCollector := NewStatsCollector(pipeline.ID, pipeline.Name)
 
+	// 샘플 버퍼 초기화
+	sampleBuffer := NewSampleBuffer(DefaultSampleSize)
+
+	// 모니터링 정보 등록
+	e.monitoringMu.Lock()
+	e.statsCollectors[pipeline.ID] = statsCollector
+	e.sampleBuffers[pipeline.ID] = sampleBuffer
+	e.monitoringMu.Unlock()
+
+	// 완료 시 정리
+	defer func() {
+		e.monitoringMu.Lock()
+		delete(e.statsCollectors, pipeline.ID)
+		delete(e.sampleBuffers, pipeline.ID)
+		e.monitoringMu.Unlock()
+	}()
+
 	result := &types.PipelineExecutionResult{
 		PipelineID:   pipeline.ID,
 		PipelineName: pipeline.Name,
@@ -382,7 +429,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 
 	// 소스 생성 및 실행
 	fmt.Printf("[runPipeline] Creating source: %s (type: %s)\n", pipeline.Source.Name, pipeline.Source.Type)
-	records, errs, err := e.createAndRunSource(ctx, pipeline.Source)
+	records, errs, src, err := e.createAndRunSource(ctx, pipeline.ID, pipeline.Source)
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = err.Error()
@@ -392,6 +439,46 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		return result, err
 	}
 	fmt.Printf("[runPipeline] Source created successfully\n")
+
+	// 활성 소스 추적
+	if src != nil {
+		e.sourcesMu.Lock()
+		e.activeSources[pipeline.ID] = src
+		e.sourcesMu.Unlock()
+
+		defer func() {
+			e.sourcesMu.Lock()
+			delete(e.activeSources, pipeline.ID)
+			e.sourcesMu.Unlock()
+		}()
+	}
+
+	// 체크포인트 저장 헬퍼 함수
+	saveCheckpoints := func() {
+		if e.checkpointClient == nil || src == nil {
+			return
+		}
+		if cpSource, ok := src.(source.CheckpointableSource); ok {
+			sourceCheckpoints := cpSource.GetSourceCheckpoints()
+			for _, scp := range sourceCheckpoints {
+				cp := &checkpoint.Checkpoint{
+					PipelineID:   pipeline.ID,
+					PipelineName: pipeline.Name,
+					SourceType:   cpSource.SourceType(),
+					PartitionKey: scp.PartitionKey,
+					OffsetValue:  scp.OffsetValue,
+					OffsetType:   scp.OffsetType,
+					RecordCount:  scp.RecordCount,
+				}
+				e.checkpointClient.UpdateCheckpoint(cp)
+			}
+			if err := e.checkpointClient.FlushCheckpoints(context.Background()); err != nil {
+				fmt.Printf("[checkpoint] Warning: Failed to flush checkpoints: %v\n", err)
+			} else if len(sourceCheckpoints) > 0 {
+				fmt.Printf("[checkpoint] Saved %d checkpoints for pipeline %s\n", len(sourceCheckpoints), pipeline.ID)
+			}
+		}
+	}
 
 	// 소스 스키마 검증기 생성 (JSONSchema가 있는 경우)
 	var sourceValidator *validator.SchemaValidator
@@ -417,6 +504,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			result.RecordsWritten = stats.RecordsProcessed
 			result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
 			result.Statistics = stats
+			saveCheckpoints() // 취소 시에도 체크포인트 저장
 			return result, ctx.Err()
 
 		case record, ok := <-records:
@@ -443,6 +531,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 
 				fmt.Printf("[runPipeline] Completed: read=%d, written=%d, errors=%d\n",
 					result.RecordsRead, result.RecordsWritten, result.ErrorCount)
+				saveCheckpoints() // 완료 시 체크포인트 저장
 				return result, nil
 			}
 
@@ -478,7 +567,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 						}
 					}
 					statsCollector.RecordTransformOutput(stage.Name)
-					continue // sink stage는 데이터를 변환하지 않음, 다음 stage로
+					sampleBuffer.AddSample(stage.Name, data) // 샘플 저장
+					continue                                 // sink stage는 데이터를 변환하지 않음, 다음 stage로
 				}
 
 				// 일반 stage: 데이터 변환
@@ -496,6 +586,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				}
 
 				statsCollector.RecordTransformOutput(stage.Name)
+				sampleBuffer.AddSample(stage.Name, transformed) // 샘플 저장
 				data = transformed
 			}
 
@@ -515,24 +606,53 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 }
 
 // createAndRunSource 소스 생성 및 실행
-func (e *GroupExecutor) createAndRunSource(ctx context.Context, gs types.GroupedSource) (<-chan source.Record, <-chan error, error) {
+func (e *GroupExecutor) createAndRunSource(ctx context.Context, pipelineID string, gs types.GroupedSource) (<-chan source.Record, <-chan error, source.Source, error) {
 	// 파티션이 있는 경우 멀티 소스 처리
 	if len(gs.Partitions) > 0 {
-		return e.runMultiPartitionSource(ctx, gs)
+		records, errs, err := e.runMultiPartitionSource(ctx, gs)
+		return records, errs, nil, err // 멀티 파티션은 checkpointable source 추적 안함
 	}
 
 	// 단일 소스
 	src, err := e.createSource(gs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+
+	// 체크포인트 로드 (CheckpointableSource인 경우)
+	if e.checkpointClient != nil {
+		if cpSource, ok := src.(source.CheckpointableSource); ok {
+			fmt.Printf("[checkpoint] Loading checkpoints for pipeline %s (source type: %s)\n", pipelineID, cpSource.SourceType())
+
+			dbCheckpoints, err := e.checkpointClient.LoadCheckpoints(ctx, pipelineID)
+			if err != nil {
+				fmt.Printf("[checkpoint] Warning: Failed to load checkpoints: %v\n", err)
+			} else if len(dbCheckpoints) > 0 {
+				// DB 체크포인트를 소스 체크포인트로 변환
+				sourceCheckpoints := make([]*source.SourceCheckpoint, 0, len(dbCheckpoints))
+				for _, cp := range dbCheckpoints {
+					sourceCheckpoints = append(sourceCheckpoints, &source.SourceCheckpoint{
+						PartitionKey: cp.PartitionKey,
+						OffsetValue:  cp.OffsetValue,
+						OffsetType:   cp.OffsetType,
+						RecordCount:  cp.RecordCount,
+					})
+				}
+				if err := cpSource.SetSourceCheckpoints(sourceCheckpoints); err != nil {
+					fmt.Printf("[checkpoint] Warning: Failed to set checkpoints: %v\n", err)
+				} else {
+					fmt.Printf("[checkpoint] Restored %d checkpoints for pipeline %s\n", len(sourceCheckpoints), pipelineID)
+				}
+			}
+		}
 	}
 
 	if err := src.Open(ctx); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	records, errs := src.Read(ctx)
-	return records, errs, nil
+	return records, errs, src, nil
 }
 
 // runMultiPartitionSource 멀티 파티션 소스 실행
@@ -647,6 +767,8 @@ func (e *GroupExecutor) createSource(gs types.GroupedSource) (source.Source, err
 		return createCDCSourceFromConfig(configWithRateLimit)
 	case "file":
 		return createFileSourceFromConfig(configWithRateLimit)
+	case "kubernetes", "k8s_logs":
+		return createKubernetesSourceFromConfig(configWithRateLimit)
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s (config: %s)", gs.Type, string(configJSON))
 	}
@@ -1000,4 +1122,95 @@ func createFileSourceFromConfig(config map[string]any) (source.Source, error) {
 	cfg := configToSourceV2(config)
 	cfg.Type = "file"
 	return source.NewFileSource(cfg)
+}
+
+func createKubernetesSourceFromConfig(config map[string]any) (source.Source, error) {
+	cfg := configToSourceV2(config)
+	cfg.Type = "kubernetes"
+	return source.NewKubernetesSource(cfg)
+}
+
+// GetMonitoringInfo 실행 중인 파이프라인의 모니터링 정보 조회
+func (e *GroupExecutor) GetMonitoringInfo() *types.ExecutionMonitoringInfo {
+	e.mu.RLock()
+	execution := e.execution
+	status := e.status
+	e.mu.RUnlock()
+
+	if execution == nil {
+		return nil
+	}
+
+	result := &types.ExecutionMonitoringInfo{
+		ExecutionID: execution.ID,
+		WorkflowID:  execution.WorkflowID,
+		Status:      string(status),
+		Pipelines:   make([]types.PipelineMonitoringInfo, 0),
+		UpdatedAt:   time.Now(),
+	}
+
+	// 각 파이프라인의 모니터링 정보 수집
+	e.monitoringMu.RLock()
+	defer e.monitoringMu.RUnlock()
+
+	for pipelineID, statsCollector := range e.statsCollectors {
+		pipelineInfo := types.PipelineMonitoringInfo{
+			PipelineID:   pipelineID,
+			PipelineName: statsCollector.pipelineName,
+			Status:       "running",
+			Checkpoints:  make([]types.CheckpointInfo, 0),
+			Stages:       make([]types.StageMonitorInfo, 0),
+			UpdatedAt:    time.Now(),
+		}
+
+		// 체크포인트 정보 수집
+		e.sourcesMu.RLock()
+		if src, ok := e.activeSources[pipelineID]; ok {
+			if cpSource, ok := src.(source.CheckpointableSource); ok {
+				checkpoints := cpSource.GetSourceCheckpoints()
+				for _, cp := range checkpoints {
+					pipelineInfo.Checkpoints = append(pipelineInfo.Checkpoints, types.CheckpointInfo{
+						PartitionKey: cp.PartitionKey,
+						OffsetValue:  cp.OffsetValue,
+						OffsetType:   cp.OffsetType,
+						RecordCount:  cp.RecordCount,
+					})
+				}
+			}
+		}
+		e.sourcesMu.RUnlock()
+
+		// Stage 통계 수집
+		stageStats := statsCollector.GetStageStats()
+		sampleBuffer := e.sampleBuffers[pipelineID]
+		allSamples := make(map[string][]types.DataSample)
+		if sampleBuffer != nil {
+			allSamples = sampleBuffer.GetAllSamples()
+		}
+
+		for _, stats := range stageStats {
+			stageInfo := types.StageMonitorInfo{
+				Name:        stats.Name,
+				Type:        stats.Type,
+				InputCount:  stats.InputCount,
+				OutputCount: stats.OutputCount,
+				ErrorCount:  stats.ErrorCount,
+				Samples:     allSamples[stats.Name],
+			}
+			pipelineInfo.Stages = append(pipelineInfo.Stages, stageInfo)
+		}
+
+		// 통계 정보 추가
+		stats := statsCollector.GetStatistics()
+		pipelineInfo.Statistics = &types.MonitoringStats{
+			RecordsCollected: stats.RecordsCollected,
+			RecordsProcessed: stats.RecordsProcessed,
+			CollectionErrors: stats.CollectionErrors,
+			ProcessingErrors: stats.ProcessingErrors,
+		}
+
+		result.Pipelines = append(result.Pipelines, pipelineInfo)
+	}
+
+	return result
 }

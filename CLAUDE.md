@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Conduix is an Actor Model-based scalable data pipeline platform that combines Bento's verified connectors with Apache Flink-style Actor Model. The project consists of four main modules:
+Conduix is an Actor Model-based scalable data pipeline platform that combines Bento's verified connectors with Apache Flink-style Actor Model. The project consists of five main modules:
 
-- **control-plane**: Operations backend (Go + Gin + GORM + MySQL)
-- **pipeline-core**: Pipeline execution engine (Go + Actor Model + Bento)
-- **pipeline-agent**: Pipeline execution agent (Go + Gin)
+- **control-plane**: Operations backend (Go 1.24 + Gin + GORM + MySQL)
+- **pipeline-core**: Pipeline execution engine (Go 1.21 + Actor Model + Bento)
+- **pipeline-agent**: Pipeline execution agent (Go 1.21 + Gin)
 - **web-ui**: Frontend (React 18 + TypeScript + Vite + Ant Design)
 - **shared**: Shared types and utilities
 
@@ -18,7 +18,7 @@ Conduix is an Actor Model-based scalable data pipeline platform that combines Be
 ```bash
 make deps              # Install all dependencies
 make infra-up          # Start MySQL and Redis (docker-compose)
-make dev               # Start development environment
+make dev               # Start infrastructure + show service commands
 ```
 
 ### Building
@@ -31,25 +31,33 @@ make build-linux       # Build Linux binaries
 
 ### Testing
 ```bash
+# All tests
 make test              # Run all tests
 make test-coverage     # Run tests with coverage report
+make test-race         # Run tests with race detector
 
 # Module-specific tests
-cd control-plane && make test
-cd pipeline-agent && make test
-cd web-ui && make test
+cd control-plane && go test -v ./...
+cd pipeline-agent && go test -v ./...
+cd pipeline-core && go test -v ./...
+
+# Single package test
+cd control-plane && go test -v ./internal/api/handlers/...
+
+# Single test function
+cd control-plane && go test -v -run TestFunctionName ./internal/api/handlers/...
+
+# Web UI tests
+cd web-ui && npm run test
+cd web-ui && npm run test -- --watch  # Watch mode
 ```
 
 ### Linting and Code Quality
 ```bash
 make lint              # Run linters on all modules
-make fmt               # Format code
+make fmt               # Format code (gofumpt for Go, prettier for web)
 make vet               # Run go vet
 make check             # Run vet + lint + test
-
-# Module-specific
-cd control-plane && make lint
-cd web-ui && make lint
 ```
 
 ### Running Services
@@ -62,7 +70,7 @@ make run-web            # Web UI dev server on :3000
 # Or from module directories
 cd control-plane && make run-local
 cd pipeline-agent && make run-local
-cd web-ui && make dev
+cd web-ui && npm run dev
 ```
 
 ### Docker
@@ -76,23 +84,49 @@ docker-compose --profile with-kafka up -d  # Include Kafka
 ### Database
 ```bash
 make migrate           # Run database migrations
+cd control-plane && make run-migrate  # Run with migration flag
 ```
 
 ## Architecture
 
 ### Communication Flow
 ```
-Control Plane (API Server)
+Control Plane (API Server :8080)
         ↓
 Redis Pub/Sub + REST API (fallback)
         ↓
-Pipeline Agent Cluster → Pipeline Core (Actor System + Bento)
+Pipeline Agent (:8081) → Pipeline Core (Actor System + Bento)
 ```
 
 ### Go Module Structure
-All Go modules use local replace directives:
-- `github.com/conduix/conduix/shared`
-- `github.com/conduix/conduix/pipeline-core`
+All Go modules use local replace directives in go.mod:
+```
+shared/                 # Base module (no dependencies)
+pipeline-core/          # Depends on: shared
+pipeline-agent/         # Depends on: shared, pipeline-core
+control-plane/          # Depends on: shared, pipeline-core
+```
+
+### Key Packages
+
+**pipeline-core/pkg/**
+- `actor/`: Actor system with Supervisor pattern (one_for_one, one_for_all strategies)
+- `source/`: Data sources (Kafka, HTTP, file, CDC, Kubernetes logs)
+- `sink/`: Data sinks (Elasticsearch, S3, Kafka)
+- `stream/`: Stream processing with Bento integration
+- `config/`: YAML pipeline config parsing
+- `checkpoint/`: State checkpoint management
+
+**control-plane/internal/**
+- `api/handlers/`: REST API handlers (pipeline, workflow, agent, auth)
+- `api/middleware/`: Auth middleware (JWT, OAuth2)
+- `services/`: Business logic (scheduler with cron, Redis pub/sub)
+
+**web-ui/src/**
+- `pages/`: React pages (Dashboard, PipelineDetail, WorkflowDetail)
+- `services/api.ts`: API client with axios
+- `store/`: Zustand state management
+- `i18n/`: Internationalization (en, ko)
 
 ### Pipeline Configuration Types
 
@@ -123,36 +157,17 @@ pipeline:
       type: supervisor
 ```
 
-### Key Packages
-
-**pipeline-core/pkg/**
-- `actor/`: Actor system with Supervisor pattern
-- `source/`: Data sources (Kafka, HTTP, file)
-- `sink/`: Data sinks (Elasticsearch, S3, Kafka)
-- `stream/`: Stream processing
-- `config/`: YAML pipeline config parsing
-
-**control-plane/internal/**
-- `api/handlers/`: REST API handlers
-- `api/middleware/`: Auth middleware
-- `services/`: Business logic (scheduler, Redis)
-
-**web-ui/src/**
-- `pages/`: React pages
-- `services/api.ts`: API client
-- `store/`: Zustand state management
-- `i18n/`: Internationalization (en, ko)
-
 ## Environment Variables
 
 Key variables (see `.env.example`):
 ```
-DB_HOST, DB_PORT (3307), DB_USER, DB_PASSWORD, DB_NAME
+DB_HOST, DB_PORT (3306/3307), DB_USER, DB_PASSWORD, DB_NAME
 REDIS_ADDR, REDIS_PASSWORD
 JWT_SECRET
-GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
-GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+CONTROL_PLANE_URL (for agent)
 ```
+
+OAuth2 providers: GITHUB, GOOGLE, NAVER, KAKAO, GITLAB (each needs _CLIENT_ID and _CLIENT_SECRET)
 
 ## User Roles
 
@@ -160,8 +175,3 @@ Defined in `config/users.yaml`:
 - **admin**: Full access
 - **operator**: Pipeline and agent management
 - **viewer**: Read-only (default)
-
-## Go Version
-
-- Go 1.21+ required
-- Control Plane uses Go 1.24.0

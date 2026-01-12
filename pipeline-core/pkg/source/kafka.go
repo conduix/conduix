@@ -215,14 +215,60 @@ func (s *KafkaSource) GetCheckpoints() map[string]int64 {
 	return result
 }
 
-// SetCheckpoints 체크포인트 설정 (복구용)
-func (s *KafkaSource) SetCheckpoints(checkpoints map[string]int64) {
+// SetCheckpointsLegacy 체크포인트 설정 (복구용) - 레거시 API
+func (s *KafkaSource) SetCheckpointsLegacy(checkpoints map[string]int64) {
 	s.checkpointMu.Lock()
 	defer s.checkpointMu.Unlock()
 
 	for k, v := range checkpoints {
 		s.checkpoints[k] = v
 	}
+}
+
+// SourceType 소스 타입 반환 (CheckpointableSource 구현)
+func (s *KafkaSource) SourceType() string {
+	return "kafka"
+}
+
+// GetSourceCheckpoints 현재 모든 체크포인트 반환 (CheckpointableSource 구현)
+func (s *KafkaSource) GetSourceCheckpoints() []*SourceCheckpoint {
+	s.checkpointMu.RLock()
+	defer s.checkpointMu.RUnlock()
+
+	checkpoints := make([]*SourceCheckpoint, 0, len(s.checkpoints))
+	for key, offset := range s.checkpoints {
+		checkpoints = append(checkpoints, &SourceCheckpoint{
+			PartitionKey: key, // format: "topic-partition"
+			OffsetValue:  fmt.Sprintf("%d", offset),
+			OffsetType:   "numeric",
+			RecordCount:  offset, // Kafka에서는 offset이 대략적인 레코드 수
+			UpdatedAt:    time.Now(),
+		})
+	}
+	return checkpoints
+}
+
+// SetSourceCheckpoints 체크포인트 설정 (CheckpointableSource 구현)
+func (s *KafkaSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
+	s.checkpointMu.Lock()
+	defer s.checkpointMu.Unlock()
+
+	for _, cp := range checkpoints {
+		if cp.OffsetType != "numeric" {
+			continue // Kafka 소스는 숫자 오프셋만 지원
+		}
+
+		offset, err := ParseNumeric(cp.OffsetValue)
+		if err != nil {
+			fmt.Printf("[kafka] Failed to parse checkpoint offset %s: %v\n", cp.OffsetValue, err)
+			continue
+		}
+
+		s.checkpoints[cp.PartitionKey] = offset
+		fmt.Printf("[kafka] Restored checkpoint: %s -> %d\n", cp.PartitionKey, offset)
+	}
+
+	return nil
 }
 
 func (s *KafkaSource) Close() error {

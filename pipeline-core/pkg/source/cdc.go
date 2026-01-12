@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -273,6 +274,62 @@ func (s *CDCSource) SetCheckpoint(checkpoint map[string]any) error {
 		s.position.Pos = pos
 	} else if pos, ok := checkpoint["binlog_pos"].(float64); ok {
 		s.position.Pos = uint32(pos)
+	}
+
+	return nil
+}
+
+// SourceType 소스 타입 반환 (CheckpointableSource 구현)
+func (s *CDCSource) SourceType() string {
+	return "cdc"
+}
+
+// GetSourceCheckpoints 현재 모든 체크포인트 반환 (CheckpointableSource 구현)
+func (s *CDCSource) GetSourceCheckpoints() []*SourceCheckpoint {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// CDC Source는 binlog position을 체크포인트로 사용
+	// 파티션 키: database.table 형식 또는 binlog 파일명
+	partitionKey := fmt.Sprintf("%s:%s", s.database, s.position.Name)
+	offsetValue := fmt.Sprintf("%s:%d", s.position.Name, s.position.Pos)
+
+	return []*SourceCheckpoint{
+		{
+			PartitionKey: partitionKey,
+			OffsetValue:  offsetValue,
+			OffsetType:   "string", // binlog position은 문자열 형식
+			RecordCount:  int64(s.position.Pos),
+			UpdatedAt:    time.Now(),
+		},
+	}
+}
+
+// SetSourceCheckpoints 체크포인트 설정 (CheckpointableSource 구현)
+func (s *CDCSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, cp := range checkpoints {
+		if cp.OffsetType != "string" {
+			continue
+		}
+
+		// offsetValue 형식: "binlog_file:position"
+		parts := strings.SplitN(cp.OffsetValue, ":", 2)
+		if len(parts) != 2 {
+			fmt.Printf("[cdc] Invalid checkpoint format: %s\n", cp.OffsetValue)
+			continue
+		}
+
+		s.position.Name = parts[0]
+		pos, err := ParseNumeric(parts[1])
+		if err != nil {
+			fmt.Printf("[cdc] Failed to parse checkpoint position %s: %v\n", parts[1], err)
+			continue
+		}
+		s.position.Pos = uint32(pos)
+		fmt.Printf("[cdc] Restored checkpoint: %s -> %s:%d\n", cp.PartitionKey, s.position.Name, s.position.Pos)
 	}
 
 	return nil

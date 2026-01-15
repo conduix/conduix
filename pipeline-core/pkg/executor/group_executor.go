@@ -14,6 +14,7 @@ import (
 
 	"github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
+	"github.com/conduix/conduix/pipeline-core/pkg/link"
 	"github.com/conduix/conduix/pipeline-core/pkg/sink"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
 	"github.com/conduix/conduix/pipeline-core/pkg/validator"
@@ -40,6 +41,13 @@ type GroupExecutor struct {
 	sampleBuffers   map[string]*SampleBuffer   // pipelineID -> SampleBuffer
 	statsCollectors map[string]*StatsCollector // pipelineID -> StatsCollector
 	monitoringMu    sync.RWMutex
+
+	// Pipeline Link 관련
+	linkClient     *link.Client
+	pipelineLinks  []link.PipelineLink // 워크플로우의 모든 링크
+	parentToChilds map[string][]link.PipelineLink
+	childToParents map[string][]link.PipelineLink
+	linkMu         sync.RWMutex
 }
 
 // GroupExecutorOption GroupExecutor 옵션
@@ -49,6 +57,13 @@ type GroupExecutorOption func(*GroupExecutor)
 func WithCheckpointClient(client *checkpoint.Client) GroupExecutorOption {
 	return func(e *GroupExecutor) {
 		e.checkpointClient = client
+	}
+}
+
+// WithLinkClient 링크 클라이언트 설정
+func WithLinkClient(client *link.Client) GroupExecutorOption {
+	return func(e *GroupExecutor) {
+		e.linkClient = client
 	}
 }
 
@@ -63,13 +78,47 @@ func NewGroupExecutor(group *types.PipelineGroup, opts ...GroupExecutorOption) *
 		activeSources:   make(map[string]source.Source),
 		sampleBuffers:   make(map[string]*SampleBuffer),
 		statsCollectors: make(map[string]*StatsCollector),
+		parentToChilds:  make(map[string][]link.PipelineLink),
+		childToParents:  make(map[string][]link.PipelineLink),
 	}
 
 	for _, opt := range opts {
 		opt(e)
 	}
 
+	// 링크 클라이언트가 설정되어 있으면 링크 정보 로드
+	if e.linkClient != nil {
+		e.loadPipelineLinks()
+	}
+
 	return e
+}
+
+// loadPipelineLinks 워크플로우의 링크 정보 로드
+func (e *GroupExecutor) loadPipelineLinks() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	links, err := e.linkClient.GetLinksByWorkflow(ctx, e.group.ID)
+	if err != nil {
+		fmt.Printf("[GroupExecutor] Failed to load pipeline links: %v\n", err)
+		return
+	}
+
+	e.linkMu.Lock()
+	defer e.linkMu.Unlock()
+
+	e.pipelineLinks = links
+
+	// 부모-자식 맵 구성
+	for _, l := range links {
+		e.parentToChilds[l.ParentPipelineID] = append(e.parentToChilds[l.ParentPipelineID], l)
+		e.childToParents[l.ChildPipelineID] = append(e.childToParents[l.ChildPipelineID], l)
+	}
+
+	if len(links) > 0 {
+		fmt.Printf("[GroupExecutor] Loaded %d pipeline links for workflow %s\n", len(links), e.group.ID)
+	}
 }
 
 // Start 그룹 실행 시작
@@ -394,6 +443,9 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}
 
+	// 링크 기반 동적 Kafka Sink 주입 (부모 파이프라인인 경우)
+	injectedKafkaSinks := e.injectKafkaSinksForParent(ctx, &pipeline)
+
 	// Stages에서 sink 타입 찾아서 미리 생성 및 열기
 	sinkStages := make(map[string]sink.Sink) // stage name -> sink
 	for _, stage := range pipeline.Stages {
@@ -415,6 +467,11 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}
 
+	// 주입된 Kafka Sink도 sinkStages에 추가
+	for name, s := range injectedKafkaSinks {
+		sinkStages[name] = s
+	}
+
 	// 싱크 정리 defer
 	defer func() {
 		for name, s := range sinkStages {
@@ -427,9 +484,12 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}()
 
+	// 링크 기반 동적 Kafka Source 주입 (자식 파이프라인인 경우)
+	sourceConfig := e.injectKafkaSourceForChild(&pipeline)
+
 	// 소스 생성 및 실행
-	fmt.Printf("[runPipeline] Creating source: %s (type: %s)\n", pipeline.Source.Name, pipeline.Source.Type)
-	records, errs, src, err := e.createAndRunSource(ctx, pipeline.ID, pipeline.Source)
+	fmt.Printf("[runPipeline] Creating source: %s (type: %s)\n", sourceConfig.Name, sourceConfig.Type)
+	records, errs, src, err := e.createAndRunSource(ctx, pipeline.ID, sourceConfig)
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = err.Error()
@@ -1213,4 +1273,102 @@ func (e *GroupExecutor) GetMonitoringInfo() *types.ExecutionMonitoringInfo {
 	}
 
 	return result
+}
+
+// injectKafkaSinksForParent 부모 파이프라인에 Kafka Sink 주입
+// 자식이 있는 경우에만 Kafka Sink를 자동으로 추가
+func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline *types.GroupedPipeline) map[string]sink.Sink {
+	injectedSinks := make(map[string]sink.Sink)
+
+	// 링크가 없으면 주입하지 않음
+	if e.linkClient == nil || len(e.pipelineLinks) == 0 {
+		return injectedSinks
+	}
+
+	// 이 파이프라인이 부모인지 확인
+	e.linkMu.RLock()
+	childLinks, hasChildren := e.parentToChilds[pipeline.ID]
+	e.linkMu.RUnlock()
+
+	if !hasChildren || len(childLinks) == 0 {
+		return injectedSinks
+	}
+
+	// 자식이 있으면 각 링크에 대해 Kafka Sink 생성
+	fmt.Printf("[injectKafkaSinksForParent] Pipeline %s has %d children, injecting Kafka sinks\n", pipeline.ID, len(childLinks))
+
+	for _, l := range childLinks {
+		// Kafka brokers 환경변수에서 동적으로 가져오기
+		brokers := link.GetKafkaBrokers()
+
+		// Kafka Sink 설정 생성
+		cfg := config.OutputConfig{
+			Type:    "kafka",
+			Brokers: brokers,
+			Topic:   l.KafkaTopic,
+		}
+
+		// Kafka Sink 생성
+		kafkaSink, err := sink.NewSink(cfg)
+		if err != nil {
+			fmt.Printf("[injectKafkaSinksForParent] Failed to create Kafka sink for link %s: %v\n", l.ID, err)
+			continue
+		}
+
+		// Sink 열기
+		if err := kafkaSink.Open(ctx); err != nil {
+			fmt.Printf("[injectKafkaSinksForParent] Failed to open Kafka sink for link %s: %v\n", l.ID, err)
+			continue
+		}
+
+		// 주입된 Sink 등록
+		sinkName := fmt.Sprintf("kafka_link_%s", l.ChildPipelineID[:8])
+		injectedSinks[sinkName] = kafkaSink
+
+		fmt.Printf("[injectKafkaSinksForParent] Injected Kafka sink %s -> topic: %s\n", sinkName, l.KafkaTopic)
+	}
+
+	return injectedSinks
+}
+
+// injectKafkaSourceForChild 자식 파이프라인에 Kafka Source 주입
+// 부모가 있는 경우 원래 소스를 Kafka Source로 교체
+func (e *GroupExecutor) injectKafkaSourceForChild(pipeline *types.GroupedPipeline) types.GroupedSource {
+	// 링크가 없으면 원래 소스 반환
+	if e.linkClient == nil || len(e.pipelineLinks) == 0 {
+		return pipeline.Source
+	}
+
+	// 이 파이프라인이 자식인지 확인
+	e.linkMu.RLock()
+	parentLinks, hasParents := e.childToParents[pipeline.ID]
+	e.linkMu.RUnlock()
+
+	if !hasParents || len(parentLinks) == 0 {
+		// 부모가 없으면 원래 소스 반환
+		return pipeline.Source
+	}
+
+	// 첫 번째 부모 링크 사용 (여러 부모가 있을 경우 첫 번째 사용)
+	l := parentLinks[0]
+
+	fmt.Printf("[injectKafkaSourceForChild] Pipeline %s is a child, replacing source with Kafka source (topic: %s)\n",
+		pipeline.ID, l.KafkaTopic)
+
+	// Kafka brokers 환경변수에서 동적으로 가져오기
+	brokers := link.GetKafkaBrokers()
+
+	// Kafka Source 설정 생성
+	kafkaSourceConfig := types.GroupedSource{
+		Type: "kafka",
+		Name: fmt.Sprintf("kafka_link_source_%s", l.ParentPipelineID[:8]),
+		Config: map[string]any{
+			"brokers":        brokers,
+			"topics":         []string{l.KafkaTopic},
+			"consumer_group": fmt.Sprintf("conduix_%s_%s", e.group.ID, pipeline.ID),
+			"start_offset":   "newest", // 또는 "oldest"
+		},
+	}
+
+	return kafkaSourceConfig
 }

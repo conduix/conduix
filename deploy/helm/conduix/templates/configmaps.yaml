@@ -28,6 +28,15 @@ data:
   REDIS_ADDR: "{{ .Values.env.REDIS_ADDR }}"
   {{- end }}
 
+  # Kafka
+  {{- if .Values.kafka.enabled }}
+  KAFKA_BROKERS: "{{ .Release.Name }}-kafka:9092"
+  {{- else }}
+  {{- if .Values.env.KAFKA_BROKERS }}
+  KAFKA_BROKERS: "{{ .Values.env.KAFKA_BROKERS }}"
+  {{- end }}
+  {{- end }}
+
   # Application Settings
   AUTO_MIGRATE: "{{ .Values.env.AUTO_MIGRATE }}"
   MAX_DATATYPE_DEPTH: "{{ .Values.env.MAX_DATATYPE_DEPTH }}"

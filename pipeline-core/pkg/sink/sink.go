@@ -152,6 +152,8 @@ func NewSink(cfg config.OutputConfig) (Sink, error) {
 		return NewStubSink(cfg)
 	case "sql":
 		return NewSQLSink(cfg)
+	case "kafka":
+		return NewKafkaSink(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported sink type: %s", cfg.Type)
 	}

@@ -13,47 +13,53 @@ import (
 
 // Server API 서버
 type Server struct {
-	router            *gin.Engine
-	db                *database.DB
-	redisService      *services.RedisService
-	schedulerService  *services.SchedulerService
-	jwtSecret         []byte
-	pipelineHandler   *handlers.PipelineHandler
-	authHandler       *handlers.AuthHandler
-	workflowHandler   *handlers.WorkflowHandler
-	statsHandler      *handlers.StatsHandler
-	scheduleHandler   *handlers.ScheduleHandler
-	graphHandler      *handlers.GraphHandler
-	dataTypeHandler   *handlers.DataTypeHandler
-	userHandler       *handlers.UserHandler
-	projectHandler    *handlers.ProjectHandler
-	agentHandler      *handlers.AgentHandler
-	utilsHandler      *handlers.UtilsHandler
-	checkpointHandler *handlers.CheckpointHandler
+	router              *gin.Engine
+	db                  *database.DB
+	redisService        *services.RedisService
+	schedulerService    *services.SchedulerService
+	jwtSecret           []byte
+	pipelineHandler     *handlers.PipelineHandler
+	authHandler         *handlers.AuthHandler
+	workflowHandler     *handlers.WorkflowHandler
+	statsHandler        *handlers.StatsHandler
+	scheduleHandler     *handlers.ScheduleHandler
+	graphHandler        *handlers.GraphHandler
+	dataTypeHandler     *handlers.DataTypeHandler
+	userHandler         *handlers.UserHandler
+	projectHandler      *handlers.ProjectHandler
+	agentHandler        *handlers.AgentHandler
+	utilsHandler        *handlers.UtilsHandler
+	checkpointHandler   *handlers.CheckpointHandler
+	pipelineLinkHandler *handlers.PipelineLinkHandler
 }
 
 // NewServer 새 서버 생성
 func NewServer(db *database.DB, redisService *services.RedisService, schedulerService *services.SchedulerService, jwtSecret string, usersConfig *config.UsersConfig, frontendURL string) *Server {
 	gin.SetMode(gin.ReleaseMode)
 
+	// Kafka 서비스 초기화
+	kafkaService := services.NewKafkaService(nil)
+	linkService := services.NewPipelineLinkService(db, kafkaService, nil)
+
 	s := &Server{
-		router:            gin.New(),
-		db:                db,
-		redisService:      redisService,
-		schedulerService:  schedulerService,
-		jwtSecret:         []byte(jwtSecret),
-		pipelineHandler:   handlers.NewPipelineHandler(db, redisService),
-		authHandler:       handlers.NewAuthHandler(db, jwtSecret, usersConfig, frontendURL),
-		workflowHandler:   handlers.NewWorkflowHandler(db, redisService),
-		statsHandler:      handlers.NewStatsHandler(db),
-		scheduleHandler:   handlers.NewScheduleHandler(db, schedulerService),
-		graphHandler:      handlers.NewGraphHandler(db, redisService),
-		dataTypeHandler:   handlers.NewDataTypeHandler(db),
-		userHandler:       handlers.NewUserHandler(db),
-		projectHandler:    handlers.NewProjectHandler(db),
-		agentHandler:      handlers.NewAgentHandler(db, redisService),
-		utilsHandler:      handlers.NewUtilsHandler(),
-		checkpointHandler: handlers.NewCheckpointHandler(db),
+		router:              gin.New(),
+		db:                  db,
+		redisService:        redisService,
+		schedulerService:    schedulerService,
+		jwtSecret:           []byte(jwtSecret),
+		pipelineHandler:     handlers.NewPipelineHandler(db, redisService),
+		authHandler:         handlers.NewAuthHandler(db, jwtSecret, usersConfig, frontendURL),
+		workflowHandler:     handlers.NewWorkflowHandler(db, redisService),
+		statsHandler:        handlers.NewStatsHandler(db),
+		scheduleHandler:     handlers.NewScheduleHandler(db, schedulerService),
+		graphHandler:        handlers.NewGraphHandler(db, redisService),
+		dataTypeHandler:     handlers.NewDataTypeHandler(db),
+		userHandler:         handlers.NewUserHandler(db),
+		projectHandler:      handlers.NewProjectHandler(db),
+		agentHandler:        handlers.NewAgentHandler(db, redisService),
+		utilsHandler:        handlers.NewUtilsHandler(),
+		checkpointHandler:   handlers.NewCheckpointHandler(db),
+		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),
 	}
 
 	s.setupRoutes()
@@ -240,6 +246,18 @@ func (s *Server) setupRoutes() {
 				utils.POST("/test-mongodb", s.utilsHandler.TestMongoDB)
 				utils.POST("/test-s3", s.utilsHandler.TestS3)
 				utils.POST("/test-rest-api", s.utilsHandler.TestRESTAPI)
+			}
+
+			// 파이프라인 링크 (부모-자식 연결)
+			pipelineLinks := authenticated.Group("/pipeline-links")
+			{
+				pipelineLinks.GET("", s.pipelineLinkHandler.ListAllLinks)
+				pipelineLinks.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.pipelineLinkHandler.CreateLink)
+				pipelineLinks.GET("/:parent_id/:child_id", s.pipelineLinkHandler.GetLink)
+				pipelineLinks.DELETE("/:parent_id/:child_id", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.pipelineLinkHandler.DeleteLink)
+				pipelineLinks.GET("/parent/:parent_id", s.pipelineLinkHandler.GetLinksByParent)
+				pipelineLinks.GET("/child/:child_id", s.pipelineLinkHandler.GetLinksByChild)
+				pipelineLinks.GET("/workflow/:workflow_id", s.pipelineLinkHandler.GetLinksByWorkflow)
 			}
 		}
 	}

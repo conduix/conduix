@@ -507,3 +507,27 @@ type SourceCheckpoint struct {
 func (SourceCheckpoint) TableName() string {
 	return "source_checkpoints"
 }
+
+// PipelineLink 파이프라인 간 연결 모델
+// 부모 파이프라인의 출력을 자식 파이프라인의 입력으로 연결 (Kafka 기반)
+type PipelineLink struct {
+	ID               string    `gorm:"primaryKey;size:36" json:"id"`
+	WorkflowID       string    `gorm:"size:36;not null;index" json:"workflow_id"`
+	ParentPipelineID string    `gorm:"size:36;not null;index:idx_pipeline_link,unique" json:"parent_pipeline_id"` // 부모 파이프라인
+	ChildPipelineID  string    `gorm:"size:36;not null;index:idx_pipeline_link,unique" json:"child_pipeline_id"`  // 자식 파이프라인
+	KafkaTopic       string    `gorm:"size:255;not null" json:"kafka_topic"`                                       // 자동 생성된 Kafka Topic 이름
+	Status           string    `gorm:"size:50;default:active" json:"status"`                                       // active, inactive, error
+	Metadata         string    `gorm:"type:text" json:"metadata,omitempty"`                                        // JSON - 추가 설정
+	CreatedBy        string    `gorm:"size:36" json:"created_by,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+
+	// Unique constraint: parent_pipeline_id + child_pipeline_id
+	// index:idx_pipeline_link,unique 에 포함
+	// Note: kafka_brokers 필드 제거 - 환경변수나 설정에서 동적으로 가져옴
+}
+
+// TableName 테이블 이름
+func (PipelineLink) TableName() string {
+	return "pipeline_links"
+}

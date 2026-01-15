@@ -15,6 +15,7 @@ import (
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/executor"
+	"github.com/conduix/conduix/pipeline-core/pkg/link"
 	"github.com/conduix/conduix/pipeline-core/pkg/pipeline"
 	redisclient "github.com/conduix/conduix/shared/redis"
 	"github.com/conduix/conduix/shared/types"
@@ -693,8 +694,11 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 
 	fmt.Printf("Starting group execution: %s (%s)\n", workflow.Name, workflow.ID)
 
+	// Link Client 생성
+	linkClient := link.NewClient(a.controlPlaneURL)
+
 	// GroupExecutor를 사용하여 파이프라인 그룹 실행
-	groupExecutor := executor.NewGroupExecutor(workflow)
+	groupExecutor := executor.NewGroupExecutor(workflow, executor.WithLinkClient(linkClient))
 
 	// 실행 추적 시작 (GroupExecutor 포함)
 	a.execMu.Lock()

@@ -251,7 +251,7 @@ func (fc *FilterConfig) GetExpression() string {
 
 // OutputConfig 출력 설정 (Stub)
 type OutputConfig struct {
-	Type      string               `yaml:"type"` // stub, sql
+	Type      string               `yaml:"type"` // stub, sql, kafka
 	LogLevel  string               `yaml:"log_level,omitempty"`
 	LogFormat string               `yaml:"log_format,omitempty"`
 	Metrics   *MetricsOutputConfig `yaml:"metrics,omitempty"`
@@ -267,6 +267,10 @@ type OutputConfig struct {
 	OnConflict      string            `yaml:"on_conflict,omitempty"`      // ignore, update, error (default: error)
 	ConflictColumns []string          `yaml:"conflict_columns,omitempty"` // columns to check for conflict (upsert key)
 	CreateTable     string            `yaml:"create_table,omitempty"`     // CREATE TABLE SQL to execute on open
+
+	// Kafka Sink
+	Brokers []string `yaml:"brokers,omitempty"` // Kafka broker addresses
+	Topic   string   `yaml:"topic,omitempty"`   // Kafka topic name
 }
 
 // MetricsOutputConfig 메트릭 출력 설정

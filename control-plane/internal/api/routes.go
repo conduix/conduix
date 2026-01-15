@@ -98,7 +98,6 @@ func (s *Server) setupRoutes() {
 		internalPipelines := v1.Group("/pipelines")
 		{
 			internalPipelines.POST("/:id/checkpoints", s.checkpointHandler.UpdateCheckpoint)
-			internalPipelines.GET("/:id/checkpoints", s.checkpointHandler.ListCheckpoints)
 		}
 
 		// 에이전트 내부 API (인증 불필요 - 클러스터 내부 통신)

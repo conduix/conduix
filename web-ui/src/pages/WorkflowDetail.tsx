@@ -1411,9 +1411,8 @@ export default function WorkflowDetailPage() {
               name="target_data_type_id"
               label={t('pipeline.targetDataModel')}
               extra={t('pipeline.targetDataModelHelp')}
-              rules={[{ required: true, message: t('pipeline.targetDataModelRequired') }]}
             >
-              <Select placeholder={t('pipeline.targetDataModelPlaceholder')}>
+              <Select allowClear placeholder={t('pipeline.targetDataModelPlaceholder')}>
                 {dataTypes.map(dt => (
                   <Select.Option key={dt.id} value={dt.id}>
                     {dt.display_name}

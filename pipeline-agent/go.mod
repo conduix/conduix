@@ -1,6 +1,6 @@
 module github.com/conduix/conduix/pipeline-agent
 
-go 1.21
+go 1.25
 
 require (
 	github.com/conduix/conduix/pipeline-core v0.0.0

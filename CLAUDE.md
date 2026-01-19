@@ -6,11 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Conduix is an Actor Model-based scalable data pipeline platform that combines Bento's verified connectors with Apache Flink-style Actor Model. The project consists of five main modules:
 
-- **control-plane**: Operations backend (Go 1.24 + Gin + GORM + MySQL)
-- **pipeline-core**: Pipeline execution engine (Go 1.21 + Actor Model + Bento)
-- **pipeline-agent**: Pipeline execution agent (Go 1.21 + Gin)
+- **control-plane**: Operations backend (Go + Gin + GORM + MySQL)
+- **pipeline-core**: Pipeline execution engine (Go + Actor Model + Bento)
+- **pipeline-agent**: Pipeline execution agent (Go + Gin)
 - **web-ui**: Frontend (React 18 + TypeScript + Vite + Ant Design)
 - **shared**: Shared types and utilities
+
+### Prerequisites
+
+- Go 1.25+
+- Node.js 18+
+- Docker & Docker Compose
+- MySQL 8.0
+- Redis 7.0
 
 ## Common Commands
 
@@ -175,3 +183,45 @@ Defined in `config/users.yaml`:
 - **admin**: Full access
 - **operator**: Pipeline and agent management
 - **viewer**: Read-only (default)
+
+## Pipeline Design Concepts
+
+### Stage Abstraction
+
+Stage is the core unit following `input → output` interface:
+- **FilterStage**: Filter records by condition
+- **RemapStage**: Transform/rename fields (Bloblang)
+- **AggregateStage**: Aggregate over windows
+- **EnrichStage**: Add external data (lookup join)
+- **TriggerStage**: Trigger child pipelines
+
+### DataType Dependency Patterns
+
+1. **Different DataTypes (Hierarchical)**: Board → Post → Comment (parent-child collection)
+2. **Same DataType (Fan-out)**: Single source to multiple processing paths via Kafka
+
+### Router Stage Modes
+
+For in-pipeline branching without Kafka:
+- `fan_out`: Copy to all routes
+- `condition`: First matching route
+- `filter`: All matching routes
+
+## Fault Tolerance
+
+### Redis Resilience (ResilientClient)
+- Auto-reconnect with exponential backoff
+- Circuit breaker pattern
+- Local cache fallback
+- Auto-resubscribe for Pub/Sub
+
+### Kafka Recovery (Actor Supervisor)
+- Checkpoint-based offset recovery
+- Supervision strategies: `one_for_one`, `one_for_all`
+- Backoff on restart failure (1s → 2s → 4s → 8s → 16s)
+
+### Communication Mode Fallback
+```
+ModeRedis (default) → ModeHybrid → ModeREST (fallback)
+```
+Agent automatically switches modes when Redis becomes unavailable.

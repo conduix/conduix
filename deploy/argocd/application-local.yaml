@@ -52,11 +52,35 @@ spec:
         - name: env.AUTO_MIGRATE
           value: "true"
         - name: env.FRONTEND_URL
-          value: "http://localhost:3000"
+          value: "http://localhost:30000"
+        - name: env.MAX_DATATYPE_DEPTH
+          value: "5"
 
         # Admin Users (comma-separated emails)
         - name: env.CONDUIX_ADMIN_EMAILS
           value: "herohyohwan@gmail.com,herohyohwan@users.noreply.github.com"
+
+        # ===========================================
+        # OAuth2 설정 (ConfigMap)
+        # 실제 값은 로컬 배포 시 .env에서 주입
+        # ===========================================
+        # GitHub OAuth2
+        - name: env.GITHUB_CLIENT_ID
+          value: "${GITHUB_CLIENT_ID}"
+        - name: env.GITHUB_REDIRECT_URL
+          value: "http://localhost:30080/api/v1/auth/callback"
+
+        # Google OAuth2
+        - name: env.GOOGLE_CLIENT_ID
+          value: "${GOOGLE_CLIENT_ID}"
+        - name: env.GOOGLE_REDIRECT_URL
+          value: "http://localhost:30080/api/v1/auth/callback"
+
+        # Naver OAuth2
+        - name: env.NAVER_CLIENT_ID
+          value: "${NAVER_CLIENT_ID}"
+        - name: env.NAVER_REDIRECT_URL
+          value: "http://localhost:30080/api/v1/auth/callback"
 
         # ===========================================
         # Image Pull Policy (Always for local dev)
@@ -67,6 +91,25 @@ spec:
           value: "Always"
 
         # ===========================================
+        # Service (NodePort for local access)
+        # Control Plane: http://localhost:30080
+        # Web UI: http://localhost:30000
+        # Agent: http://localhost:30081
+        # ===========================================
+        - name: controlPlane.service.type
+          value: "NodePort"
+        - name: controlPlane.service.nodePort
+          value: "30080"
+        - name: webUI.service.type
+          value: "NodePort"
+        - name: webUI.service.nodePort
+          value: "30000"
+        - name: agent.service.type
+          value: "NodePort"
+        - name: agent.service.nodePort
+          value: "30081"
+
+        # ===========================================
         # Ingress (disabled for local)
         # ===========================================
         - name: ingress.enabled
@@ -74,9 +117,18 @@ spec:
 
         # ===========================================
         # Secrets
+        # 실제 값은 로컬 배포 시 .env에서 주입
         # ===========================================
         - name: secrets.dbPassword
-          value: "conduixpassword"
+          value: "${DB_PASSWORD}"
+        - name: secrets.jwtSecret
+          value: "${JWT_SECRET}"
+        - name: secrets.githubClientSecret
+          value: "${GITHUB_CLIENT_SECRET}"
+        - name: secrets.googleClientSecret
+          value: "${GOOGLE_CLIENT_SECRET}"
+        - name: secrets.naverClientSecret
+          value: "${NAVER_CLIENT_SECRET}"
 
   destination:
     server: https://kubernetes.default.svc

@@ -13,6 +13,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+      {{- if and (eq .Values.controlPlane.service.type "NodePort") .Values.controlPlane.service.nodePort }}
+      nodePort: {{ .Values.controlPlane.service.nodePort }}
+      {{- end }}
   selector:
     {{- include "conduix.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: control-plane
@@ -31,6 +34,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+      {{- if and (eq .Values.agent.service.type "NodePort") .Values.agent.service.nodePort }}
+      nodePort: {{ .Values.agent.service.nodePort }}
+      {{- end }}
   selector:
     {{- include "conduix.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: agent
@@ -49,6 +55,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+      {{- if and (eq .Values.webUI.service.type "NodePort") .Values.webUI.service.nodePort }}
+      nodePort: {{ .Values.webUI.service.nodePort }}
+      {{- end }}
   selector:
     {{- include "conduix.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: web-ui

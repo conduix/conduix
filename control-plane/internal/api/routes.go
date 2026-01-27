@@ -1,6 +1,9 @@
 package api
 
 import (
+	"runtime"
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/conduix/conduix/control-plane/internal/api/handlers"
@@ -31,7 +34,12 @@ type Server struct {
 	utilsHandler        *handlers.UtilsHandler
 	checkpointHandler   *handlers.CheckpointHandler
 	pipelineLinkHandler *handlers.PipelineLinkHandler
+	startTime           time.Time
+	version             string
 }
+
+// Version 버전 정보 (빌드 시 설정)
+var Version = "dev"
 
 // NewServer 새 서버 생성
 func NewServer(db *database.DB, redisService *services.RedisService, schedulerService *services.SchedulerService, jwtSecret string, usersConfig *config.UsersConfig, frontendURL string) *Server {
@@ -60,6 +68,8 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		utilsHandler:        handlers.NewUtilsHandler(),
 		checkpointHandler:   handlers.NewCheckpointHandler(db),
 		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),
+		startTime:           time.Now(),
+		version:             Version,
 	}
 
 	s.setupRoutes()
@@ -72,6 +82,9 @@ func (s *Server) setupRoutes() {
 	s.router.Use(gin.Recovery())
 	s.router.Use(middleware.CORSMiddleware())
 	s.router.Use(middleware.RequestIDMiddleware())
+
+	// Index (서비스 정보)
+	s.router.GET("/", s.index)
 
 	// 헬스체크 (인증 불필요)
 	s.router.GET("/health", s.health)
@@ -260,6 +273,51 @@ func (s *Server) setupRoutes() {
 			}
 		}
 	}
+}
+
+// IndexInfo 인덱스 페이지 정보
+type IndexInfo struct {
+	Service     string            `json:"service"`
+	Version     string            `json:"version"`
+	Uptime      string            `json:"uptime"`
+	UptimeSec   float64           `json:"uptime_seconds"`
+	StartTime   string            `json:"start_time"`
+	GoVersion   string            `json:"go_version"`
+	NumGoroutine int              `json:"num_goroutine"`
+	MemoryMB    float64           `json:"memory_mb"`
+	Endpoints   map[string]string `json:"endpoints"`
+}
+
+// index 서비스 정보 페이지
+func (s *Server) index(c *gin.Context) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	uptime := time.Since(s.startTime)
+
+	info := IndexInfo{
+		Service:      "Conduix Control Plane",
+		Version:      s.version,
+		Uptime:       uptime.Round(time.Second).String(),
+		UptimeSec:    uptime.Seconds(),
+		StartTime:    s.startTime.Format(time.RFC3339),
+		GoVersion:    runtime.Version(),
+		NumGoroutine: runtime.NumGoroutine(),
+		MemoryMB:     float64(m.Alloc) / 1024 / 1024,
+		Endpoints: map[string]string{
+			"health":     "/health",
+			"ready":      "/ready",
+			"api":        "/api/v1",
+			"auth":       "/api/v1/auth/providers",
+			"pipelines":  "/api/v1/pipelines",
+			"workflows":  "/api/v1/workflows",
+			"agents":     "/api/v1/agents",
+			"data-types": "/api/v1/data-types",
+			"projects":   "/api/v1/projects",
+		},
+	}
+
+	c.JSON(200, info)
 }
 
 // health 헬스체크

@@ -1,6 +1,9 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -67,12 +70,13 @@ func TestNoDuplicateRoutes(t *testing.T) {
 
 	// Verify critical routes exist
 	criticalRoutes := map[string]bool{
-		"GET /health":                                    false,
-		"GET /ready":                                     false,
-		"POST /api/v1/pipelines/:id/checkpoints":        false,
-		"GET /api/v1/pipelines/:id/checkpoints":         false,
-		"GET /api/v1/pipeline-links":                    false,
-		"POST /api/v1/pipeline-links":                   false,
+		"GET /":                                           false,
+		"GET /health":                                     false,
+		"GET /ready":                                      false,
+		"POST /api/v1/pipelines/:id/checkpoints":          false,
+		"GET /api/v1/pipelines/:id/checkpoints":           false,
+		"GET /api/v1/pipeline-links":                      false,
+		"POST /api/v1/pipeline-links":                     false,
 		"GET /api/v1/pipeline-links/:parent_id/:child_id": false,
 	}
 
@@ -194,6 +198,75 @@ func TestPipelineLinkRoutesExist(t *testing.T) {
 	for _, expectedRoute := range expectedRoutes {
 		if !foundRoutes[expectedRoute] {
 			t.Errorf("Expected route not found: %s", expectedRoute)
+		}
+	}
+}
+
+// TestIndexRoute tests that the index route returns service info
+func TestIndexRoute(t *testing.T) {
+	// Setup
+	db := &database.DB{}
+
+	redisConfig := &services.RedisServiceConfig{
+		Addr:             "localhost:6379",
+		Password:         "",
+		DB:               0,
+		EnableRetryQueue: false,
+	}
+	redisService, _ := services.NewRedisService(redisConfig)
+
+	schedulerConfig := &services.SchedulerConfig{
+		RefreshInterval: 30 * time.Second,
+	}
+	schedulerService := services.NewSchedulerService(db, redisService, schedulerConfig)
+	jwtSecret := "test-secret"
+	usersConfig := &config.UsersConfig{
+		AdminEmails:    []string{},
+		OperatorEmails: []string{},
+	}
+	frontendURL := "http://localhost:3000"
+
+	// Create server
+	server := NewServer(db, redisService, schedulerService, jwtSecret, usersConfig, frontendURL)
+
+	// Make request to index
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+
+	// Check status code
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	// Parse response
+	var info IndexInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Verify required fields
+	if info.Service != "Conduix Control Plane" {
+		t.Errorf("Expected service 'Conduix Control Plane', got '%s'", info.Service)
+	}
+
+	if info.Version == "" {
+		t.Error("Expected version to be set")
+	}
+
+	if info.GoVersion == "" {
+		t.Error("Expected go_version to be set")
+	}
+
+	if info.Endpoints == nil || len(info.Endpoints) == 0 {
+		t.Error("Expected endpoints to be set")
+	}
+
+	// Verify key endpoints are listed
+	expectedEndpoints := []string{"health", "ready", "api", "pipelines", "workflows"}
+	for _, ep := range expectedEndpoints {
+		if _, ok := info.Endpoints[ep]; !ok {
+			t.Errorf("Expected endpoint '%s' to be in endpoints map", ep)
 		}
 	}
 }

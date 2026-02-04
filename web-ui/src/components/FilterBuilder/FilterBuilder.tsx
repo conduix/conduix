@@ -503,10 +503,9 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({
 
   // 드래그앤드롭 핸들러
   const handleDrop = useCallback(
-    (targetId: string, position: 'before' | 'after' | 'inside') => {
+    (targetId: string, _position: 'before' | 'after' | 'inside') => {
       if (!draggedId || draggedId === targetId) return;
       // TODO: 노드 이동 로직 구현
-      console.log(`Move ${draggedId} to ${position} ${targetId}`);
       setDraggedId(null);
     },
     [draggedId]

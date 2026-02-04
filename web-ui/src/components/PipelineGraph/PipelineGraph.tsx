@@ -16,11 +16,12 @@ import {
   BackgroundVariant,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Spin, message, Alert } from 'antd'
+import { CircularProgress, Alert, Box, Typography } from '@mui/material'
 
 import { api } from '../../services/api'
 import { ActorNode } from './nodes/ActorNode'
 import { usePipelineMetrics } from '../../hooks/usePipelineMetrics'
+import { useSnackbar } from '../../hooks/useSnackbar'
 import type { PipelineGraph as PipelineGraphType, GraphNode, GraphEdge, ActorType, GraphNodeData } from '../../types/graph'
 
 // React Flow node/edge types
@@ -59,6 +60,7 @@ function PipelineGraphInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { showWarning, showSuccess, showError } = useSnackbar()
 
   // 메트릭 폴링
   const { metrics } = usePipelineMetrics(pipelineId, pollingInterval)
@@ -133,7 +135,7 @@ function PipelineGraphInner({
   const onConnect = useCallback(
     async (connection: Connection) => {
       if (readonly) {
-        message.warning('Read-only mode')
+        showWarning('Read-only mode')
         return
       }
 
@@ -154,23 +156,23 @@ function PipelineGraphInner({
             animated: true,
             style: { stroke: '#999' },
           }, eds))
-          message.success('Connection added')
+          showSuccess('Connection added')
         } else {
-          message.error(response.error || 'Failed to add connection')
+          showError(response.error || 'Failed to add connection')
         }
       } catch (err) {
         console.error('Failed to add connection:', err)
-        message.error('Failed to add connection')
+        showError('Failed to add connection')
       }
     },
-    [pipelineId, readonly, setEdges]
+    [pipelineId, readonly, setEdges, showWarning, showSuccess, showError]
   )
 
   // 엣지 삭제 핸들러
   const onEdgesDelete = useCallback(
     async (deletedEdges: Edge[]) => {
       if (readonly) {
-        message.warning('Read-only mode')
+        showWarning('Read-only mode')
         return
       }
 
@@ -180,20 +182,20 @@ function PipelineGraphInner({
         })
 
         if (!response.success) {
-          message.error(response.error || 'Failed to remove connection')
+          showError(response.error || 'Failed to remove connection')
           // 실패 시 엣지 복구
           setEdges((eds) => [...eds, ...deletedEdges])
         } else {
-          message.success('Connection removed')
+          showSuccess('Connection removed')
         }
       } catch (err) {
         console.error('Failed to remove connection:', err)
-        message.error('Failed to remove connection')
+        showError('Failed to remove connection')
         // 실패 시 엣지 복구
         setEdges((eds) => [...eds, ...deletedEdges])
       }
     },
-    [pipelineId, readonly, setEdges]
+    [pipelineId, readonly, setEdges, showWarning, showSuccess, showError]
   )
 
   // MiniMap 노드 색상
@@ -203,48 +205,61 @@ function PipelineGraphInner({
 
   if (loading) {
     return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        height: 500,
-        background: '#fafafa',
-        borderRadius: 8,
-      }}>
-        <Spin size="large" tip="Loading pipeline graph..." />
-      </div>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: 500,
+          bgcolor: 'grey.50',
+          borderRadius: 2,
+        }}
+      >
+        <CircularProgress size={40} />
+        <Typography sx={{ mt: 2, color: 'text.secondary' }}>
+          Loading pipeline graph...
+        </Typography>
+      </Box>
     )
   }
 
   if (error) {
     return (
       <Alert
-        type="error"
-        message="Failed to load graph"
-        description={error}
-        style={{ margin: 16 }}
-      />
+        severity="error"
+        sx={{ m: 2 }}
+      >
+        <Typography variant="subtitle2">Failed to load graph</Typography>
+        <Typography variant="body2">{error}</Typography>
+      </Alert>
     )
   }
 
   if (nodes.length === 0) {
     return (
       <Alert
-        type="info"
-        message="No graph data"
-        description="This pipeline has no actors configured. Please update the pipeline YAML configuration."
-        style={{ margin: 16 }}
-      />
+        severity="info"
+        sx={{ m: 2 }}
+      >
+        <Typography variant="subtitle2">No graph data</Typography>
+        <Typography variant="body2">
+          This pipeline has no actors configured. Please update the pipeline YAML configuration.
+        </Typography>
+      </Alert>
     )
   }
 
   return (
-    <div style={{
-      height: 600,
-      border: '1px solid #d9d9d9',
-      borderRadius: 8,
-      background: '#fff',
-    }}>
+    <Box
+      sx={{
+        height: 600,
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 2,
+        bgcolor: 'background.paper',
+      }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -271,7 +286,7 @@ function PipelineGraphInner({
           pannable
         />
       </ReactFlow>
-    </div>
+    </Box>
   )
 }
 

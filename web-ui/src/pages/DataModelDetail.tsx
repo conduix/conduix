@@ -1,30 +1,36 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
+  Box,
   Card,
-  Descriptions,
-  Tag,
+  CardContent,
+  Chip,
   Button,
-  Space,
-  message,
-  Spin,
   Typography,
   Tabs,
-  Breadcrumb,
-  Form,
-  Input,
+  Tab,
+  Breadcrumbs,
+  Link,
+  TextField,
+  FormControl,
   Select,
-} from 'antd'
+  MenuItem,
+  InputLabel,
+  CircularProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+} from '@mui/material'
 import {
-  ArrowLeftOutlined,
-  SaveOutlined,
-  DatabaseOutlined,
-} from '@ant-design/icons'
+  ArrowBack as ArrowBackIcon,
+  Save as SaveIcon,
+  Storage as DatabaseIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
 import { SchemaEditor, DataTypeSchema, DataTypeField } from '../components/SchemaEditor'
-
-const { Title } = Typography
+import { useSnackbar } from '../hooks/useSnackbar'
 
 interface DataType {
   id: string
@@ -47,27 +53,52 @@ interface DataType {
   parent?: DataType
 }
 
+interface TabPanelProps {
+  children?: React.ReactNode
+  index: number
+  value: number
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`tabpanel-${index}`}
+      aria-labelledby={`tab-${index}`}
+      {...other}
+    >
+      {value === index && <Box sx={{ pt: 2 }}>{children}</Box>}
+    </div>
+  )
+}
+
 export default function DataModelDetailPage() {
   const { t } = useTranslation()
+  const { showSuccess, showError } = useSnackbar()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [dataModel, setDataModel] = useState<DataType | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [form] = Form.useForm()
+  const [tabValue, setTabValue] = useState(0)
+
+  // Form state
+  const [formData, setFormData] = useState({
+    name: '',
+    display_name: '',
+    description: '',
+    category: '',
+  })
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   // Schema state
   const [schema, setSchema] = useState<DataTypeSchema>({})
   const [jsonSchema, setJsonSchema] = useState<string>('')
   const [hasChanges, setHasChanges] = useState(false)
 
-  useEffect(() => {
-    if (id) {
-      fetchDataModel()
-    }
-  }, [id])
-
-  const fetchDataModel = async () => {
+  const fetchDataModel = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.getDataType(id!)
@@ -76,11 +107,11 @@ export default function DataModelDetailPage() {
         setDataModel(data)
 
         // Initialize form
-        form.setFieldsValue({
-          name: data.name,
-          display_name: data.display_name,
-          description: data.description,
-          category: data.category,
+        setFormData({
+          name: data.name || '',
+          display_name: data.display_name || '',
+          description: data.description || '',
+          category: data.category || '',
         })
 
         // Initialize schema
@@ -111,19 +142,25 @@ export default function DataModelDetailPage() {
               }
               setSchema({ type: 'json_schema', fields, definition: data.json_schema })
             } catch {
-              // Keep empty schema if parse fails
+              // Ignore parse errors
             }
           }
         }
-
-        setHasChanges(false)
+      } else {
+        showError(t('dataModel.loadError'))
       }
     } catch (error) {
-      message.error(t('dataModel.loadError'))
+      showError(t('dataModel.loadError'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [id, showError, t])
+
+  useEffect(() => {
+    if (id) {
+      fetchDataModel()
+    }
+  }, [id, fetchDataModel])
 
   const handleSchemaChange = useCallback((newSchema: DataTypeSchema, newJsonSchema: string) => {
     setSchema(newSchema)
@@ -140,55 +177,77 @@ export default function DataModelDetailPage() {
       }
       const response = await api.updateDataType(id!, updateData)
       if (response.success) {
-        message.success(t('dataModel.schemaAutoSaved'))
+        showSuccess(t('dataModel.schemaAutoSaved'))
         setHasChanges(false)
       } else {
-        message.error(response.error || t('dataModel.updateError'))
+        showError(response.error || t('dataModel.updateError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('dataModel.updateError'))
+    } catch (error: unknown) {
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || t('dataModel.updateError'))
     }
-  }, [id, t])
+  }, [id, t, showSuccess, showError])
+
+  const validateForm = () => {
+    const errors: Record<string, string> = {}
+    if (!formData.display_name) {
+      errors.display_name = t('dataModel.nameRequired')
+    }
+    if (!formData.name) {
+      errors.name = t('dataModel.slugRequired')
+    } else if (!/^[a-z0-9_-]+$/.test(formData.name)) {
+      errors.name = t('dataModel.slugPattern')
+    }
+    setFormErrors(errors)
+    return Object.keys(errors).length === 0
+  }
 
   const handleSave = async () => {
+    if (!validateForm()) return
+
     try {
       setSaving(true)
-      const values = await form.validateFields()
 
       const updateData = {
-        ...values,
+        ...formData,
         schema: schema,
         json_schema: jsonSchema,
       }
 
       const response = await api.updateDataType(id!, updateData)
       if (response.success) {
-        message.success(t('dataModel.updateSuccess'))
+        showSuccess(t('dataModel.updateSuccess'))
         setHasChanges(false)
         fetchDataModel() // Refresh data
       } else {
-        message.error(response.error || t('dataModel.updateError'))
+        showError(response.error || t('dataModel.updateError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('dataModel.updateError'))
+    } catch (error: unknown) {
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || t('dataModel.updateError'))
     } finally {
       setSaving(false)
     }
   }
 
-  const handleFormChange = () => {
+  const handleFormChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
     setHasChanges(true)
+    // Clear error when user starts typing
+    if (formErrors[field]) {
+      setFormErrors(prev => ({ ...prev, [field]: '' }))
+    }
   }
 
   const getCategoryConfig = (category: string | undefined) => {
-    const configs: Record<string, { color: string; text: string }> = {
-      master: { color: 'blue', text: t('dataModel.categories.master') },
-      transaction: { color: 'green', text: t('dataModel.categories.transaction') },
-      log: { color: 'orange', text: t('dataModel.categories.log') },
-      metric: { color: 'purple', text: t('dataModel.categories.metric') },
-      reference: { color: 'cyan', text: t('dataModel.categories.reference') },
+    const configs: Record<string, { color: 'primary' | 'success' | 'warning' | 'secondary' | 'info' | 'default'; text: string }> = {
+      master: { color: 'primary', text: t('dataModel.categories.master') },
+      transaction: { color: 'success', text: t('dataModel.categories.transaction') },
+      log: { color: 'warning', text: t('dataModel.categories.log') },
+      metric: { color: 'secondary', text: t('dataModel.categories.metric') },
+      reference: { color: 'info', text: t('dataModel.categories.reference') },
     }
-    return configs[category || ''] || { color: 'default', text: category || '-' }
+    return configs[category || ''] || { color: 'default' as const, text: category || '-' }
   }
 
   const getIdFields = (): string[] => {
@@ -203,151 +262,190 @@ export default function DataModelDetailPage() {
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '50px' }}>
-        <Spin size="large" />
-      </div>
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+        <CircularProgress />
+      </Box>
     )
   }
 
   if (!dataModel) {
     return (
-      <div style={{ textAlign: 'center', padding: '50px' }}>
-        <Typography.Text type="secondary">{t('dataModel.notFound')}</Typography.Text>
-      </div>
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+        <Typography color="text.secondary">{t('dataModel.notFound')}</Typography>
+      </Box>
     )
   }
 
   const categoryConfig = getCategoryConfig(dataModel.category)
 
-  const tabItems = [
-    {
-      key: 'overview',
-      label: t('dataModel.overview'),
-      children: (
-        <Card>
-          <Form
-            form={form}
-            layout="vertical"
-            onValuesChange={handleFormChange}
-          >
-            <Form.Item
-              name="display_name"
-              label={t('dataModel.name')}
-              rules={[{ required: true, message: t('dataModel.nameRequired') }]}
-            >
-              <Input placeholder={t('dataModel.namePlaceholder')} />
-            </Form.Item>
-
-            <Form.Item
-              name="name"
-              label={t('dataModel.slug')}
-              rules={[
-                { required: true, message: t('dataModel.slugRequired') },
-                { pattern: /^[a-z0-9_-]+$/, message: t('dataModel.slugPattern') },
-              ]}
-              extra={t('dataModel.slugHelp')}
-            >
-              <Input placeholder={t('dataModel.slugPlaceholder')} />
-            </Form.Item>
-
-            <Form.Item
-              name="category"
-              label={t('dataModel.category')}
-            >
-              <Select placeholder={t('dataModel.category')} allowClear>
-                <Select.Option value="master">{t('dataModel.categories.master')}</Select.Option>
-                <Select.Option value="transaction">{t('dataModel.categories.transaction')}</Select.Option>
-                <Select.Option value="log">{t('dataModel.categories.log')}</Select.Option>
-                <Select.Option value="metric">{t('dataModel.categories.metric')}</Select.Option>
-                <Select.Option value="reference">{t('dataModel.categories.reference')}</Select.Option>
-              </Select>
-            </Form.Item>
-
-            <Form.Item
-              name="description"
-              label={t('common.description')}
-            >
-              <Input.TextArea rows={3} />
-            </Form.Item>
-          </Form>
-
-          <Descriptions column={2} style={{ marginTop: 24 }}>
-            <Descriptions.Item label={t('dataModel.project')}>
-              {dataModel.project?.name || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('dataModel.parent')}>
-              {dataModel.parent?.display_name || t('dataModel.parentPlaceholder')}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('dataModel.idFields')}>
-              {getIdFields().length > 0 ? (
-                <Space>
-                  {getIdFields().map(field => (
-                    <Tag key={field}>{field}</Tag>
-                  ))}
-                </Space>
-              ) : '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('common.createdAt')}>
-              {new Date(dataModel.created_at).toLocaleString()}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('common.updatedAt')}>
-              {new Date(dataModel.updated_at).toLocaleString()}
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
-      ),
-    },
-    {
-      key: 'schema',
-      label: t('dataModel.schemaTab'),
-      children: (
-        <Card>
-          <SchemaEditor
-            schema={schema}
-            jsonSchema={jsonSchema}
-            onChange={handleSchemaChange}
-            onGenerateComplete={handleSchemaGenerateComplete}
-            idFields={getIdFields()}
-          />
-        </Card>
-      ),
-    },
-  ]
-
   return (
-    <div>
-      <Breadcrumb
-        style={{ marginBottom: 16 }}
-        items={[
-          { title: <a onClick={() => navigate('/data-models')}>{t('dataModel.list')}</a> },
-          { title: dataModel.display_name },
-        ]}
-      />
+    <Box>
+      <Breadcrumbs sx={{ mb: 2 }}>
+        <Link
+          component="button"
+          underline="hover"
+          color="inherit"
+          onClick={() => navigate('/data-models')}
+        >
+          {t('dataModel.list')}
+        </Link>
+        <Typography color="text.primary">{dataModel.display_name}</Typography>
+      </Breadcrumbs>
 
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/data-models')}>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Button
+            startIcon={<ArrowBackIcon />}
+            onClick={() => navigate('/data-models')}
+          >
             {t('common.back')}
           </Button>
-          <Title level={4} style={{ margin: 0 }}>
-            <DatabaseOutlined style={{ marginRight: 8 }} />
+          <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <DatabaseIcon />
             {dataModel.display_name}
-          </Title>
-          <Tag color={categoryConfig.color}>{categoryConfig.text}</Tag>
-        </Space>
+          </Typography>
+          <Chip label={categoryConfig.text} color={categoryConfig.color} size="small" />
+        </Box>
         <Button
-          type="primary"
-          icon={<SaveOutlined />}
+          variant="contained"
+          startIcon={<SaveIcon />}
           onClick={handleSave}
-          loading={saving}
-          disabled={!hasChanges}
+          disabled={!hasChanges || saving}
         >
-          {t('common.save')}
+          {saving ? <CircularProgress size={20} /> : t('common.save')}
         </Button>
-      </div>
+      </Box>
 
-      <Tabs defaultActiveKey="overview" items={tabItems} />
-    </div>
+      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
+          <Tab label={t('dataModel.overview')} />
+          <Tab label={t('dataModel.schemaTab')} />
+        </Tabs>
+      </Box>
+
+      <TabPanel value={tabValue} index={0}>
+        <Card>
+          <CardContent>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                label={t('dataModel.name')}
+                value={formData.display_name}
+                onChange={(e) => handleFormChange('display_name', e.target.value)}
+                error={!!formErrors.display_name}
+                helperText={formErrors.display_name}
+                required
+                fullWidth
+                placeholder={t('dataModel.namePlaceholder')}
+              />
+
+              <TextField
+                label={t('dataModel.slug')}
+                value={formData.name}
+                onChange={(e) => handleFormChange('name', e.target.value)}
+                error={!!formErrors.name}
+                helperText={formErrors.name || t('dataModel.slugHelp')}
+                required
+                fullWidth
+                placeholder={t('dataModel.slugPlaceholder')}
+              />
+
+              <FormControl fullWidth>
+                <InputLabel>{t('dataModel.category')}</InputLabel>
+                <Select
+                  value={formData.category}
+                  onChange={(e) => handleFormChange('category', e.target.value)}
+                  label={t('dataModel.category')}
+                >
+                  <MenuItem value="">{t('dataModel.selectCategory')}</MenuItem>
+                  <MenuItem value="master">{t('dataModel.categories.master')}</MenuItem>
+                  <MenuItem value="transaction">{t('dataModel.categories.transaction')}</MenuItem>
+                  <MenuItem value="log">{t('dataModel.categories.log')}</MenuItem>
+                  <MenuItem value="metric">{t('dataModel.categories.metric')}</MenuItem>
+                  <MenuItem value="reference">{t('dataModel.categories.reference')}</MenuItem>
+                </Select>
+              </FormControl>
+
+              <TextField
+                label={t('common.description')}
+                value={formData.description}
+                onChange={(e) => handleFormChange('description', e.target.value)}
+                multiline
+                rows={3}
+                fullWidth
+              />
+            </Box>
+
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                {t('dataModel.additionalInfo')}
+              </Typography>
+              <Table size="small">
+                <TableBody>
+                  <TableRow>
+                    <TableCell component="th" sx={{ fontWeight: 'medium', width: 200 }}>
+                      {t('dataModel.project')}
+                    </TableCell>
+                    <TableCell>{dataModel.project?.name || '-'}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ fontWeight: 'medium' }}>
+                      {t('dataModel.parent')}
+                    </TableCell>
+                    <TableCell>
+                      {dataModel.parent?.display_name || t('dataModel.parentPlaceholder')}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ fontWeight: 'medium' }}>
+                      {t('dataModel.idFields')}
+                    </TableCell>
+                    <TableCell>
+                      {getIdFields().length > 0 ? (
+                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                          {getIdFields().map(field => (
+                            <Chip key={field} label={field} size="small" />
+                          ))}
+                        </Box>
+                      ) : '-'}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ fontWeight: 'medium' }}>
+                      {t('common.createdAt')}
+                    </TableCell>
+                    <TableCell>
+                      {new Date(dataModel.created_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ fontWeight: 'medium' }}>
+                      {t('common.updatedAt')}
+                    </TableCell>
+                    <TableCell>
+                      {new Date(dataModel.updated_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </Box>
+          </CardContent>
+        </Card>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={1}>
+        <Card>
+          <CardContent>
+            <SchemaEditor
+              schema={schema}
+              jsonSchema={jsonSchema}
+              onChange={handleSchemaChange}
+              onGenerateComplete={handleSchemaGenerateComplete}
+              idFields={getIdFields()}
+            />
+          </CardContent>
+        </Card>
+      </TabPanel>
+    </Box>
   )
 }
 

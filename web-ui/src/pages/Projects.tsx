@@ -1,42 +1,45 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Table,
-  Button,
-  Space,
-  Tag,
-  Modal,
-  Form,
-  Input,
-  Select,
-  message,
-  Popconfirm,
-  Typography,
+  Box,
   Card,
-  Row,
-  Col,
-  Statistic,
+  CardContent,
+  Button,
+  TextField,
+  Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Typography,
   Avatar,
-  Spin,
-} from 'antd'
+  CircularProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  InputAdornment,
+  IconButton,
+  Tooltip,
+} from '@mui/material'
+import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
-  PlusOutlined,
-  DeleteOutlined,
-  EditOutlined,
-  ProjectOutlined,
-  TeamOutlined,
-  FolderOutlined,
-  UserOutlined,
-} from '@ant-design/icons'
+  Add as PlusOutlined,
+  Delete as DeleteOutlined,
+  Edit as EditOutlined,
+  AccountTree as ProjectOutlined,
+  Groups as TeamOutlined,
+  Folder as FolderOutlined,
+  Person as UserOutlined,
+  Search as SearchIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
 import { useAuthStore } from '../store/auth'
+import { useSnackbar } from '../hooks/useSnackbar'
 import debounce from 'lodash/debounce'
 
-const { Title } = Typography
-const { Search } = Input
-
-// 사용자 검색 결과 타입
+// User search result type
 interface UserOption {
   id: string
   email: string
@@ -44,7 +47,7 @@ interface UserOption {
   avatar_url?: string
 }
 
-// 프로젝트 담당자 타입
+// Project owner type
 interface ProjectOwner {
   id: string
   user_id: string
@@ -86,82 +89,131 @@ interface ProjectListResponse {
   total_pages: number
 }
 
+// Stat card component
+interface StatCardProps {
+  title: string
+  value: number
+  icon: React.ReactNode
+  color?: string
+}
+
+function StatCard({ title, value, icon, color }: StatCardProps) {
+  return (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+          <Box sx={{ color: color || 'text.secondary' }}>{icon}</Box>
+          <Typography variant="body2" color="text.secondary">
+            {title}
+          </Typography>
+        </Box>
+        <Typography variant="h4" sx={{ color: color || 'text.primary' }}>
+          {value}
+        </Typography>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function ProjectsPage() {
   const { t } = useTranslation()
+  const { showSuccess, showError } = useSnackbar()
   const { user: currentUser } = useAuthStore()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
-  const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 })
+  const [pagination, setPagination] = useState({ page: 0, pageSize: 20, total: 0 })
 
-  // 담당자 검색 관련 상태
+  // Owner search related states
   const [userOptions, setUserOptions] = useState<UserOption[]>([])
   const [searchingUsers, setSearchingUsers] = useState(false)
   const [selectedOwners, setSelectedOwners] = useState<UserOption[]>([])
   const [searchText, setSearchText] = useState('')
-  const [form] = Form.useForm()
+
+  // Form state
+  const [formData, setFormData] = useState({
+    name: '',
+    alias: '',
+    description: '',
+    status: 'active',
+    tags: '',
+  })
+  const [formErrors, setFormErrors] = useState({
+    name: false,
+    alias: false,
+    aliasPattern: false,
+  })
+
+  // Delete confirmation dialog
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null)
+
   const navigate = useNavigate()
 
-  // 사용자 검색 (디바운스)
-  const debouncedSearch = useCallback(
-    debounce(async (query: string) => {
-      console.log('Debounced search called with:', query)
-      if (!query || query.length < 2) {
-        setUserOptions([])
-        setSearchingUsers(false)
-        return
-      }
-      setSearchingUsers(true)
-      try {
-        console.log('Calling API searchUsers...')
-        const response = await api.searchUsers(query)
-        console.log('API response:', response)
-        if (response.success) {
-          setUserOptions(response.data || [])
+  // User search with debounce - useMemo로 debounce 함수 생성
+  const debouncedSearch = useMemo(
+    () =>
+      debounce(async (query: string) => {
+        if (!query || query.length < 2) {
+          setUserOptions([])
+          setSearchingUsers(false)
+          return
         }
-      } catch (error) {
-        console.error('User search failed:', error)
-      } finally {
-        setSearchingUsers(false)
-      }
-    }, 300),
+        setSearchingUsers(true)
+        try {
+          const response = await api.searchUsers(query)
+          if (response.success) {
+            setUserOptions(response.data || [])
+          }
+        } catch (error) {
+          console.error('User search failed:', error)
+        } finally {
+          setSearchingUsers(false)
+        }
+      }, 300),
     []
   )
 
   const handleUserSearch = (value: string) => {
-    console.log('handleUserSearch called with:', value)
     debouncedSearch(value)
   }
 
-  useEffect(() => {
-    fetchProjects()
-  }, [pagination.current, pagination.pageSize, searchText])
-
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.getProjects({
-        page: pagination.current,
+        page: pagination.page + 1,
         page_size: pagination.pageSize,
         search: searchText || undefined,
       })
       if (response.success) {
         const data = response.data as ProjectListResponse
         setProjects(data.projects || [])
-        setPagination(prev => ({ ...prev, total: data.total }))
+        setPagination((prev) => ({ ...prev, total: data.total }))
       }
     } catch (error) {
-      message.error(t('project.loadError'))
+      showError(t('project.loadError'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [pagination.page, pagination.pageSize, searchText, showError, t])
+
+  useEffect(() => {
+    fetchProjects()
+  }, [fetchProjects])
 
   const handleCreate = () => {
     setEditingProject(null)
-    form.resetFields()
-    // 현재 사용자를 기본 담당자로 설정
+    setFormData({
+      name: '',
+      alias: '',
+      description: '',
+      status: 'active',
+      tags: '',
+    })
+    setFormErrors({ name: false, alias: false, aliasPattern: false })
+    // Set current user as default owner
     if (currentUser) {
       const defaultOwner: UserOption = {
         id: currentUser.id,
@@ -179,16 +231,17 @@ export default function ProjectsPage() {
 
   const handleEdit = (project: Project) => {
     setEditingProject(project)
-    form.setFieldsValue({
+    setFormData({
       name: project.name,
       alias: project.alias,
-      description: project.description,
+      description: project.description || '',
       status: project.status,
-      tags: project.tags,
+      tags: project.tags || '',
     })
-    // 기존 담당자 목록 설정
+    setFormErrors({ name: false, alias: false, aliasPattern: false })
+    // Set existing owners
     if (project.owners && project.owners.length > 0) {
-      const owners: UserOption[] = project.owners.map(po => ({
+      const owners: UserOption[] = project.owners.map((po) => ({
         id: po.user.id,
         email: po.user.email,
         name: po.user.name,
@@ -196,12 +249,14 @@ export default function ProjectsPage() {
       }))
       setSelectedOwners(owners)
     } else if (project.owner) {
-      // 기존 단일 owner 호환
-      setSelectedOwners([{
-        id: project.owner.id,
-        email: project.owner.email,
-        name: project.owner.name,
-      }])
+      // Backward compatibility for single owner
+      setSelectedOwners([
+        {
+          id: project.owner.id,
+          email: project.owner.email,
+          name: project.owner.name,
+        },
+      ])
     } else {
       setSelectedOwners([])
     }
@@ -213,308 +268,435 @@ export default function ProjectsPage() {
     try {
       const response = await api.deleteProject(id)
       if (response.success) {
-        message.success(t('project.deleteSuccess'))
+        showSuccess(t('project.deleteSuccess'))
         fetchProjects()
       } else {
-        message.error(response.error || t('project.deleteError'))
+        showError(response.error || t('project.deleteError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('project.deleteError'))
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: string } } }
+      showError(err.response?.data?.error || t('project.deleteError'))
     }
   }
 
+  const validateForm = (): boolean => {
+    const errors = {
+      name: !formData.name,
+      alias: !formData.alias,
+      aliasPattern: !!formData.alias && !/^[a-z0-9-]+$/.test(formData.alias),
+    }
+    setFormErrors(errors)
+    return !Object.values(errors).some(Boolean)
+  }
+
   const handleSubmit = async () => {
+    if (!validateForm()) return
+
     try {
-      const values = await form.validateFields()
-      // 담당자 ID 목록 추가
-      const ownerIds = selectedOwners.map(o => o.id)
-      const submitData = { ...values, owner_ids: ownerIds }
+      // Add owner IDs
+      const ownerIds = selectedOwners.map((o) => o.id)
+      const submitData = { ...formData, owner_ids: ownerIds }
 
       if (editingProject) {
         const response = await api.updateProject(editingProject.id, submitData)
         if (response.success) {
-          message.success(t('project.updateSuccess'))
+          showSuccess(t('project.updateSuccess'))
           setModalVisible(false)
           fetchProjects()
         } else {
-          message.error(response.error || t('project.updateError'))
+          showError(response.error || t('project.updateError'))
         }
       } else {
         const response = await api.createProject(submitData)
         if (response.success) {
-          message.success(t('project.createSuccess'))
+          showSuccess(t('project.createSuccess'))
           setModalVisible(false)
           fetchProjects()
         } else {
-          message.error(response.error || t('project.createError'))
+          showError(response.error || t('project.createError'))
         }
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('common.save') + ' failed')
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: string } } }
+      showError(err.response?.data?.error || t('common.save') + ' failed')
     }
   }
 
   const handleSearch = (value: string) => {
     setSearchText(value)
-    setPagination(prev => ({ ...prev, current: 1 }))
+    setPagination((prev) => ({ ...prev, page: 0 }))
   }
 
-  const getStatusConfig = (status: string) => {
-    const configs: Record<string, { color: string; text: string }> = {
-      active: { color: 'green', text: t('status.active') },
+  const getStatusConfig = (status: string): { color: 'success' | 'default' | 'warning'; text: string } => {
+    const configs: Record<string, { color: 'success' | 'default' | 'warning'; text: string }> = {
+      active: { color: 'success', text: t('status.active') },
       inactive: { color: 'default', text: t('status.inactive') },
-      archived: { color: 'orange', text: t('status.archived') },
+      archived: { color: 'warning', text: t('status.archived') },
     }
     return configs[status] || { color: 'default', text: status }
   }
 
-  const columns = [
+  const columns: GridColDef[] = [
     {
-      title: t('project.name'),
-      dataIndex: 'name',
-      key: 'name',
-      render: (name: string, record: Project) => (
-        <a onClick={() => navigate(`/projects/${record.alias || record.id}`)}>
-          <Space>
-            <ProjectOutlined />
-            {name}
-          </Space>
-        </a>
+      field: 'name',
+      headerName: t('project.name'),
+      flex: 1,
+      minWidth: 200,
+      renderCell: (params: GridRenderCellParams<Project>) => (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            cursor: 'pointer',
+            '&:hover': { color: 'primary.main' },
+          }}
+          onClick={() => navigate(`/projects/${params.row.alias || params.row.id}`)}
+        >
+          <ProjectOutlined fontSize="small" />
+          <Typography variant="body2">{params.value}</Typography>
+        </Box>
       ),
     },
     {
-      title: t('project.alias'),
-      dataIndex: 'alias',
-      key: 'alias',
-      render: (alias: string) => <code>{alias}</code>,
+      field: 'alias',
+      headerName: t('project.alias'),
+      width: 150,
+      renderCell: (params) => (
+        <Typography
+          variant="body2"
+          sx={{
+            fontFamily: 'monospace',
+            backgroundColor: 'action.hover',
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+          }}
+        >
+          {params.value}
+        </Typography>
+      ),
     },
     {
-      title: t('common.description'),
-      dataIndex: 'description',
-      key: 'description',
-      ellipsis: true,
+      field: 'description',
+      headerName: t('common.description'),
+      flex: 1,
+      minWidth: 200,
     },
     {
-      title: t('project.groupCount'),
-      dataIndex: 'group_count',
-      key: 'group_count',
+      field: 'group_count',
+      headerName: t('project.groupCount'),
       width: 100,
-      align: 'center' as const,
-      render: (count: number) => count || 0,
+      align: 'center',
+      headerAlign: 'center',
+      valueFormatter: ({ value }) => value || 0,
     },
     {
-      title: t('common.status'),
-      dataIndex: 'status',
-      key: 'status',
+      field: 'status',
+      headerName: t('common.status'),
       width: 100,
-      render: (status: string) => {
-        const config = getStatusConfig(status)
-        return <Tag color={config.color}>{config.text}</Tag>
+      renderCell: (params) => {
+        const config = getStatusConfig(params.value)
+        return <Chip label={config.text} color={config.color} size="small" />
       },
     },
     {
-      title: t('common.createdAt'),
-      dataIndex: 'created_at',
-      key: 'created_at',
+      field: 'created_at',
+      headerName: t('common.createdAt'),
       width: 120,
-      render: (date: string) => new Date(date).toLocaleDateString(),
+      valueFormatter: ({ value }) => new Date(value).toLocaleDateString(),
     },
     {
-      title: t('common.actions'),
-      key: 'action',
+      field: 'actions',
+      headerName: t('common.actions'),
       width: 100,
-      render: (_: unknown, record: Project) => (
-        <Space size="small">
-          <Button
-            type="text"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-            title={t('common.edit')}
-          />
-          <Popconfirm
-            title={t('project.deleteConfirm')}
-            description={t('project.deleteWarning')}
-            onConfirm={() => handleDelete(record.id)}
-            okText={t('common.delete')}
-            cancelText={t('common.cancel')}
-          >
-            <Button type="text" danger icon={<DeleteOutlined />} title={t('common.delete')} />
-          </Popconfirm>
-        </Space>
+      sortable: false,
+      renderCell: (params: GridRenderCellParams<Project>) => (
+        <Box sx={{ display: 'flex', gap: 0.5 }}>
+          <Tooltip title={t('common.edit')}>
+            <IconButton size="small" onClick={() => handleEdit(params.row)}>
+              <EditOutlined fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title={t('common.delete')}>
+            <IconButton
+              size="small"
+              color="error"
+              onClick={() => {
+                setProjectToDelete(params.row.id)
+                setDeleteDialogOpen(true)
+              }}
+            >
+              <DeleteOutlined fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
       ),
     },
   ]
 
   // Calculate statistics
-  const activeCount = projects.filter(p => p.status === 'active').length
+  const activeCount = projects.filter((p) => p.status === 'active').length
   const totalGroups = projects.reduce((sum, p) => sum + (p.group_count || 0), 0)
 
   return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0 }}>{t('project.title')}</Title>
-        <Space>
-          <Search
+    <Box>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="h5">{t('project.title')}</Typography>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <TextField
             placeholder={t('project.searchPlaceholder')}
-            onSearch={handleSearch}
-            style={{ width: 250 }}
-            allowClear
+            size="small"
+            sx={{ width: 250 }}
+            onChange={(e) => handleSearch(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+          <Button variant="contained" startIcon={<PlusOutlined />} onClick={handleCreate}>
             {t('project.new')}
           </Button>
-        </Space>
-      </div>
+        </Box>
+      </Box>
 
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title={t('project.totalProjects')}
-              value={pagination.total}
-              prefix={<FolderOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title={t('project.activeProjects')}
-              value={activeCount}
-              prefix={<ProjectOutlined />}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title={t('project.totalGroups')}
-              value={totalGroups}
-              prefix={<TeamOutlined />}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+        <Box sx={{ flex: '1 1 300px', minWidth: 250 }}>
+          <StatCard title={t('project.totalProjects')} value={pagination.total} icon={<FolderOutlined />} />
+        </Box>
+        <Box sx={{ flex: '1 1 300px', minWidth: 250 }}>
+          <StatCard
+            title={t('project.activeProjects')}
+            value={activeCount}
+            icon={<ProjectOutlined />}
+            color="#4caf50"
+          />
+        </Box>
+        <Box sx={{ flex: '1 1 300px', minWidth: 250 }}>
+          <StatCard title={t('project.totalGroups')} value={totalGroups} icon={<TeamOutlined />} />
+        </Box>
+      </Box>
 
-      <Table
-        dataSource={projects}
+      <DataGrid
+        rows={projects}
         columns={columns}
-        rowKey="id"
         loading={loading}
-        pagination={{
-          current: pagination.current,
-          pageSize: pagination.pageSize,
-          total: pagination.total,
-          showSizeChanger: true,
-          showTotal: (total) => t('common.total', { count: total }),
-          onChange: (page, pageSize) => {
-            setPagination(prev => ({ ...prev, current: page, pageSize }))
+        rowCount={pagination.total}
+        pageSizeOptions={[10, 20, 50]}
+        paginationModel={{ page: pagination.page, pageSize: pagination.pageSize }}
+        paginationMode="server"
+        onPaginationModelChange={(model) => {
+          setPagination((prev) => ({ ...prev, page: model.page, pageSize: model.pageSize }))
+        }}
+        autoHeight
+        disableRowSelectionOnClick
+        sx={{
+          '& .MuiDataGrid-cell': {
+            py: 1,
           },
         }}
       />
 
-      <Modal
-        title={editingProject ? t('project.edit') : t('project.new')}
+      {/* Create/Edit Modal */}
+      <Dialog
         open={modalVisible}
-        onOk={handleSubmit}
-        onCancel={() => setModalVisible(false)}
-        width={600}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
+        onClose={() => setModalVisible(false)}
+        maxWidth="sm"
+        fullWidth
       >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="name"
-            label={t('project.name')}
-            rules={[
-              { required: true, message: t('project.nameRequired') },
-            ]}
-          >
-            <Input placeholder={t('project.namePlaceholder')} />
-          </Form.Item>
+        <DialogTitle>{editingProject ? t('project.edit') : t('project.new')}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+            <TextField
+              label={t('project.name')}
+              placeholder={t('project.namePlaceholder')}
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              error={formErrors.name}
+              helperText={formErrors.name ? t('project.nameRequired') : ''}
+              required
+              fullWidth
+            />
 
-          <Form.Item
-            name="alias"
-            label={t('project.alias')}
-            rules={[
-              { required: true, message: t('project.aliasRequired') },
-              { pattern: /^[a-z0-9-]+$/, message: t('project.aliasPattern') },
-            ]}
-            extra={t('project.aliasHelp')}
-          >
-            <Input placeholder={t('project.aliasPlaceholder')} />
-          </Form.Item>
+            <TextField
+              label={t('project.alias')}
+              placeholder={t('project.aliasPlaceholder')}
+              value={formData.alias}
+              onChange={(e) => setFormData({ ...formData, alias: e.target.value })}
+              error={formErrors.alias || formErrors.aliasPattern}
+              helperText={
+                formErrors.alias
+                  ? t('project.aliasRequired')
+                  : formErrors.aliasPattern
+                    ? t('project.aliasPattern')
+                    : t('project.aliasHelp')
+              }
+              required
+              fullWidth
+            />
 
-          <Form.Item name="description" label={t('common.description')}>
-            <Input.TextArea rows={3} placeholder={t('project.descriptionPlaceholder')} />
-          </Form.Item>
+            <TextField
+              label={t('common.description')}
+              placeholder={t('project.descriptionPlaceholder')}
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              multiline
+              rows={3}
+              fullWidth
+            />
 
-          <Form.Item label={t('project.owners')}>
-            <Select
-              mode="multiple"
-              showSearch
-              placeholder={t('project.ownersPlaceholder')}
-              value={selectedOwners.map(o => o.id)}
-              onChange={(values: string[]) => {
-                // 선택된 사용자 ID로 selectedOwners 업데이트
-                const newOwners = values.map(id => {
-                  const existing = selectedOwners.find(o => o.id === id)
-                  if (existing) return existing
-                  const fromOptions = userOptions.find(o => o.id === id)
-                  return fromOptions || { id, email: '', name: '' }
-                })
-                setSelectedOwners(newOwners)
-              }}
-              onSearch={handleUserSearch}
-              filterOption={false}
-              notFoundContent={searchingUsers ? <Spin size="small" /> : null}
-              optionLabelProp="label"
-            >
-              {/* 현재 선택된 담당자들 */}
-              {selectedOwners.map(owner => (
-                <Select.Option key={owner.id} value={owner.id} label={owner.name || owner.email}>
-                  <Space>
-                    <Avatar size="small" src={owner.avatar_url} icon={<UserOutlined />} />
-                    <span>{owner.name || owner.email}</span>
-                    <span style={{ color: '#999' }}>{owner.email}</span>
-                  </Space>
-                </Select.Option>
-              ))}
-              {/* 검색 결과 (선택되지 않은 것만) */}
-              {userOptions
-                .filter(opt => !selectedOwners.some(s => s.id === opt.id))
-                .map(user => (
-                  <Select.Option key={user.id} value={user.id} label={user.name || user.email}>
-                    <Space>
-                      <Avatar size="small" src={user.avatar_url} icon={<UserOutlined />} />
-                      <span>{user.name || user.email}</span>
-                      <span style={{ color: '#999' }}>{user.email}</span>
-                    </Space>
-                  </Select.Option>
+            {/* Owner selection */}
+            <FormControl fullWidth>
+              <InputLabel>{t('project.owners')}</InputLabel>
+              <Select
+                multiple
+                value={selectedOwners.map((o) => o.id)}
+                onChange={(e) => {
+                  const values = e.target.value as string[]
+                  const newOwners = values.map((id) => {
+                    const existing = selectedOwners.find((o) => o.id === id)
+                    if (existing) return existing
+                    const fromOptions = userOptions.find((o) => o.id === id)
+                    return fromOptions || { id, email: '', name: '' }
+                  })
+                  setSelectedOwners(newOwners)
+                }}
+                label={t('project.owners')}
+                onOpen={() => {}}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {selectedOwners
+                      .filter((o) => selected.includes(o.id))
+                      .map((owner) => (
+                        <Chip
+                          key={owner.id}
+                          avatar={<Avatar src={owner.avatar_url} sx={{ width: 20, height: 20 }}><UserOutlined fontSize="small" /></Avatar>}
+                          label={owner.name || owner.email}
+                          size="small"
+                        />
+                      ))}
+                  </Box>
+                )}
+                MenuProps={{
+                  PaperProps: {
+                    sx: { maxHeight: 300 },
+                  },
+                }}
+              >
+                {/* Search input at top */}
+                <Box sx={{ px: 2, py: 1, position: 'sticky', top: 0, bgcolor: 'background.paper', zIndex: 1 }}>
+                  <TextField
+                    size="small"
+                    placeholder={t('project.ownersPlaceholder')}
+                    fullWidth
+                    onChange={(e) => handleUserSearch(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    InputProps={{
+                      endAdornment: searchingUsers ? (
+                        <InputAdornment position="end">
+                          <CircularProgress size={16} />
+                        </InputAdornment>
+                      ) : null,
+                    }}
+                  />
+                </Box>
+                {/* Currently selected owners */}
+                {selectedOwners.map((owner) => (
+                  <MenuItem key={owner.id} value={owner.id}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Avatar src={owner.avatar_url} sx={{ width: 24, height: 24 }}>
+                        <UserOutlined fontSize="small" />
+                      </Avatar>
+                      <Box>
+                        <Typography variant="body2">{owner.name || owner.email}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {owner.email}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </MenuItem>
                 ))}
-            </Select>
-          </Form.Item>
-
-          {editingProject && (
-            <Form.Item name="status" label={t('common.status')}>
-              <Select>
-                <Select.Option value="active">{t('status.active')}</Select.Option>
-                <Select.Option value="inactive">{t('status.inactive')}</Select.Option>
-                <Select.Option value="archived">{t('status.archived')}</Select.Option>
+                {/* Search results (not already selected) */}
+                {userOptions
+                  .filter((opt) => !selectedOwners.some((s) => s.id === opt.id))
+                  .map((user) => (
+                    <MenuItem key={user.id} value={user.id}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Avatar src={user.avatar_url} sx={{ width: 24, height: 24 }}>
+                          <UserOutlined fontSize="small" />
+                        </Avatar>
+                        <Box>
+                          <Typography variant="body2">{user.name || user.email}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {user.email}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </MenuItem>
+                  ))}
               </Select>
-            </Form.Item>
-          )}
+            </FormControl>
 
-          <Form.Item
-            name="tags"
-            label={t('common.tags')}
-            extra={t('common.tagsHelp')}
+            {editingProject && (
+              <FormControl fullWidth>
+                <InputLabel>{t('common.status')}</InputLabel>
+                <Select
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  label={t('common.status')}
+                >
+                  <MenuItem value="active">{t('status.active')}</MenuItem>
+                  <MenuItem value="inactive">{t('status.inactive')}</MenuItem>
+                  <MenuItem value="archived">{t('status.archived')}</MenuItem>
+                </Select>
+              </FormControl>
+            )}
+
+            <TextField
+              label={t('common.tags')}
+              placeholder="tag1, tag2, tag3"
+              value={formData.tags}
+              onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+              helperText={t('common.tagsHelp')}
+              fullWidth
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setModalVisible(false)}>{t('common.cancel')}</Button>
+          <Button variant="contained" onClick={handleSubmit}>
+            {t('common.save')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle>{t('project.deleteConfirm')}</DialogTitle>
+        <DialogContent>
+          <Typography>{t('project.deleteWarning')}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>{t('common.cancel')}</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => {
+              if (projectToDelete) {
+                handleDelete(projectToDelete)
+              }
+              setDeleteDialogOpen(false)
+              setProjectToDelete(null)
+            }}
           >
-            <Input placeholder="tag1, tag2, tag3" />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+            {t('common.delete')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   )
 }

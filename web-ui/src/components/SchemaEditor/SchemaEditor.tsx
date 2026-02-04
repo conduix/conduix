@@ -1,8 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Tabs, message, Alert, Button, Modal } from 'antd'
-import { FileSearchOutlined } from '@ant-design/icons'
+import {
+  Tabs,
+  Tab,
+  Alert,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Box,
+  Typography,
+} from '@mui/material'
+import FindInPageIcon from '@mui/icons-material/FindInPage'
 import Editor from '@monaco-editor/react'
 import { useTranslation } from 'react-i18next'
+import { useSnackbar } from '../../hooks/useSnackbar'
 import VisualFieldBuilder, { DataTypeField } from './VisualFieldBuilder'
 
 export interface DataTypeSchema {
@@ -167,6 +179,7 @@ function inferSchemaFromSample(sampleJson: string): DataTypeField[] {
 
 export default function SchemaEditor({ schema, jsonSchema, onChange, onGenerateComplete, idFields = [] }: SchemaEditorProps) {
   const { t } = useTranslation()
+  const { showWarning, showSuccess } = useSnackbar()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
   const [fields, setFields] = useState<DataTypeField[]>(schema?.fields || [])
   const [jsonContent, setJsonContent] = useState<string>(jsonSchema || '')
@@ -191,15 +204,16 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, onGenerateC
         setFields(parsedFields)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleTabChange = (key: string) => {
-    if (key === 'json' && editMode === 'visual') {
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
+    if (newValue === 'json' && editMode === 'visual') {
       // Sync visual to JSON
       const newJson = fieldsToJsonSchema(fields)
       setJsonContent(newJson)
       setJsonError(null)
-    } else if (key === 'visual' && editMode === 'json') {
+    } else if (newValue === 'visual' && editMode === 'json') {
       // Sync JSON to visual
       if (jsonContent.trim()) {
         try {
@@ -208,12 +222,12 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, onGenerateC
           setFields(parsedFields)
           setJsonError(null)
         } catch (e) {
-          message.warning(t('dataModel.schema.parseError'))
+          showWarning(t('dataModel.schema.parseError'))
           return // Don't switch tabs if parse fails
         }
       }
     }
-    setEditMode(key as 'visual' | 'json')
+    setEditMode(newValue as 'visual' | 'json')
   }
 
   const handleFieldsChange = useCallback((newFields: DataTypeField[]) => {
@@ -259,7 +273,7 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, onGenerateC
       setSampleInput('')
       setSampleError(null)
       setEditMode('visual')
-      message.success(t('dataModel.schema.generateSuccess', { count: inferredFields.length }))
+      showSuccess(t('dataModel.schema.generateSuccess', { count: inferredFields.length }))
       // Call onGenerateComplete to trigger auto-save
       if (onGenerateComplete) {
         onGenerateComplete(newSchema, newJson)
@@ -274,31 +288,45 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, onGenerateC
     setSampleError(null)
   }
 
-  const tabItems = [
-    {
-      key: 'visual',
-      label: t('dataModel.schema.visual'),
-      children: (
+  return (
+    <Box>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button
+          variant="outlined"
+          startIcon={<FindInPageIcon />}
+          onClick={() => setSampleModalOpen(true)}
+        >
+          {t('dataModel.schema.generateFromSample')}
+        </Button>
+      </Box>
+
+      <Tabs
+        value={editMode}
+        onChange={handleTabChange}
+        sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
+      >
+        <Tab value="visual" label={t('dataModel.schema.visual')} />
+        <Tab value="json" label={t('dataModel.schema.jsonSchema')} />
+      </Tabs>
+
+      {editMode === 'visual' && (
         <VisualFieldBuilder
           fields={fields}
           onChange={handleFieldsChange}
           idFields={idFields}
         />
-      ),
-    },
-    {
-      key: 'json',
-      label: t('dataModel.schema.jsonSchema'),
-      children: (
-        <div>
+      )}
+
+      {editMode === 'json' && (
+        <Box>
           {jsonError && (
             <Alert
-              message={t('dataModel.schema.invalidJson')}
-              description={jsonError}
-              type="error"
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
+              severity="error"
+              sx={{ mb: 2 }}
+            >
+              <Typography variant="subtitle2">{t('dataModel.schema.invalidJson')}</Typography>
+              <Typography variant="body2">{jsonError}</Typography>
+            </Alert>
           )}
           <Editor
             height="400px"
@@ -317,71 +345,69 @@ export default function SchemaEditor({ schema, jsonSchema, onChange, onGenerateC
               formatOnType: true,
             }}
           />
-        </div>
-      ),
-    },
-  ]
+        </Box>
+      )}
 
-  return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          icon={<FileSearchOutlined />}
-          onClick={() => setSampleModalOpen(true)}
-        >
-          {t('dataModel.schema.generateFromSample')}
-        </Button>
-      </div>
-
-      <Tabs
-        activeKey={editMode}
-        onChange={handleTabChange}
-        items={tabItems}
-      />
-
-      <Modal
-        title={t('dataModel.schema.generateFromSampleTitle')}
+      <Dialog
         open={sampleModalOpen}
-        onCancel={() => {
+        onClose={() => {
           setSampleModalOpen(false)
           setSampleInput('')
           setSampleError(null)
         }}
-        onOk={handleGenerateFromSample}
-        okText={t('dataModel.schema.generate')}
-        cancelText={t('common.cancel')}
-        width={700}
-        okButtonProps={{ disabled: !sampleInput.trim() }}
+        maxWidth="md"
+        fullWidth
       >
-        <p style={{ marginBottom: 16, color: '#666' }}>
-          {t('dataModel.schema.sampleInputHelp')}
-        </p>
-        {sampleError && (
-          <Alert
-            message={t('dataModel.schema.sampleParseError')}
-            description={sampleError}
-            type="error"
-            showIcon
-            style={{ marginBottom: 16 }}
+        <DialogTitle>{t('dataModel.schema.generateFromSampleTitle')}</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 2, color: 'text.secondary' }}>
+            {t('dataModel.schema.sampleInputHelp')}
+          </Typography>
+          {sampleError && (
+            <Alert
+              severity="error"
+              sx={{ mb: 2 }}
+            >
+              <Typography variant="subtitle2">{t('dataModel.schema.sampleParseError')}</Typography>
+              <Typography variant="body2">{sampleError}</Typography>
+            </Alert>
+          )}
+          <Editor
+            height="300px"
+            language="json"
+            theme="vs-light"
+            value={sampleInput}
+            onChange={handleSampleInputChange}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 13,
+              lineNumbers: 'on',
+              tabSize: 2,
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              formatOnPaste: true,
+            }}
           />
-        )}
-        <Editor
-          height="300px"
-          language="json"
-          theme="vs-light"
-          value={sampleInput}
-          onChange={handleSampleInputChange}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            lineNumbers: 'on',
-            tabSize: 2,
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            formatOnPaste: true,
-          }}
-        />
-      </Modal>
-    </div>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setSampleModalOpen(false)
+              setSampleInput('')
+              setSampleError(null)
+            }}
+          >
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleGenerateFromSample}
+            disabled={!sampleInput.trim()}
+          >
+            {t('dataModel.schema.generate')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   )
 }

@@ -1,65 +1,87 @@
 import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Avatar, Dropdown, theme, Select } from 'antd'
 import {
-  DashboardOutlined,
-  BranchesOutlined,
-  ClockCircleOutlined,
-  ClusterOutlined,
-  HistoryOutlined,
-  UserOutlined,
-  LogoutOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  TeamOutlined,
-  ProjectOutlined,
-  GlobalOutlined,
-} from '@ant-design/icons'
+  Box,
+  Drawer,
+  AppBar,
+  Toolbar,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  IconButton,
+  Avatar,
+  Menu,
+  MenuItem,
+  Divider,
+  Select,
+  FormControl,
+  SelectChangeEvent,
+  useTheme,
+} from '@mui/material'
+import {
+  Dashboard as DashboardIcon,
+  AccountTree as BranchesIcon,
+  Schedule as ScheduleIcon,
+  Dns as ClusterIcon,
+  History as HistoryIcon,
+  Person as UserIcon,
+  Logout as LogoutIcon,
+  Menu as MenuIcon,
+  ChevronLeft as ChevronLeftIcon,
+  Group as TeamIcon,
+  Folder as ProjectIcon,
+  Language as LanguageIcon,
+  DarkMode as DarkModeIcon,
+  LightMode as LightModeIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../../store/auth'
+import { useThemeStore } from '../../store/theme'
 
-const { Header, Sider, Content } = Layout
+const drawerWidth = 240
+const collapsedDrawerWidth = 64
 
 export default function MainLayout() {
   const { t, i18n } = useTranslation()
   const [collapsed, setCollapsed] = useState(false)
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const navigate = useNavigate()
   const location = useLocation()
   const { user, logout } = useAuthStore()
-
-  const {
-    token: { colorBgContainer },
-  } = theme.useToken()
+  const { mode, toggleMode } = useThemeStore()
+  const theme = useTheme()
 
   const baseMenuItems = [
     {
       key: '/dashboard',
-      icon: <DashboardOutlined />,
+      icon: <DashboardIcon />,
       label: t('nav.dashboard'),
     },
     {
       key: '/projects',
-      icon: <ProjectOutlined />,
+      icon: <ProjectIcon />,
       label: t('nav.projects'),
     },
     {
       key: '/workflows',
-      icon: <BranchesOutlined />,
+      icon: <BranchesIcon />,
       label: t('nav.workflows'),
     },
     {
       key: '/schedules',
-      icon: <ClockCircleOutlined />,
+      icon: <ScheduleIcon />,
       label: t('nav.schedules'),
     },
     {
       key: '/agents',
-      icon: <ClusterOutlined />,
+      icon: <ClusterIcon />,
       label: t('nav.agents'),
     },
     {
       key: '/history',
-      icon: <HistoryOutlined />,
+      icon: <HistoryIcon />,
       label: 'History',
     },
   ]
@@ -67,12 +89,11 @@ export default function MainLayout() {
   const adminMenuItems = [
     {
       key: '/users',
-      icon: <TeamOutlined />,
+      icon: <TeamIcon />,
       label: t('nav.users'),
     },
   ]
 
-  // Add user management menu for admin users
   const menuItems = user?.role === 'admin'
     ? [...baseMenuItems, ...adminMenuItems]
     : baseMenuItems
@@ -84,48 +105,58 @@ export default function MainLayout() {
   const handleLogout = () => {
     logout()
     navigate('/login')
+    handleCloseUserMenu()
   }
 
   const handleProfile = () => {
     navigate('/profile')
+    handleCloseUserMenu()
   }
 
-  const handleLanguageChange = (lang: string) => {
-    i18n.changeLanguage(lang)
+  const handleLanguageChange = (event: SelectChangeEvent) => {
+    i18n.changeLanguage(event.target.value)
   }
 
-  const userMenuItems = [
-    {
-      key: 'profile',
-      icon: <UserOutlined />,
-      label: 'Profile',
-      onClick: handleProfile,
-    },
-    {
-      type: 'divider' as const,
-    },
-    {
-      key: 'logout',
-      icon: <LogoutOutlined />,
-      label: t('auth.logout'),
-      onClick: handleLogout,
-    },
-  ]
+  const handleOpenUserMenu = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget)
+  }
+
+  const handleCloseUserMenu = () => {
+    setAnchorEl(null)
+  }
+
+  const currentWidth = collapsed ? collapsedDrawerWidth : drawerWidth
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider trigger={null} collapsible collapsed={collapsed}>
-        <div
-          style={{
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      <Drawer
+        variant="permanent"
+        sx={{
+          width: currentWidth,
+          flexShrink: 0,
+          '& .MuiDrawer-paper': {
+            width: currentWidth,
+            boxSizing: 'border-box',
+            transition: theme.transitions.create('width', {
+              easing: theme.transitions.easing.sharp,
+              duration: theme.transitions.duration.enteringScreen,
+            }),
+            overflowX: 'hidden',
+            bgcolor: theme.palette.mode === 'dark' ? '#001529' : '#001529',
+          },
+        }}
+      >
+        <Box
+          sx={{
             height: 40,
-            margin: 16,
+            m: 2,
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            borderRadius: 8,
+            borderRadius: 2,
             display: 'flex',
             alignItems: 'center',
             justifyContent: collapsed ? 'center' : 'flex-start',
-            padding: collapsed ? 0 : '0 12px',
-            gap: 8,
+            px: collapsed ? 0 : 1.5,
+            gap: 1,
             color: '#fff',
             fontWeight: 'bold',
             fontSize: 16,
@@ -138,67 +169,153 @@ export default function MainLayout() {
             style={{ width: 20, height: 20 }}
           />
           {!collapsed && 'Conduix'}
-        </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={({ key }) => handleMenuClick(key)}
-        />
-      </Sider>
+        </Box>
+        <List>
+          {menuItems.map((item) => (
+            <ListItem key={item.key} disablePadding sx={{ display: 'block' }}>
+              <ListItemButton
+                selected={location.pathname === item.key}
+                onClick={() => handleMenuClick(item.key)}
+                sx={{
+                  minHeight: 48,
+                  justifyContent: collapsed ? 'center' : 'initial',
+                  px: 2.5,
+                  '&.Mui-selected': {
+                    bgcolor: 'primary.main',
+                    '&:hover': {
+                      bgcolor: 'primary.dark',
+                    },
+                  },
+                  color: 'rgba(255, 255, 255, 0.65)',
+                  '&:hover': {
+                    bgcolor: 'rgba(255, 255, 255, 0.08)',
+                  },
+                }}
+              >
+                <ListItemIcon
+                  sx={{
+                    minWidth: 0,
+                    mr: collapsed ? 0 : 3,
+                    justifyContent: 'center',
+                    color: location.pathname === item.key ? '#fff' : 'rgba(255, 255, 255, 0.65)',
+                  }}
+                >
+                  {item.icon}
+                </ListItemIcon>
+                {!collapsed && (
+                  <ListItemText
+                    primary={item.label}
+                    sx={{
+                      '& .MuiListItemText-primary': {
+                        color: location.pathname === item.key ? '#fff' : 'rgba(255, 255, 255, 0.65)',
+                      },
+                    }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+          ))}
+        </List>
+      </Drawer>
 
-      <Layout>
-        <Header
-          style={{
-            padding: '0 24px',
-            background: colorBgContainer,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
+      <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+        <AppBar
+          position="static"
+          color="default"
+          elevation={0}
+          sx={{
+            bgcolor: theme.palette.background.paper,
+            borderBottom: `1px solid ${theme.palette.divider}`,
           }}
         >
-          <div
-            style={{ cursor: 'pointer' }}
-            onClick={() => setCollapsed(!collapsed)}
-          >
-            {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-          </div>
+          <Toolbar>
+            <IconButton
+              edge="start"
+              onClick={() => setCollapsed(!collapsed)}
+              sx={{ mr: 2 }}
+            >
+              {collapsed ? <MenuIcon /> : <ChevronLeftIcon />}
+            </IconButton>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <Select
-              value={i18n.language}
-              onChange={handleLanguageChange}
-              style={{ width: 100 }}
-              size="small"
-              suffixIcon={<GlobalOutlined />}
-              options={[
-                { value: 'en', label: 'English' },
-                { value: 'ko', label: '한국어' },
-              ]}
-            />
+            <Box sx={{ flexGrow: 1 }} />
 
-            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-              <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Avatar icon={<UserOutlined />} src={user?.avatarUrl} />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <IconButton onClick={toggleMode} size="small">
+                {mode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}
+              </IconButton>
+
+              <FormControl size="small" sx={{ minWidth: 100 }}>
+                <Select
+                  value={i18n.language}
+                  onChange={handleLanguageChange}
+                  IconComponent={LanguageIcon}
+                  sx={{ '& .MuiSelect-icon': { right: 7 } }}
+                >
+                  <MenuItem value="en">English</MenuItem>
+                  <MenuItem value="ko">한국어</MenuItem>
+                </Select>
+              </FormControl>
+
+              <Box
+                onClick={handleOpenUserMenu}
+                sx={{
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                }}
+              >
+                <Avatar src={user?.avatarUrl} sx={{ width: 32, height: 32 }}>
+                  {!user?.avatarUrl && <UserIcon />}
+                </Avatar>
                 <span>{user?.name || user?.email}</span>
-              </div>
-            </Dropdown>
-          </div>
-        </Header>
+              </Box>
 
-        <Content
-          style={{
-            margin: '24px 16px',
-            padding: 24,
-            background: colorBgContainer,
-            borderRadius: 8,
-            minHeight: 280,
+              <Menu
+                anchorEl={anchorEl}
+                open={Boolean(anchorEl)}
+                onClose={handleCloseUserMenu}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+              >
+                <MenuItem onClick={handleProfile}>
+                  <ListItemIcon>
+                    <UserIcon fontSize="small" />
+                  </ListItemIcon>
+                  Profile
+                </MenuItem>
+                <Divider />
+                <MenuItem onClick={handleLogout}>
+                  <ListItemIcon>
+                    <LogoutIcon fontSize="small" />
+                  </ListItemIcon>
+                  {t('auth.logout')}
+                </MenuItem>
+              </Menu>
+            </Box>
+          </Toolbar>
+        </AppBar>
+
+        <Box
+          component="main"
+          sx={{
+            flexGrow: 1,
+            p: 3,
+            bgcolor: theme.palette.mode === 'dark' ? theme.palette.background.default : '#f5f5f5',
           }}
         >
-          <Outlet />
-        </Content>
-      </Layout>
-    </Layout>
+          <Box
+            sx={{
+              bgcolor: theme.palette.background.paper,
+              borderRadius: 2,
+              p: 3,
+              minHeight: 'calc(100vh - 140px)',
+            }}
+          >
+            <Outlet />
+          </Box>
+        </Box>
+      </Box>
+    </Box>
   )
 }

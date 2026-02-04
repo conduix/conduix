@@ -1,34 +1,39 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
+  Box,
   Card,
-  Table,
-  Tag,
+  CardContent,
+  Chip,
   Button,
-  Space,
-  Input,
+  TextField,
   Select,
-  Modal,
-  Form,
-  message,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Typography,
   Avatar,
-  Popconfirm,
+  IconButton,
+  FormControl,
+  InputLabel,
+  Tab,
   Tabs,
-  Empty,
-} from 'antd'
+  InputAdornment,
+  Tooltip,
+} from '@mui/material'
+import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
-  UserOutlined,
-  SearchOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  PlusOutlined,
-  SafetyCertificateOutlined,
-} from '@ant-design/icons'
+  Person as UserOutlined,
+  Search as SearchOutlined,
+  Edit as EditOutlined,
+  Delete as DeleteOutlined,
+  Add as PlusOutlined,
+  Security as SafetyCertificateOutlined,
+} from '@mui/icons-material'
 import { api } from '../services/api'
+import { useSnackbar } from '../hooks/useSnackbar'
 import dayjs from 'dayjs'
-
-const { Title, Text } = Typography
-const { Option } = Select
 
 interface User {
   id: string
@@ -67,10 +72,10 @@ interface ApiResponse<T> {
   message?: string
 }
 
-const roleColors: Record<string, string> = {
-  admin: 'red',
-  operator: 'blue',
-  viewer: 'green',
+const roleColors: Record<string, 'error' | 'primary' | 'success' | 'default'> = {
+  admin: 'error',
+  operator: 'primary',
+  viewer: 'success',
 }
 
 const roleDisplayNames: Record<string, string> = {
@@ -79,14 +84,37 @@ const roleDisplayNames: Record<string, string> = {
   viewer: '뷰어',
 }
 
+// TabPanel component
+interface TabPanelProps {
+  children?: React.ReactNode
+  index: number
+  value: number
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`users-tabpanel-${index}`}
+      aria-labelledby={`users-tab-${index}`}
+      {...other}
+    >
+      {value === index && <Box sx={{ pt: 2 }}>{children}</Box>}
+    </div>
+  )
+}
+
 export default function UsersPage() {
+  const { showSuccess, showError } = useSnackbar()
   const [loading, setLoading] = useState(true)
   const [users, setUsers] = useState<User[]>([])
   const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(20)
   const [search, setSearch] = useState('')
-  const [roleFilter, setRoleFilter] = useState<string | undefined>(undefined)
+  const [roleFilter, setRoleFilter] = useState<string>('')
 
   const [permissions, setPermissions] = useState<Permission[]>([])
   const [permissionsLoading, setPermissionsLoading] = useState(false)
@@ -96,17 +124,28 @@ export default function UsersPage() {
   const [newRole, setNewRole] = useState('')
 
   const [permissionModalVisible, setPermissionModalVisible] = useState(false)
-  const [permissionForm] = Form.useForm()
+  const [permissionForm, setPermissionForm] = useState({
+    user_id: '',
+    resource_type: '',
+    resource_id: '',
+    actions: [] as string[],
+  })
+  const [permissionFormErrors, setPermissionFormErrors] = useState({
+    user_id: false,
+    resource_type: false,
+    resource_id: false,
+    actions: false,
+  })
 
-  useEffect(() => {
-    fetchUsers()
-  }, [page, pageSize, search, roleFilter])
+  const [activeTab, setActiveTab] = useState(0)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [permissionToDelete, setPermissionToDelete] = useState<string | null>(null)
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      params.append('page', String(page))
+      params.append('page', String(page + 1))
       params.append('page_size', String(pageSize))
       if (search) params.append('search', search)
       if (roleFilter) params.append('role', roleFilter)
@@ -117,11 +156,15 @@ export default function UsersPage() {
         setTotal(response.data.data.total)
       }
     } catch (error) {
-      message.error('사용자 목록을 불러오는데 실패했습니다')
+      showError('사용자 목록을 불러오는데 실패했습니다')
     } finally {
       setLoading(false)
     }
-  }
+  }, [page, pageSize, search, roleFilter, showError])
+
+  useEffect(() => {
+    fetchUsers()
+  }, [fetchUsers])
 
   const fetchPermissions = async () => {
     setPermissionsLoading(true)
@@ -131,7 +174,7 @@ export default function UsersPage() {
         setPermissions(response.data.data)
       }
     } catch (error) {
-      message.error('권한 목록을 불러오는데 실패했습니다')
+      showError('권한 목록을 불러오는데 실패했습니다')
     } finally {
       setPermissionsLoading(false)
     }
@@ -145,115 +188,144 @@ export default function UsersPage() {
         role: newRole,
       })
       if (response.data?.success) {
-        message.success('역할이 수정되었습니다')
+        showSuccess('역할이 수정되었습니다')
         setRoleModalVisible(false)
         fetchUsers()
       } else {
-        message.error(response.data?.error || '역할 수정에 실패했습니다')
+        showError(response.data?.error || '역할 수정에 실패했습니다')
       }
     } catch (error) {
-      message.error('역할 수정에 실패했습니다')
+      showError('역할 수정에 실패했습니다')
     }
   }
 
-  const handleCreatePermission = async (values: any) => {
+  const validatePermissionForm = (): boolean => {
+    const errors = {
+      user_id: !permissionForm.user_id,
+      resource_type: !permissionForm.resource_type,
+      resource_id: !permissionForm.resource_id,
+      actions: permissionForm.actions.length === 0,
+    }
+    setPermissionFormErrors(errors)
+    return !Object.values(errors).some(Boolean)
+  }
+
+  const handleCreatePermission = async () => {
+    if (!validatePermissionForm()) return
+
     try {
-      // actions 배열을 콤마로 연결된 문자열로 변환
       const payload = {
-        ...values,
-        actions: Array.isArray(values.actions) ? values.actions.join(',') : values.actions,
+        ...permissionForm,
+        actions: permissionForm.actions.join(','),
       }
       const response = await api.post<ApiResponse<Permission>>('/permissions', payload)
       if (response.data?.success) {
-        message.success('권한이 생성되었습니다')
+        showSuccess('권한이 생성되었습니다')
         setPermissionModalVisible(false)
-        permissionForm.resetFields()
+        setPermissionForm({ user_id: '', resource_type: '', resource_id: '', actions: [] })
         fetchPermissions()
       } else {
-        message.error(response.data?.error || '권한 생성에 실패했습니다')
+        showError(response.data?.error || '권한 생성에 실패했습니다')
       }
     } catch (error) {
-      message.error('권한 생성에 실패했습니다')
+      showError('권한 생성에 실패했습니다')
     }
   }
 
   const handleDeletePermission = async (id: string) => {
     try {
-      const response = await api.delete<ApiResponse<any>>(`/permissions/${id}`)
+      const response = await api.delete<ApiResponse<unknown>>(`/permissions/${id}`)
       if (response.data?.success) {
-        message.success('권한이 삭제되었습니다')
+        showSuccess('권한이 삭제되었습니다')
         fetchPermissions()
       } else {
-        message.error(response.data?.error || '권한 삭제에 실패했습니다')
+        showError(response.data?.error || '권한 삭제에 실패했습니다')
       }
     } catch (error) {
-      message.error('권한 삭제에 실패했습니다')
+      showError('권한 삭제에 실패했습니다')
     }
   }
 
-  const userColumns = [
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue)
+    if (newValue === 1) {
+      fetchPermissions()
+    }
+  }
+
+  // User columns for DataGrid
+  const userColumns: GridColDef[] = [
     {
-      title: '사용자',
-      key: 'user',
-      render: (_: any, record: User) => (
-        <Space>
-          <Avatar src={record.avatar_url} icon={<UserOutlined />} />
-          <div>
-            <div>{record.name || record.email}</div>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {record.email}
-            </Text>
-          </div>
-        </Space>
+      field: 'user',
+      headerName: '사용자',
+      flex: 1,
+      minWidth: 250,
+      renderCell: (params: GridRenderCellParams<User>) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
+          <Avatar src={params.row.avatar_url} sx={{ width: 32, height: 32 }}>
+            <UserOutlined fontSize="small" />
+          </Avatar>
+          <Box>
+            <Typography variant="body2">{params.row.name || params.row.email}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {params.row.email}
+            </Typography>
+          </Box>
+        </Box>
       ),
     },
     {
-      title: '역할',
-      dataIndex: 'role',
-      key: 'role',
-      render: (role: string) => (
-        <Tag color={roleColors[role] || 'default'}>
-          {roleDisplayNames[role] || role}
-        </Tag>
-      ),
-    },
-    {
-      title: '인증 제공자',
-      dataIndex: 'provider',
-      key: 'provider',
-      render: (provider: string) => (
-        <Tag>{provider?.toUpperCase() || 'N/A'}</Tag>
-      ),
-    },
-    {
-      title: '권한 수',
-      dataIndex: 'permission_count',
-      key: 'permission_count',
-      render: (count: number) => count || 0,
-    },
-    {
-      title: '가입일',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (date: string) => dayjs(date).format('YYYY-MM-DD'),
-    },
-    {
-      title: '마지막 로그인',
-      dataIndex: 'last_login',
-      key: 'last_login',
-      render: (date: string | null) =>
-        date ? dayjs(date).format('YYYY-MM-DD HH:mm') : '-',
-    },
-    {
-      title: '작업',
-      key: 'actions',
-      render: (_: any, record: User) => (
-        <Button
-          icon={<EditOutlined />}
+      field: 'role',
+      headerName: '역할',
+      width: 120,
+      renderCell: (params) => (
+        <Chip
+          label={roleDisplayNames[params.value] || params.value}
+          color={roleColors[params.value] || 'default'}
           size="small"
+        />
+      ),
+    },
+    {
+      field: 'provider',
+      headerName: '인증 제공자',
+      width: 130,
+      renderCell: (params) => (
+        <Chip label={params.value?.toUpperCase() || 'N/A'} size="small" variant="outlined" />
+      ),
+    },
+    {
+      field: 'permission_count',
+      headerName: '권한 수',
+      width: 100,
+      valueFormatter: ({ value }) => value || 0,
+    },
+    {
+      field: 'created_at',
+      headerName: '가입일',
+      width: 120,
+      valueFormatter: ({ value }) => dayjs(value).format('YYYY-MM-DD'),
+    },
+    {
+      field: 'last_login',
+      headerName: '마지막 로그인',
+      width: 150,
+      valueFormatter: ({ value }) =>
+        value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-',
+    },
+    {
+      field: 'actions',
+      headerName: '작업',
+      width: 130,
+      sortable: false,
+      renderCell: (params: GridRenderCellParams<User>) => (
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<EditOutlined />}
           onClick={() => {
-            setSelectedUser(record)
-            setNewRole(record.role)
+            setSelectedUser(params.row)
+            setNewRole(params.row.role)
             setRoleModalVisible(true)
           }}
         >
@@ -263,277 +335,377 @@ export default function UsersPage() {
     },
   ]
 
-  const permissionColumns = [
+  // Permission columns for DataGrid
+  const permissionColumns: GridColDef[] = [
     {
-      title: '사용자',
-      key: 'user',
-      render: (_: any, record: Permission) => (
-        <Space>
-          <Avatar
-            src={record.user?.avatar_url}
-            icon={<UserOutlined />}
-            size="small"
-          />
-          <span>{record.user?.name || record.user?.email || record.user_id}</span>
-        </Space>
+      field: 'user',
+      headerName: '사용자',
+      flex: 1,
+      minWidth: 200,
+      renderCell: (params: GridRenderCellParams<Permission>) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Avatar src={params.row.user?.avatar_url} sx={{ width: 24, height: 24 }}>
+            <UserOutlined fontSize="small" />
+          </Avatar>
+          <Typography variant="body2">
+            {params.row.user?.name || params.row.user?.email || params.row.user_id}
+          </Typography>
+        </Box>
       ),
     },
     {
-      title: '리소스 타입',
-      dataIndex: 'resource_type',
-      key: 'resource_type',
-      render: (type: string) => {
+      field: 'resource_type',
+      headerName: '리소스 타입',
+      width: 150,
+      renderCell: (params) => {
         const typeNames: Record<string, string> = {
           provider: '데이터 제공자',
           group: '파이프라인 그룹',
           pipeline: '파이프라인',
         }
-        return <Tag>{typeNames[type] || type}</Tag>
+        return <Chip label={typeNames[params.value] || params.value} size="small" />
       },
     },
     {
-      title: '리소스 ID',
-      dataIndex: 'resource_id',
-      key: 'resource_id',
-      ellipsis: true,
+      field: 'resource_id',
+      headerName: '리소스 ID',
+      flex: 1,
+      minWidth: 200,
     },
     {
-      title: '권한',
-      dataIndex: 'actions',
-      key: 'actions',
-      render: (actions: string) => (
-        <Space wrap>
-          {actions.split(',').map((action) => (
-            <Tag key={action} color="blue">
-              {action.trim()}
-            </Tag>
+      field: 'actions_list',
+      headerName: '권한',
+      width: 250,
+      valueGetter: (params) => params.row.actions,
+      renderCell: (params: GridRenderCellParams<Permission>) => (
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+          {params.row.actions.split(',').map((action: string) => (
+            <Chip key={action} label={action.trim()} color="primary" size="small" />
           ))}
-        </Space>
+        </Box>
       ),
     },
     {
-      title: '생성일',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (date: string) => dayjs(date).format('YYYY-MM-DD'),
+      field: 'created_at',
+      headerName: '생성일',
+      width: 120,
+      valueFormatter: ({ value }) => dayjs(value).format('YYYY-MM-DD'),
     },
     {
-      title: '작업',
-      key: 'actions',
-      render: (_: any, record: Permission) => (
-        <Popconfirm
-          title="권한을 삭제하시겠습니까?"
-          onConfirm={() => handleDeletePermission(record.id)}
-          okText="삭제"
-          cancelText="취소"
-        >
-          <Button danger icon={<DeleteOutlined />} size="small" />
-        </Popconfirm>
-      ),
-    },
-  ]
-
-  const tabItems = [
-    {
-      key: 'users',
-      label: (
-        <span>
-          <UserOutlined /> 사용자 ({total})
-        </span>
-      ),
-      children: (
-        <Card>
-          <Space style={{ marginBottom: 16 }} wrap>
-            <Input
-              placeholder="이메일 또는 이름 검색"
-              prefix={<SearchOutlined />}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 250 }}
-              allowClear
-            />
-            <Select
-              placeholder="역할 필터"
-              value={roleFilter}
-              onChange={setRoleFilter}
-              style={{ width: 150 }}
-              allowClear
-            >
-              <Option value="admin">관리자</Option>
-              <Option value="operator">운영자</Option>
-              <Option value="viewer">뷰어</Option>
-            </Select>
-          </Space>
-
-          <Table
-            dataSource={users}
-            columns={userColumns}
-            rowKey="id"
-            loading={loading}
-            pagination={{
-              current: page,
-              pageSize,
-              total,
-              showSizeChanger: true,
-              showTotal: (t) => `총 ${t}명`,
-              onChange: (p, ps) => {
-                setPage(p)
-                setPageSize(ps)
-              },
+      field: 'delete_action',
+      headerName: '작업',
+      width: 80,
+      sortable: false,
+      renderCell: (params: GridRenderCellParams<Permission>) => (
+        <Tooltip title="권한 삭제">
+          <IconButton
+            color="error"
+            size="small"
+            onClick={() => {
+              setPermissionToDelete(params.row.id)
+              setDeleteConfirmOpen(true)
             }}
-          />
-        </Card>
-      ),
-    },
-    {
-      key: 'permissions',
-      label: (
-        <span>
-          <SafetyCertificateOutlined /> 리소스 권한
-        </span>
-      ),
-      children: (
-        <Card
-          extra={
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => setPermissionModalVisible(true)}
-            >
-              권한 추가
-            </Button>
-          }
-        >
-          {permissions.length > 0 ? (
-            <Table
-              dataSource={permissions}
-              columns={permissionColumns}
-              rowKey="id"
-              loading={permissionsLoading}
-              pagination={{ pageSize: 20 }}
-            />
-          ) : (
-            <Empty description="등록된 리소스 권한이 없습니다" />
-          )}
-        </Card>
+          >
+            <DeleteOutlined />
+          </IconButton>
+        </Tooltip>
       ),
     },
   ]
 
   return (
-    <div style={{ padding: '24px' }}>
-      <Title level={2}>
-        <UserOutlined /> 사용자 관리
-      </Title>
+    <Box sx={{ p: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
+        <UserOutlined />
+        <Typography variant="h5">사용자 관리</Typography>
+      </Box>
 
-      <Tabs
-        items={tabItems}
-        onChange={(key) => {
-          if (key === 'permissions') {
-            fetchPermissions()
-          }
-        }}
-      />
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+        <Tabs value={activeTab} onChange={handleTabChange}>
+          <Tab
+            icon={<UserOutlined />}
+            iconPosition="start"
+            label={`사용자 (${total})`}
+          />
+          <Tab
+            icon={<SafetyCertificateOutlined />}
+            iconPosition="start"
+            label="리소스 권한"
+          />
+        </Tabs>
+      </Box>
+
+      <TabPanel value={activeTab} index={0}>
+        <Card>
+          <CardContent>
+            <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+              <TextField
+                placeholder="이메일 또는 이름 검색"
+                size="small"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                sx={{ width: 250 }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchOutlined />
+                    </InputAdornment>
+                  ),
+                }}
+              />
+              <FormControl size="small" sx={{ width: 150 }}>
+                <InputLabel>역할 필터</InputLabel>
+                <Select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  label="역할 필터"
+                >
+                  <MenuItem value="">전체</MenuItem>
+                  <MenuItem value="admin">관리자</MenuItem>
+                  <MenuItem value="operator">운영자</MenuItem>
+                  <MenuItem value="viewer">뷰어</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+
+            <DataGrid
+              rows={users}
+              columns={userColumns}
+              loading={loading}
+              rowCount={total}
+              pageSizeOptions={[10, 20, 50]}
+              paginationModel={{ page, pageSize }}
+              paginationMode="server"
+              onPaginationModelChange={(model) => {
+                setPage(model.page)
+                setPageSize(model.pageSize)
+              }}
+              autoHeight
+              disableRowSelectionOnClick
+              getRowHeight={() => 'auto'}
+              sx={{
+                '& .MuiDataGrid-cell': {
+                  py: 1,
+                },
+              }}
+            />
+          </CardContent>
+        </Card>
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={1}>
+        <Card>
+          <CardContent>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+              <Button
+                variant="contained"
+                startIcon={<PlusOutlined />}
+                onClick={() => setPermissionModalVisible(true)}
+              >
+                권한 추가
+              </Button>
+            </Box>
+
+            {permissions.length > 0 ? (
+              <DataGrid
+                rows={permissions}
+                columns={permissionColumns}
+                loading={permissionsLoading}
+                pageSizeOptions={[10, 20, 50]}
+                initialState={{
+                  pagination: { paginationModel: { pageSize: 20 } },
+                }}
+                autoHeight
+                disableRowSelectionOnClick
+                getRowHeight={() => 'auto'}
+                sx={{
+                  '& .MuiDataGrid-cell': {
+                    py: 1,
+                  },
+                }}
+              />
+            ) : (
+              <Box sx={{ textAlign: 'center', py: 8, color: 'text.secondary' }}>
+                <SafetyCertificateOutlined sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+                <Typography>등록된 리소스 권한이 없습니다</Typography>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      </TabPanel>
 
       {/* 역할 변경 모달 */}
-      <Modal
-        title="역할 변경"
-        open={roleModalVisible}
-        onOk={handleRoleChange}
-        onCancel={() => setRoleModalVisible(false)}
-        okText="변경"
-        cancelText="취소"
-      >
-        {selectedUser && (
-          <div>
-            <p>
-              <strong>사용자:</strong> {selectedUser.name || selectedUser.email}
-            </p>
-            <p>
-              <strong>현재 역할:</strong>{' '}
-              <Tag color={roleColors[selectedUser.role]}>
-                {roleDisplayNames[selectedUser.role]}
-              </Tag>
-            </p>
-            <div style={{ marginTop: 16 }}>
-              <strong>새 역할:</strong>
-              <Select
-                value={newRole}
-                onChange={setNewRole}
-                style={{ width: '100%', marginTop: 8 }}
-              >
-                <Option value="admin">
-                  <Tag color="red">관리자</Tag> - 모든 권한
-                </Option>
-                <Option value="operator">
-                  <Tag color="blue">운영자</Tag> - 파이프라인 생성/수정/실행
-                </Option>
-                <Option value="viewer">
-                  <Tag color="green">뷰어</Tag> - 읽기 전용
-                </Option>
-              </Select>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <Dialog open={roleModalVisible} onClose={() => setRoleModalVisible(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>역할 변경</DialogTitle>
+        <DialogContent>
+          {selectedUser && (
+            <Box sx={{ pt: 1 }}>
+              <Typography sx={{ mb: 1 }}>
+                <strong>사용자:</strong> {selectedUser.name || selectedUser.email}
+              </Typography>
+              <Typography sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <strong>현재 역할:</strong>
+                <Chip
+                  label={roleDisplayNames[selectedUser.role]}
+                  color={roleColors[selectedUser.role]}
+                  size="small"
+                />
+              </Typography>
+              <FormControl fullWidth>
+                <InputLabel>새 역할</InputLabel>
+                <Select value={newRole} onChange={(e) => setNewRole(e.target.value)} label="새 역할">
+                  <MenuItem value="admin">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Chip label="관리자" color="error" size="small" />
+                      <Typography variant="caption">- 모든 권한</Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem value="operator">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Chip label="운영자" color="primary" size="small" />
+                      <Typography variant="caption">- 파이프라인 생성/수정/실행</Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem value="viewer">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Chip label="뷰어" color="success" size="small" />
+                      <Typography variant="caption">- 읽기 전용</Typography>
+                    </Box>
+                  </MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRoleModalVisible(false)}>취소</Button>
+          <Button variant="contained" onClick={handleRoleChange}>
+            변경
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* 권한 추가 모달 */}
-      <Modal
-        title="리소스 권한 추가"
+      <Dialog
         open={permissionModalVisible}
-        onOk={() => permissionForm.submit()}
-        onCancel={() => {
+        onClose={() => {
           setPermissionModalVisible(false)
-          permissionForm.resetFields()
+          setPermissionForm({ user_id: '', resource_type: '', resource_id: '', actions: [] })
+          setPermissionFormErrors({ user_id: false, resource_type: false, resource_id: false, actions: false })
         }}
-        okText="추가"
-        cancelText="취소"
+        maxWidth="sm"
+        fullWidth
       >
-        <Form
-          form={permissionForm}
-          layout="vertical"
-          onFinish={handleCreatePermission}
-        >
-          <Form.Item
-            name="user_id"
-            label="사용자 ID"
-            rules={[{ required: true, message: '사용자 ID를 입력하세요' }]}
+        <DialogTitle>리소스 권한 추가</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+            <TextField
+              label="사용자 ID"
+              placeholder="사용자 UUID"
+              value={permissionForm.user_id}
+              onChange={(e) => setPermissionForm({ ...permissionForm, user_id: e.target.value })}
+              error={permissionFormErrors.user_id}
+              helperText={permissionFormErrors.user_id ? '사용자 ID를 입력하세요' : ''}
+              required
+              fullWidth
+            />
+            <FormControl fullWidth required error={permissionFormErrors.resource_type}>
+              <InputLabel>리소스 타입</InputLabel>
+              <Select
+                value={permissionForm.resource_type}
+                onChange={(e) => setPermissionForm({ ...permissionForm, resource_type: e.target.value })}
+                label="리소스 타입"
+              >
+                <MenuItem value="provider">데이터 제공자</MenuItem>
+                <MenuItem value="group">파이프라인 그룹</MenuItem>
+                <MenuItem value="pipeline">파이프라인</MenuItem>
+              </Select>
+              {permissionFormErrors.resource_type && (
+                <Typography variant="caption" color="error" sx={{ mt: 0.5, ml: 2 }}>
+                  리소스 타입을 선택하세요
+                </Typography>
+              )}
+            </FormControl>
+            <TextField
+              label="리소스 ID"
+              placeholder="리소스 UUID"
+              value={permissionForm.resource_id}
+              onChange={(e) => setPermissionForm({ ...permissionForm, resource_id: e.target.value })}
+              error={permissionFormErrors.resource_id}
+              helperText={permissionFormErrors.resource_id ? '리소스 ID를 입력하세요' : ''}
+              required
+              fullWidth
+            />
+            <FormControl fullWidth required error={permissionFormErrors.actions}>
+              <InputLabel>권한</InputLabel>
+              <Select
+                multiple
+                value={permissionForm.actions}
+                onChange={(e) =>
+                  setPermissionForm({ ...permissionForm, actions: e.target.value as string[] })
+                }
+                label="권한"
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {selected.map((value) => (
+                      <Chip key={value} label={value} size="small" />
+                    ))}
+                  </Box>
+                )}
+              >
+                <MenuItem value="read">read</MenuItem>
+                <MenuItem value="write">write</MenuItem>
+                <MenuItem value="execute">execute</MenuItem>
+                <MenuItem value="delete">delete</MenuItem>
+                <MenuItem value="admin">admin</MenuItem>
+              </Select>
+              {permissionFormErrors.actions && (
+                <Typography variant="caption" color="error" sx={{ mt: 0.5, ml: 2 }}>
+                  권한을 선택하세요
+                </Typography>
+              )}
+            </FormControl>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setPermissionModalVisible(false)
+              setPermissionForm({ user_id: '', resource_type: '', resource_id: '', actions: [] })
+              setPermissionFormErrors({ user_id: false, resource_type: false, resource_id: false, actions: false })
+            }}
           >
-            <Input placeholder="사용자 UUID" />
-          </Form.Item>
-          <Form.Item
-            name="resource_type"
-            label="리소스 타입"
-            rules={[{ required: true, message: '리소스 타입을 선택하세요' }]}
+            취소
+          </Button>
+          <Button variant="contained" onClick={handleCreatePermission}>
+            추가
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 권한 삭제 확인 다이얼로그 */}
+      <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)}>
+        <DialogTitle>권한 삭제</DialogTitle>
+        <DialogContent>
+          <Typography>권한을 삭제하시겠습니까?</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteConfirmOpen(false)}>취소</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => {
+              if (permissionToDelete) {
+                handleDeletePermission(permissionToDelete)
+              }
+              setDeleteConfirmOpen(false)
+              setPermissionToDelete(null)
+            }}
           >
-            <Select placeholder="리소스 타입 선택">
-              <Option value="provider">데이터 제공자</Option>
-              <Option value="group">파이프라인 그룹</Option>
-              <Option value="pipeline">파이프라인</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item
-            name="resource_id"
-            label="리소스 ID"
-            rules={[{ required: true, message: '리소스 ID를 입력하세요' }]}
-          >
-            <Input placeholder="리소스 UUID" />
-          </Form.Item>
-          <Form.Item
-            name="actions"
-            label="권한"
-            rules={[{ required: true, message: '권한을 입력하세요' }]}
-          >
-            <Select mode="multiple" placeholder="권한 선택">
-              <Option value="read">read</Option>
-              <Option value="write">write</Option>
-              <Option value="execute">execute</Option>
-              <Option value="delete">delete</Option>
-              <Option value="admin">admin</Option>
-            </Select>
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+            삭제
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   )
 }

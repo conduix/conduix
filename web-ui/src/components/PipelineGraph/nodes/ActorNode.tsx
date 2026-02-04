@@ -1,27 +1,34 @@
 import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { Card, Badge, Tooltip, Progress } from 'antd'
 import {
-  ThunderboltOutlined,
-  FilterOutlined,
-  ExportOutlined,
-  ClusterOutlined,
-  BranchesOutlined,
-  WarningOutlined,
-} from '@ant-design/icons'
+  Card,
+  CardHeader,
+  CardContent,
+  Badge,
+  Tooltip,
+  LinearProgress,
+  Box,
+  Typography,
+} from '@mui/material'
+import BoltIcon from '@mui/icons-material/Bolt'
+import FilterAltIcon from '@mui/icons-material/FilterAlt'
+import OutputIcon from '@mui/icons-material/Output'
+import HubIcon from '@mui/icons-material/Hub'
+import AccountTreeIcon from '@mui/icons-material/AccountTree'
+import WarningIcon from '@mui/icons-material/Warning'
 import type { GraphNodeData, ActorType, ActorState } from '../../../types/graph'
 
 const typeIcons: Record<ActorType, React.ReactNode> = {
-  source: <ThunderboltOutlined />,
-  transform: <FilterOutlined />,
-  sink: <ExportOutlined />,
-  router: <BranchesOutlined />,
-  supervisor: <ClusterOutlined />,
+  source: <BoltIcon fontSize="small" />,
+  transform: <FilterAltIcon fontSize="small" />,
+  sink: <OutputIcon fontSize="small" />,
+  router: <AccountTreeIcon fontSize="small" />,
+  supervisor: <HubIcon fontSize="small" />,
 }
 
-const stateColors: Record<ActorState, 'default' | 'processing' | 'success' | 'warning' | 'error'> = {
+const stateColors: Record<ActorState, 'default' | 'primary' | 'success' | 'warning' | 'error'> = {
   created: 'default',
-  starting: 'processing',
+  starting: 'primary',
   running: 'success',
   stopping: 'warning',
   stopped: 'default',
@@ -76,77 +83,132 @@ export const ActorNode = memo(function ActorNode({ data, selected }: ActorNodePr
       )}
 
       <Card
-        size="small"
-        style={{
+        variant="outlined"
+        sx={{
           minWidth: 160,
           borderColor: getBorderColor(),
           borderWidth: selected ? 2 : 1,
           boxShadow: selected ? '0 0 10px rgba(24, 144, 255, 0.3)' : undefined,
         }}
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-            <span style={{ color: typeColors[type] }}>{typeIcons[type]}</span>
-            <span style={{ fontWeight: 500 }}>{actor_name}</span>
-            {hasErrors && (
-              <Tooltip title={`Error rate: ${errorRate.toFixed(1)}%`}>
-                <WarningOutlined style={{ color: isCritical ? '#ff4d4f' : '#faad14', fontSize: 12 }} />
-              </Tooltip>
-            )}
-          </div>
-        }
-        extra={
-          metrics && (
-            <Badge
-              status={stateColors[metrics.state]}
-              text={<span style={{ fontSize: 11 }}>{metrics.state}</span>}
-            />
-          )
-        }
-        styles={{
-          header: { padding: '6px 12px', minHeight: 36 },
-          body: { padding: '8px 12px' },
-        }}
       >
-        {metrics ? (
-          <div style={{ fontSize: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ color: '#666' }}>In:</span>
-              <strong>{metrics.input_count.toLocaleString()}</strong>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ color: '#666' }}>Out:</span>
-              <strong>{metrics.output_count.toLocaleString()}</strong>
-            </div>
-            {metrics.error_count > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#ff4d4f' }}>
-                <span>Err:</span>
-                <strong>{metrics.error_count.toLocaleString()}</strong>
-              </div>
-            )}
-            {metrics.throughput_per_sec > 0 && (
-              <div style={{ marginTop: 6 }}>
-                <Tooltip title={`${metrics.throughput_per_sec.toFixed(1)} records/sec`}>
-                  <Progress
-                    percent={Math.min(100, metrics.throughput_per_sec / 10)}
-                    size="small"
-                    showInfo={false}
-                    strokeColor={typeColors[type]}
+        <CardHeader
+          sx={{
+            py: 0.75,
+            px: 1.5,
+            minHeight: 36,
+            '& .MuiCardHeader-content': {
+              overflow: 'hidden',
+            },
+            '& .MuiCardHeader-action': {
+              alignSelf: 'center',
+              m: 0,
+            },
+          }}
+          title={
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              <Box sx={{ color: typeColors[type], display: 'flex', alignItems: 'center' }}>
+                {typeIcons[type]}
+              </Box>
+              <Typography
+                variant="body2"
+                sx={{ fontWeight: 500, fontSize: 13 }}
+              >
+                {actor_name}
+              </Typography>
+              {hasErrors && (
+                <Tooltip title={`Error rate: ${errorRate.toFixed(1)}%`}>
+                  <WarningIcon
+                    sx={{
+                      color: isCritical ? '#ff4d4f' : '#faad14',
+                      fontSize: 14,
+                    }}
                   />
                 </Tooltip>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div style={{ fontSize: 12, color: '#999', textAlign: 'center' }}>
-            No metrics
-          </div>
-        )}
+              )}
+            </Box>
+          }
+          action={
+            metrics && (
+              <Badge
+                color={stateColors[metrics.state]}
+                variant="dot"
+                sx={{
+                  '& .MuiBadge-badge': {
+                    right: 4,
+                    top: 4,
+                  },
+                }}
+              >
+                <Typography variant="caption" sx={{ fontSize: 11, pr: 1 }}>
+                  {metrics.state}
+                </Typography>
+              </Badge>
+            )
+          }
+        />
+        <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
+          {metrics ? (
+            <Box sx={{ fontSize: 12 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  In:
+                </Typography>
+                <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                  {metrics.input_count.toLocaleString()}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  Out:
+                </Typography>
+                <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                  {metrics.output_count.toLocaleString()}
+                </Typography>
+              </Box>
+              {metrics.error_count > 0 && (
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', color: '#ff4d4f' }}>
+                  <Typography variant="caption">Err:</Typography>
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                    {metrics.error_count.toLocaleString()}
+                  </Typography>
+                </Box>
+              )}
+              {metrics.throughput_per_sec > 0 && (
+                <Box sx={{ mt: 0.75 }}>
+                  <Tooltip title={`${metrics.throughput_per_sec.toFixed(1)} records/sec`}>
+                    <LinearProgress
+                      variant="determinate"
+                      value={Math.min(100, metrics.throughput_per_sec / 10)}
+                      sx={{
+                        height: 4,
+                        borderRadius: 2,
+                        '& .MuiLinearProgress-bar': {
+                          backgroundColor: typeColors[type],
+                        },
+                      }}
+                    />
+                  </Tooltip>
+                </Box>
+              )}
+            </Box>
+          ) : (
+            <Typography
+              variant="caption"
+              sx={{ color: 'text.disabled', textAlign: 'center', display: 'block' }}
+            >
+              No metrics
+            </Typography>
+          )}
 
-        {parallelism && parallelism > 1 && (
-          <div style={{ fontSize: 11, color: '#666', marginTop: 4, textAlign: 'right' }}>
-            x{parallelism}
-          </div>
-        )}
+          {parallelism && parallelism > 1 && (
+            <Typography
+              variant="caption"
+              sx={{ color: 'text.secondary', mt: 0.5, textAlign: 'right', display: 'block' }}
+            >
+              x{parallelism}
+            </Typography>
+          )}
+        </CardContent>
       </Card>
 
       {type !== 'sink' && (

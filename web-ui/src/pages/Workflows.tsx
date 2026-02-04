@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Space, Card, Typography } from 'antd'
-import { EyeOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
+import {
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  Chip,
+  IconButton,
+} from '@mui/material'
+import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
+import {
+  Visibility as EyeIcon,
+  PlayCircle as PlayIcon,
+  PauseCircle as PauseIcon,
+} from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
-
-const { Title } = Typography
 
 interface Workflow {
   id: string
@@ -38,7 +48,6 @@ export default function WorkflowsPage() {
       setLoading(true)
       const response = await api.getWorkflows()
       if (response.success) {
-        // Backend returns array directly, not wrapped in { items: [...] }
         const data = response.data
         setWorkflows(Array.isArray(data) ? data : (data.items || []))
       }
@@ -69,97 +78,129 @@ export default function WorkflowsPage() {
     }
   }
 
-  const columns = [
+  const columns: GridColDef[] = [
     {
-      title: t('workflow.name'),
-      dataIndex: 'name',
-      key: 'name',
-      render: (name: string, record: Workflow) => (
-        <a onClick={() => navigate(`/workflows/${record.id}`)}>{name}</a>
+      field: 'name',
+      headerName: t('workflow.name'),
+      flex: 1,
+      renderCell: (params: GridRenderCellParams<Workflow>) => (
+        <Typography
+          component="a"
+          sx={{ cursor: 'pointer', color: 'primary.main', textDecoration: 'none' }}
+          onClick={() => navigate(`/workflows/${params.row.id}`)}
+        >
+          {params.value}
+        </Typography>
       ),
     },
     {
-      title: t('workflow.project'),
-      dataIndex: ['project', 'name'],
-      key: 'project',
-      render: (name: string, record: Workflow) => (
-        <a onClick={() => navigate(`/projects/${record.project?.alias || record.project_id}`)}>
-          {name || '-'}
-        </a>
+      field: 'project',
+      headerName: t('workflow.project'),
+      width: 150,
+      valueGetter: (params) => params.row.project?.name || '-',
+      renderCell: (params: GridRenderCellParams<Workflow>) => (
+        <Typography
+          component="a"
+          sx={{ cursor: 'pointer', color: 'primary.main', textDecoration: 'none' }}
+          onClick={() => navigate(`/projects/${params.row.project?.alias || params.row.project_id}`)}
+        >
+          {params.row.project?.name || '-'}
+        </Typography>
       ),
     },
     {
-      title: t('workflow.type'),
-      dataIndex: 'type',
-      key: 'type',
-      render: (type: string) => (
-        <Tag color={type === 'realtime' ? 'blue' : 'orange'}>{type}</Tag>
+      field: 'type',
+      headerName: t('workflow.type'),
+      width: 120,
+      renderCell: (params) => (
+        <Chip
+          label={params.value}
+          color={params.value === 'realtime' ? 'primary' : 'warning'}
+          size="small"
+        />
       ),
     },
     {
-      title: t('common.status'),
-      dataIndex: 'status',
-      key: 'status',
-      render: (status: string) => {
-        const colorMap: Record<string, string> = {
-          running: 'green',
+      field: 'status',
+      headerName: t('common.status'),
+      width: 120,
+      renderCell: (params) => {
+        const colorMap: Record<string, 'success' | 'error' | 'warning' | 'default'> = {
+          running: 'success',
           idle: 'default',
           stopped: 'default',
-          error: 'red',
-          paused: 'orange',
+          error: 'error',
+          paused: 'warning',
         }
-        return <Tag color={colorMap[status] || 'default'}>{status}</Tag>
+        return (
+          <Chip
+            label={params.value || 'idle'}
+            color={colorMap[params.value] || 'default'}
+            size="small"
+          />
+        )
       },
     },
     {
-      title: t('common.createdAt'),
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (date: string) => new Date(date).toLocaleDateString(),
+      field: 'created_at',
+      headerName: t('common.createdAt'),
+      width: 120,
+      valueFormatter: ({ value }) => new Date(value).toLocaleDateString(),
     },
     {
-      title: t('common.actions'),
-      key: 'actions',
-      render: (_: unknown, record: Workflow) => (
-        <Space>
-          <Button
-            type="text"
-            icon={<EyeOutlined />}
-            onClick={() => navigate(`/workflows/${record.id}`)}
-          />
-          {record.status === 'running' ? (
-            <Button
-              type="text"
-              icon={<PauseCircleOutlined />}
-              onClick={(e) => handleStop(record.id, e)}
-            />
+      field: 'actions',
+      headerName: t('common.actions'),
+      width: 120,
+      sortable: false,
+      renderCell: (params: GridRenderCellParams<Workflow>) => (
+        <Box>
+          <IconButton
+            size="small"
+            onClick={() => navigate(`/workflows/${params.row.id}`)}
+          >
+            <EyeIcon fontSize="small" />
+          </IconButton>
+          {params.row.status === 'running' ? (
+            <IconButton
+              size="small"
+              onClick={(e) => handleStop(params.row.id, e)}
+            >
+              <PauseIcon fontSize="small" />
+            </IconButton>
           ) : (
-            <Button
-              type="text"
-              icon={<PlayCircleOutlined />}
-              onClick={(e) => handleStart(record.id, e)}
-            />
+            <IconButton
+              size="small"
+              onClick={(e) => handleStart(params.row.id, e)}
+            >
+              <PlayIcon fontSize="small" />
+            </IconButton>
           )}
-        </Space>
+        </Box>
       ),
     },
   ]
 
   return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0 }}>{t('workflow.title')}</Title>
-      </div>
+    <Box>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="h5">{t('workflow.title')}</Typography>
+      </Box>
 
       <Card>
-        <Table
-          dataSource={workflows}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 20 }}
-        />
+        <CardContent>
+          <DataGrid
+            rows={workflows}
+            columns={columns}
+            loading={loading}
+            autoHeight
+            pageSizeOptions={[20, 50, 100]}
+            initialState={{
+              pagination: { paginationModel: { pageSize: 20 } },
+            }}
+            disableRowSelectionOnClick
+          />
+        </CardContent>
       </Card>
-    </div>
+    </Box>
   )
 }

@@ -1,41 +1,70 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card,
-  Descriptions,
-  Tag,
-  Button,
-  Space,
-  message,
-  Spin,
+  CardContent,
+  CardHeader,
   Typography,
+  Box,
+  Button,
+  Chip,
   Tabs,
+  Tab,
+  CircularProgress,
   Table,
-  Empty,
-  Breadcrumb,
-  Modal,
-  Form,
-  Input,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Breadcrumbs,
+  Link,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
   Select,
-  Popconfirm,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  FormHelperText,
   Avatar,
-} from 'antd'
+  IconButton,
+  Autocomplete,
+} from '@mui/material'
 import {
-  ArrowLeftOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  TeamOutlined,
-  SettingOutlined,
-  UserOutlined,
-  PlusOutlined,
-  DatabaseOutlined,
-  EyeOutlined,
-} from '@ant-design/icons'
+  ArrowBack as ArrowBackIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Groups as GroupsIcon,
+  Settings as SettingsIcon,
+  Person as PersonIcon,
+  Add as AddIcon,
+  Storage as StorageIcon,
+  Visibility as VisibilityIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
+import { useSnackbar } from '../hooks/useSnackbar'
+import { ConfirmDialog } from '../components/common/ConfirmDialog'
 import debounce from 'lodash/debounce'
 
-const { Title } = Typography
+interface TabPanelProps {
+  children?: React.ReactNode
+  index: number
+  value: number
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props
+  return (
+    <div role="tabpanel" hidden={value !== index} {...other}>
+      {value === index && <Box sx={{ pt: 2 }}>{children}</Box>}
+    </div>
+  )
+}
 
 // 사용자 검색 결과 타입
 interface UserOption {
@@ -114,17 +143,34 @@ export default function ProjectDetailPage() {
   const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { showSuccess, showError } = useSnackbar()
   const [project, setProject] = useState<Project | null>(null)
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
-  const [editModalVisible, setEditModalVisible] = useState(false)
-  const [form] = Form.useForm()
+  const [tabValue, setTabValue] = useState(0)
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+
+  // Form state
+  const [formData, setFormData] = useState({
+    name: '',
+    alias: '',
+    description: '',
+    status: 'active',
+    tags: '',
+  })
 
   // Workflow 관련 상태
-  const [workflowModalVisible, setWorkflowModalVisible] = useState(false)
+  const [workflowModalOpen, setWorkflowModalOpen] = useState(false)
   const [editingWorkflow, setEditingWorkflow] = useState<Workflow | null>(null)
-  const [workflowForm] = Form.useForm()
+  const [workflowForm, setWorkflowForm] = useState({
+    name: '',
+    slug: '',
+    type: 'batch' as 'batch' | 'realtime',
+    description: '',
+  })
   const [workflowSaving, setWorkflowSaving] = useState(false)
+  const [deleteWorkflowId, setDeleteWorkflowId] = useState<string | null>(null)
 
   // 담당자 검색 관련 상태
   const [userOptions, setUserOptions] = useState<UserOption[]>([])
@@ -133,46 +179,47 @@ export default function ProjectDetailPage() {
 
   // DataType 관련 상태
   const [dataTypes, setDataTypes] = useState<DataType[]>([])
-  const [dataTypeModalVisible, setDataTypeModalVisible] = useState(false)
+  const [dataTypeModalOpen, setDataTypeModalOpen] = useState(false)
   const [editingDataType, setEditingDataType] = useState<DataType | null>(null)
-  const [dataTypeForm] = Form.useForm()
+  const [dataTypeForm, setDataTypeForm] = useState({
+    display_name: '',
+    name: '',
+    description: '',
+    category: 'master',
+    parent_id: '',
+    key_field: 'id',
+    id_fields: [] as string[],
+    json_schema: '',
+  })
   const [dataTypeSaving, setDataTypeSaving] = useState(false)
   const [selectedParentId, setSelectedParentId] = useState<string | undefined>(undefined)
+  const [deleteDataTypeId, setDeleteDataTypeId] = useState<string | null>(null)
 
-  // 사용자 검색 (디바운스)
-  const debouncedSearch = useCallback(
-    debounce(async (query: string) => {
-      if (!query || query.length < 2) {
-        setUserOptions([])
-        setSearchingUsers(false)
-        return
-      }
-      setSearchingUsers(true)
-      try {
-        const response = await api.searchUsers(query)
-        if (response.success) {
-          setUserOptions(response.data || [])
+  // 사용자 검색 (디바운스) - useMemo로 debounce 함수 생성
+  const debouncedSearch = useMemo(
+    () =>
+      debounce(async (query: string) => {
+        if (!query || query.length < 2) {
+          setUserOptions([])
+          setSearchingUsers(false)
+          return
         }
-      } catch (error) {
-        console.error('User search failed:', error)
-      } finally {
-        setSearchingUsers(false)
-      }
-    }, 300),
+        setSearchingUsers(true)
+        try {
+          const response = await api.searchUsers(query)
+          if (response.success) {
+            setUserOptions(response.data || [])
+          }
+        } catch (error) {
+          console.error('User search failed:', error)
+        } finally {
+          setSearchingUsers(false)
+        }
+      }, 300),
     []
   )
 
-  const handleUserSearch = (value: string) => {
-    debouncedSearch(value)
-  }
-
-  useEffect(() => {
-    if (id) {
-      fetchProjectData()
-    }
-  }, [id])
-
-  const fetchProjectData = async () => {
+  const fetchProjectData = useCallback(async () => {
     try {
       setLoading(true)
       const [projectRes, workflowsRes, dataTypesRes] = await Promise.all([
@@ -191,15 +238,21 @@ export default function ProjectDetailPage() {
         setDataTypes(dataTypesRes.data || [])
       }
     } catch (error) {
-      message.error(t('project.loadError'))
+      showError(t('project.loadError'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [id, showError, t])
+
+  useEffect(() => {
+    if (id) {
+      fetchProjectData()
+    }
+  }, [id, fetchProjectData])
 
   const handleEdit = () => {
     if (!project) return
-    form.setFieldsValue({
+    setFormData({
       name: project.name,
       alias: project.alias,
       description: project.description,
@@ -216,7 +269,6 @@ export default function ProjectDetailPage() {
       }))
       setSelectedOwners(owners)
     } else if (project.owner) {
-      // 기존 단일 owner 호환
       setSelectedOwners([{
         id: project.owner.id,
         email: project.owner.email,
@@ -226,25 +278,24 @@ export default function ProjectDetailPage() {
       setSelectedOwners([])
     }
     setUserOptions([])
-    setEditModalVisible(true)
+    setEditModalOpen(true)
   }
 
   const handleEditSubmit = async () => {
     try {
-      const values = await form.validateFields()
-      // 담당자 ID 목록 추가
       const ownerIds = selectedOwners.map(o => o.id)
-      const submitData = { ...values, owner_ids: ownerIds }
+      const submitData = { ...formData, owner_ids: ownerIds }
       const response = await api.updateProject(id!, submitData)
       if (response.success) {
-        message.success(t('project.updateSuccess'))
-        setEditModalVisible(false)
+        showSuccess(t('project.updateSuccess'))
+        setEditModalOpen(false)
         fetchProjectData()
       } else {
-        message.error(response.error || t('project.updateError'))
+        showError(response.error || t('project.updateError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('project.updateError'))
+    } catch (error: unknown) {
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || t('project.updateError'))
     }
   }
 
@@ -252,87 +303,88 @@ export default function ProjectDetailPage() {
     try {
       const response = await api.deleteProject(id!)
       if (response.success) {
-        message.success(t('project.deleteSuccess'))
+        showSuccess(t('project.deleteSuccess'))
         navigate('/projects')
       } else {
-        message.error(response.error || t('project.deleteError'))
+        showError(response.error || t('project.deleteError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('project.deleteError'))
+    } catch (error: unknown) {
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || t('project.deleteError'))
     }
   }
 
   // Workflow CRUD handlers
   const handleCreateWorkflow = () => {
     setEditingWorkflow(null)
-    workflowForm.resetFields()
-    workflowForm.setFieldsValue({ type: 'batch' })
-    setWorkflowModalVisible(true)
+    setWorkflowForm({ name: '', slug: '', type: 'batch', description: '' })
+    setWorkflowModalOpen(true)
   }
 
   const handleEditWorkflow = (workflow: Workflow) => {
     setEditingWorkflow(workflow)
-    workflowForm.setFieldsValue({
+    setWorkflowForm({
       name: workflow.name,
       slug: workflow.slug,
       type: workflow.type,
       description: workflow.description,
     })
-    setWorkflowModalVisible(true)
+    setWorkflowModalOpen(true)
   }
 
   const handleWorkflowSubmit = async () => {
     try {
-      const values = await workflowForm.validateFields()
       setWorkflowSaving(true)
 
       if (editingWorkflow) {
-        // 수정
-        const response = await api.updateWorkflow(editingWorkflow.id, values)
+        const response = await api.updateWorkflow(editingWorkflow.id, workflowForm)
         if (response.success) {
-          message.success(t('workflow.updateSuccess'))
-          setWorkflowModalVisible(false)
+          showSuccess(t('workflow.updateSuccess'))
+          setWorkflowModalOpen(false)
           fetchProjectData()
         } else {
-          message.error(response.error || t('workflow.updateError'))
+          showError(response.error || t('workflow.updateError'))
         }
       } else {
-        // 생성 - project.id (UUID) 사용
         if (!project?.id) {
-          message.error(t('project.notFound'))
+          showError(t('project.notFound'))
           return
         }
         const response = await api.createWorkflow({
           project_id: project.id,
-          ...values,
+          ...workflowForm,
         })
         if (response.success) {
-          message.success(t('workflow.createSuccess'))
-          setWorkflowModalVisible(false)
+          showSuccess(t('workflow.createSuccess'))
+          setWorkflowModalOpen(false)
           fetchProjectData()
         } else {
-          message.error(response.error || t('workflow.createError'))
+          showError(response.error || t('workflow.createError'))
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const errorMsg = editingWorkflow ? t('workflow.updateError') : t('workflow.createError')
-      message.error(error.response?.data?.error || errorMsg)
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || errorMsg)
     } finally {
       setWorkflowSaving(false)
     }
   }
 
-  const handleDeleteWorkflow = async (workflowId: string) => {
+  const handleDeleteWorkflow = async () => {
+    if (!deleteWorkflowId) return
     try {
-      const response = await api.deleteWorkflow(workflowId)
+      const response = await api.deleteWorkflow(deleteWorkflowId)
       if (response.success) {
-        message.success(t('workflow.deleteSuccess'))
+        showSuccess(t('workflow.deleteSuccess'))
+        setDeleteWorkflowId(null)
         fetchProjectData()
       } else {
-        message.error(response.error || t('workflow.deleteError'))
+        showError(response.error || t('workflow.deleteError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('workflow.deleteError'))
+    } catch (error: unknown) {
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || t('workflow.deleteError'))
     }
   }
 
@@ -340,15 +392,22 @@ export default function ProjectDetailPage() {
   const handleCreateDataType = () => {
     setEditingDataType(null)
     setSelectedParentId(undefined)
-    dataTypeForm.resetFields()
-    dataTypeForm.setFieldsValue({ category: 'master', key_field: 'id' })
-    setDataTypeModalVisible(true)
+    setDataTypeForm({
+      display_name: '',
+      name: '',
+      description: '',
+      category: 'master',
+      parent_id: '',
+      key_field: 'id',
+      id_fields: [],
+      json_schema: '',
+    })
+    setDataTypeModalOpen(true)
   }
 
   const handleEditDataType = (dataType: DataType) => {
     setEditingDataType(dataType)
     setSelectedParentId(dataType.parent_id || undefined)
-    // id_fields는 JSON 문자열이므로 파싱 필요
     let idFieldsArray: string[] = []
     if (dataType.id_fields) {
       try {
@@ -357,22 +416,17 @@ export default function ProjectDetailPage() {
         idFieldsArray = []
       }
     }
-    // 부모가 없으면 key_field 하나, 있으면 id_fields 복합키
-    const formValues: Record<string, unknown> = {
+    setDataTypeForm({
       display_name: dataType.display_name,
       name: dataType.name,
-      description: dataType.description,
+      description: dataType.description || '',
       category: dataType.category || 'master',
-      parent_id: dataType.parent_id || undefined,
+      parent_id: dataType.parent_id || '',
+      key_field: !dataType.parent_id && idFieldsArray.length > 0 ? idFieldsArray[0] : 'id',
+      id_fields: dataType.parent_id ? idFieldsArray : [],
       json_schema: dataType.json_schema || '',
-    }
-    if (dataType.parent_id) {
-      formValues.id_fields = idFieldsArray
-    } else {
-      formValues.key_field = idFieldsArray.length > 0 ? idFieldsArray[0] : 'id'
-    }
-    dataTypeForm.setFieldsValue(formValues)
-    setDataTypeModalVisible(true)
+    })
+    setDataTypeModalOpen(true)
   }
 
   // 부모 체인을 따라 모든 조상을 찾아 복합키 생성
@@ -380,72 +434,68 @@ export default function ProjectDetailPage() {
     const keyFields: string[] = []
     let currentId: string | undefined = parentId
 
-    // 조상 체인 탐색 (부모 → 조부모 → ...)
     while (currentId) {
       const dataType = dataTypes.find(dt => dt.id === currentId)
       if (dataType) {
-        keyFields.unshift(`${dataType.name}_id`) // 앞에 추가 (root부터 순서대로)
+        keyFields.unshift(`${dataType.name}_id`)
         currentId = dataType.parent_id || undefined
       } else {
         break
       }
     }
 
-    keyFields.push('id') // 마지막에 자기 자신의 id
+    keyFields.push('id')
     return keyFields
   }
 
   const handleParentChange = (parentId: string | undefined) => {
     setSelectedParentId(parentId)
     if (parentId) {
-      // 부모 선택 시 복합키 기본값 설정 (조상 체인 전체 포함)
       const keyFields = buildCompositeKeyFields(parentId)
-      dataTypeForm.setFieldsValue({
+      setDataTypeForm(prev => ({
+        ...prev,
+        parent_id: parentId,
         id_fields: keyFields,
-      })
+      }))
     } else {
-      // 부모 해제 시 단일 키 필드로 전환
-      dataTypeForm.setFieldsValue({
+      setDataTypeForm(prev => ({
+        ...prev,
+        parent_id: '',
         key_field: 'id',
-      })
+      }))
     }
   }
 
   const handleDataTypeSubmit = async () => {
     try {
-      const values = await dataTypeForm.validateFields()
       setDataTypeSaving(true)
 
-      // parent_id가 빈 문자열이면 null로 변환
-      // key_field 또는 id_fields를 id_fields 배열로 통합 (공백 제거)
-      const idFieldsArray = values.parent_id
-        ? (values.id_fields || []).map((f: string) => f.trim()).filter((f: string) => f)
-        : values.key_field ? [values.key_field.trim()].filter((f: string) => f) : []
+      const idFieldsArray = dataTypeForm.parent_id
+        ? dataTypeForm.id_fields.map(f => f.trim()).filter(f => f)
+        : dataTypeForm.key_field ? [dataTypeForm.key_field.trim()].filter(f => f) : []
 
       const submitData = {
-        display_name: values.display_name,
-        name: values.name,
-        description: values.description,
-        category: values.category,
-        parent_id: values.parent_id || null,
+        display_name: dataTypeForm.display_name,
+        name: dataTypeForm.name,
+        description: dataTypeForm.description,
+        category: dataTypeForm.category,
+        parent_id: dataTypeForm.parent_id || null,
         id_fields: idFieldsArray,
-        json_schema: values.json_schema || null,
+        json_schema: dataTypeForm.json_schema || null,
       }
 
       if (editingDataType) {
-        // 수정
         const response = await api.updateDataType(editingDataType.id, submitData)
         if (response.success) {
-          message.success(t('dataModel.updateSuccess'))
-          setDataTypeModalVisible(false)
+          showSuccess(t('dataModel.updateSuccess'))
+          setDataTypeModalOpen(false)
           fetchProjectData()
         } else {
-          message.error(response.error || t('dataModel.updateError'))
+          showError(response.error || t('dataModel.updateError'))
         }
       } else {
-        // 생성 - project.id (UUID) 사용
         if (!project?.id) {
-          message.error(t('project.notFound'))
+          showError(t('project.notFound'))
           return
         }
         const response = await api.createDataType({
@@ -453,146 +503,72 @@ export default function ProjectDetailPage() {
           ...submitData,
         })
         if (response.success) {
-          message.success(t('dataModel.createSuccess'))
-          setDataTypeModalVisible(false)
+          showSuccess(t('dataModel.createSuccess'))
+          setDataTypeModalOpen(false)
           fetchProjectData()
         } else {
-          message.error(response.error || t('dataModel.createError'))
+          showError(response.error || t('dataModel.createError'))
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const errorMsg = editingDataType ? t('dataModel.updateError') : t('dataModel.createError')
-      message.error(error.response?.data?.error || errorMsg)
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || errorMsg)
     } finally {
       setDataTypeSaving(false)
     }
   }
 
-  const handleDeleteDataType = async (dataTypeId: string) => {
+  const handleDeleteDataType = async () => {
+    if (!deleteDataTypeId) return
     try {
-      const response = await api.deleteDataType(dataTypeId)
+      const response = await api.deleteDataType(deleteDataTypeId)
       if (response.success) {
-        message.success(t('dataModel.deleteSuccess'))
+        showSuccess(t('dataModel.deleteSuccess'))
+        setDeleteDataTypeId(null)
         fetchProjectData()
       } else {
-        message.error(response.error || t('dataModel.deleteError'))
+        showError(response.error || t('dataModel.deleteError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('dataModel.deleteError'))
+    } catch (error: unknown) {
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || t('dataModel.deleteError'))
     }
   }
 
   const getCategoryConfig = (category: string) => {
-    const configs: Record<string, { color: string; text: string }> = {
-      master: { color: 'blue', text: t('dataModel.categories.master') },
-      transaction: { color: 'green', text: t('dataModel.categories.transaction') },
-      log: { color: 'orange', text: t('dataModel.categories.log') },
-      metric: { color: 'purple', text: t('dataModel.categories.metric') },
-      reference: { color: 'cyan', text: t('dataModel.categories.reference') },
+    const configs: Record<string, { color: 'primary' | 'success' | 'warning' | 'secondary' | 'info' | 'default'; text: string }> = {
+      master: { color: 'primary', text: t('dataModel.categories.master') },
+      transaction: { color: 'success', text: t('dataModel.categories.transaction') },
+      log: { color: 'warning', text: t('dataModel.categories.log') },
+      metric: { color: 'secondary', text: t('dataModel.categories.metric') },
+      reference: { color: 'info', text: t('dataModel.categories.reference') },
     }
-    return configs[category] || { color: 'default', text: category }
+    return configs[category] || { color: 'default' as const, text: category }
   }
 
   const getStatusConfig = (status: string) => {
-    const configs: Record<string, { color: string; text: string }> = {
-      active: { color: 'green', text: t('status.active') },
+    const configs: Record<string, { color: 'success' | 'default' | 'warning'; text: string }> = {
+      active: { color: 'success', text: t('status.active') },
       inactive: { color: 'default', text: t('status.inactive') },
-      archived: { color: 'orange', text: t('status.archived') },
+      archived: { color: 'warning', text: t('status.archived') },
     }
-    return configs[status] || { color: 'default', text: status }
+    return configs[status] || { color: 'default' as const, text: status }
   }
 
   const getWorkflowStatusConfig = (status: string) => {
-    const configs: Record<string, { color: string; text: string }> = {
+    const configs: Record<string, { color: 'default' | 'success' | 'warning' | 'error' | 'primary'; text: string }> = {
       idle: { color: 'default', text: t('pipeline.status.idle') },
-      running: { color: 'green', text: t('pipeline.status.running') },
-      paused: { color: 'orange', text: t('pipeline.status.paused') },
+      running: { color: 'success', text: t('pipeline.status.running') },
+      paused: { color: 'warning', text: t('pipeline.status.paused') },
       stopped: { color: 'default', text: t('pipeline.status.stopped') },
-      error: { color: 'red', text: t('pipeline.status.error') },
-      completed: { color: 'blue', text: t('pipeline.status.completed') },
+      error: { color: 'error', text: t('pipeline.status.error') },
+      completed: { color: 'primary', text: t('pipeline.status.completed') },
     }
-    return configs[status] || { color: 'default', text: status }
+    return configs[status] || { color: 'default' as const, text: status }
   }
 
-  const workflowColumns = [
-    {
-      title: t('workflow.name'),
-      dataIndex: 'name',
-      key: 'name',
-      render: (name: string, record: Workflow) => (
-        <div>
-          <a onClick={() => navigate(`/workflows/${record.id}`)}>{name}</a>
-          <div style={{ fontSize: 12, color: '#999' }}>
-            <code>{record.slug}</code>
-          </div>
-        </div>
-      ),
-    },
-    {
-      title: t('workflow.type'),
-      dataIndex: 'type',
-      key: 'type',
-      width: 100,
-      render: (type: string) => (
-        <Tag color={type === 'realtime' ? 'blue' : 'purple'}>
-          {type === 'realtime' ? t('workflow.realtime') : t('workflow.batch')}
-        </Tag>
-      ),
-    },
-    {
-      title: t('common.status'),
-      dataIndex: 'status',
-      key: 'status',
-      width: 100,
-      render: (status: string) => {
-        const config = getWorkflowStatusConfig(status)
-        return <Tag color={config.color}>{config.text}</Tag>
-      },
-    },
-    {
-      title: t('workflow.enabled'),
-      dataIndex: 'schedule_enabled',
-      key: 'schedule_enabled',
-      width: 80,
-      render: (enabled: boolean) => (
-        <Tag color={enabled ? 'green' : 'default'}>
-          {enabled ? t('workflow.on') : t('workflow.off')}
-        </Tag>
-      ),
-    },
-    {
-      title: t('common.description'),
-      dataIndex: 'description',
-      key: 'description',
-      ellipsis: true,
-      render: (desc: string) => desc || '-',
-    },
-    {
-      title: t('common.actions'),
-      key: 'actions',
-      width: 120,
-      render: (_: unknown, record: Workflow) => (
-        <Space>
-          <Button
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => handleEditWorkflow(record)}
-          />
-          <Popconfirm
-            title={t('workflow.deleteConfirm')}
-            description={t('workflow.deleteWarning')}
-            onConfirm={() => handleDeleteWorkflow(record.id)}
-            okText={t('common.delete')}
-            cancelText={t('common.cancel')}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ]
-
-  // DataType의 depth 계산 (부모 체인 따라가며)
+  // DataType depth calculation
   const getDataTypeDepth = (dt: DataType): number => {
     let depth = 0
     let currentParentId = dt.parent_id
@@ -604,7 +580,7 @@ export default function ProjectDetailPage() {
     return depth
   }
 
-  // DataType을 계층 구조로 정렬
+  // Sort dataTypes hierarchically
   const getHierarchicalDataTypes = (): DataType[] => {
     const result: DataType[] = []
     const addWithChildren = (parentId: string | null) => {
@@ -622,592 +598,664 @@ export default function ProjectDetailPage() {
 
   const hierarchicalDataTypes = getHierarchicalDataTypes()
 
-  const dataTypeColumns = [
-    {
-      title: t('dataModel.name'),
-      dataIndex: 'display_name',
-      key: 'display_name',
-      render: (displayName: string, record: DataType) => {
-        const depth = getDataTypeDepth(record)
-        return (
-          <div style={{ paddingLeft: depth * 24 }}>
-            <Space size={4}>
-              {depth > 0 && (
-                <span style={{ color: '#999', fontSize: 12 }}>└─</span>
-              )}
-              <a onClick={() => navigate(`/data-models/${record.id}`)}>{displayName}</a>
-            </Space>
-            <div style={{ fontSize: 12, color: '#999', paddingLeft: depth > 0 ? 20 : 0 }}>
-              <code>{record.name}</code>
-            </div>
-          </div>
-        )
-      },
-    },
-    {
-      title: t('dataModel.category'),
-      dataIndex: 'category',
-      key: 'category',
-      width: 140,
-      render: (category: string) => {
-        const config = getCategoryConfig(category || 'master')
-        return <Tag color={config.color}>{config.text}</Tag>
-      },
-    },
-    {
-      title: t('common.description'),
-      dataIndex: 'description',
-      key: 'description',
-      ellipsis: true,
-      render: (desc: string) => desc || '-',
-    },
-    {
-      title: t('common.updatedAt'),
-      dataIndex: 'updated_at',
-      key: 'updated_at',
-      width: 160,
-      render: (date: string) => new Date(date).toLocaleString(),
-    },
-    {
-      title: t('common.actions'),
-      key: 'actions',
-      width: 150,
-      render: (_: unknown, record: DataType) => {
-        // 자식이 있으면 삭제 불가
-        const hasChildren = dataTypes.some(dt => dt.parent_id === record.id)
-        return (
-          <Space>
-            <Button
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={() => navigate(`/data-models/${record.id}`)}
-              title={t('dataModel.viewDetail')}
-            />
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => handleEditDataType(record)}
-              title={t('common.edit')}
-            />
-            {!hasChildren && (
-              <Popconfirm
-                title={t('dataModel.deleteConfirm')}
-                description={t('dataModel.deleteWarning')}
-                onConfirm={() => handleDeleteDataType(record.id)}
-                okText={t('common.delete')}
-                cancelText={t('common.cancel')}
-              >
-                <Button size="small" danger icon={<DeleteOutlined />} title={t('common.delete')} />
-              </Popconfirm>
-            )}
-          </Space>
-        )
-      },
-    },
-  ]
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue)
+  }
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 400 }}>
-        <Spin size="large" />
-      </div>
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+        <CircularProgress />
+      </Box>
     )
   }
 
   if (!project) {
     return (
-      <Empty description={t('project.notFound')}>
-        <Button type="primary" onClick={() => navigate('/projects')}>
+      <Box sx={{ textAlign: 'center', py: 6 }}>
+        <Typography color="text.secondary" sx={{ mb: 2 }}>{t('project.notFound')}</Typography>
+        <Button variant="contained" onClick={() => navigate('/projects')}>
           {t('common.back')}
         </Button>
-      </Empty>
+      </Box>
     )
   }
 
   const statusConfig = getStatusConfig(project.status)
 
   return (
-    <div>
-      <Breadcrumb
-        style={{ marginBottom: 16 }}
-        items={[
-          { title: <a onClick={() => navigate('/projects')}>{t('project.title')}</a> },
-          { title: project.name },
-        ]}
-      />
+    <Box>
+      <Breadcrumbs sx={{ mb: 2 }}>
+        <Link
+          component="button"
+          underline="hover"
+          color="inherit"
+          onClick={() => navigate('/projects')}
+        >
+          {t('project.title')}
+        </Link>
+        <Typography color="text.primary">{project.name}</Typography>
+      </Breadcrumbs>
 
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')}>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/projects')}>
             {t('common.list')}
           </Button>
-          <Title level={4} style={{ margin: 0 }}>
-            {project.name}
-          </Title>
-          <Tag color={statusConfig.color}>{statusConfig.text}</Tag>
-        </Space>
-        <Space>
-          <Button icon={<EditOutlined />} onClick={handleEdit}>
+          <Typography variant="h5">{project.name}</Typography>
+          <Chip label={statusConfig.text} color={statusConfig.color} size="small" />
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button startIcon={<EditIcon />} onClick={handleEdit}>
             {t('common.edit')}
           </Button>
-          <Popconfirm
-            title={t('project.deleteConfirm')}
-            description={t('project.deleteWarning')}
-            onConfirm={handleDelete}
-            okText={t('common.delete')}
-            cancelText={t('common.cancel')}
+          <Button
+            color="error"
+            startIcon={<DeleteIcon />}
+            onClick={() => setDeleteDialogOpen(true)}
           >
-            <Button danger icon={<DeleteOutlined />}>
-              {t('common.delete')}
-            </Button>
-          </Popconfirm>
-        </Space>
-      </div>
+            {t('common.delete')}
+          </Button>
+        </Box>
+      </Box>
 
-      <Tabs
-        defaultActiveKey="overview"
-        items={[
-          {
-            key: 'overview',
-            label: (
-              <span>
-                <SettingOutlined />
-                {t('project.overview')}
-              </span>
-            ),
-            children: (
-              <Card>
-                <Descriptions bordered column={2}>
-                  <Descriptions.Item label={t('project.name')}>
-                    {project.name}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('project.alias')}>
-                    <code>{project.alias}</code>
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('common.status')}>
-                    <Tag color={statusConfig.color}>{statusConfig.text}</Tag>
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('common.owner')}>
-                    {project.owners && project.owners.length > 0 ? (
-                      <Space wrap size={8}>
-                        {project.owners.map(po => (
-                          <Tag
-                            key={po.id}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              padding: '4px 8px',
-                              margin: 0,
-                            }}
-                          >
-                            <Avatar size={20} src={po.user.avatar_url} icon={<UserOutlined />} />
-                            <span>{po.user.name || po.user.email}</span>
-                          </Tag>
-                        ))}
-                      </Space>
-                    ) : project.owner ? (
-                      <Tag
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '4px 8px',
-                          margin: 0,
-                        }}
-                      >
-                        <Avatar size={20} icon={<UserOutlined />} />
-                        <span>{project.owner.name || project.owner.email}</span>
-                      </Tag>
-                    ) : (
-                      '-'
-                    )}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('common.description')} span={2}>
-                    {project.description || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('common.tags')} span={2}>
-                    {project.tags ? (
-                      <Space>
-                        {project.tags.split(',').map((tag, i) => (
-                          <Tag key={i}>{tag.trim()}</Tag>
-                        ))}
-                      </Space>
-                    ) : (
-                      '-'
-                    )}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('common.createdAt')}>
-                    {new Date(project.created_at).toLocaleString()}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('common.updatedAt')}>
-                    {new Date(project.updated_at).toLocaleString()}
-                  </Descriptions.Item>
-                </Descriptions>
-              </Card>
-            ),
-          },
-          {
-            key: 'dataTypes',
-            label: (
-              <span>
-                <DatabaseOutlined />
-                {t('dataModel.title')} ({dataTypes.length})
-              </span>
-            ),
-            children: (
-              <Card
-                title={t('dataModel.title')}
-                extra={
-                  <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateDataType}>
-                    {t('dataModel.new')}
-                  </Button>
-                }
+      <Tabs value={tabValue} onChange={handleTabChange} sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Tab icon={<SettingsIcon />} iconPosition="start" label={t('project.overview')} />
+        <Tab icon={<StorageIcon />} iconPosition="start" label={`${t('dataModel.title')} (${dataTypes.length})`} />
+        <Tab icon={<GroupsIcon />} iconPosition="start" label={t('project.workflows', { count: workflows.length })} />
+      </Tabs>
+
+      <TabPanel value={tabValue} index={0}>
+        <Card>
+          <CardContent>
+            <TableContainer component={Paper} variant="outlined">
+              <Table>
+                <TableBody>
+                  <TableRow>
+                    <TableCell component="th" sx={{ width: 150, bgcolor: 'grey.50' }}>{t('project.name')}</TableCell>
+                    <TableCell>{project.name}</TableCell>
+                    <TableCell component="th" sx={{ width: 150, bgcolor: 'grey.50' }}>{t('project.alias')}</TableCell>
+                    <TableCell><code>{project.alias}</code></TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('common.status')}</TableCell>
+                    <TableCell>
+                      <Chip label={statusConfig.text} color={statusConfig.color} size="small" />
+                    </TableCell>
+                    <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('common.owner')}</TableCell>
+                    <TableCell>
+                      {project.owners && project.owners.length > 0 ? (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {project.owners.map(po => (
+                            <Chip
+                              key={po.id}
+                              avatar={<Avatar src={po.user.avatar_url}><PersonIcon /></Avatar>}
+                              label={po.user.name || po.user.email}
+                              size="small"
+                            />
+                          ))}
+                        </Box>
+                      ) : project.owner ? (
+                        <Chip
+                          avatar={<Avatar><PersonIcon /></Avatar>}
+                          label={project.owner.name || project.owner.email}
+                          size="small"
+                        />
+                      ) : '-'}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('common.description')}</TableCell>
+                    <TableCell colSpan={3}>{project.description || '-'}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('common.tags')}</TableCell>
+                    <TableCell colSpan={3}>
+                      {project.tags ? (
+                        <Box sx={{ display: 'flex', gap: 0.5 }}>
+                          {project.tags.split(',').map((tag, i) => (
+                            <Chip key={i} label={tag.trim()} size="small" variant="outlined" />
+                          ))}
+                        </Box>
+                      ) : '-'}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('common.createdAt')}</TableCell>
+                    <TableCell>{new Date(project.created_at).toLocaleString()}</TableCell>
+                    <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('common.updatedAt')}</TableCell>
+                    <TableCell>{new Date(project.updated_at).toLocaleString()}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </CardContent>
+        </Card>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={1}>
+        <Card>
+          <CardHeader
+            title={t('dataModel.title')}
+            action={
+              <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateDataType}>
+                {t('dataModel.new')}
+              </Button>
+            }
+          />
+          <CardContent>
+            {dataTypes.length > 0 ? (
+              <TableContainer component={Paper} variant="outlined">
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>{t('dataModel.name')}</TableCell>
+                      <TableCell sx={{ width: 140 }}>{t('dataModel.category')}</TableCell>
+                      <TableCell>{t('common.description')}</TableCell>
+                      <TableCell sx={{ width: 160 }}>{t('common.updatedAt')}</TableCell>
+                      <TableCell sx={{ width: 150 }}>{t('common.actions')}</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {hierarchicalDataTypes.map((dataType) => {
+                      const depth = getDataTypeDepth(dataType)
+                      const hasChildren = dataTypes.some(dt => dt.parent_id === dataType.id)
+                      const categoryConfig = getCategoryConfig(dataType.category || 'master')
+                      return (
+                        <TableRow key={dataType.id}>
+                          <TableCell>
+                            <Box sx={{ pl: depth * 3 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                {depth > 0 && (
+                                  <Typography color="text.secondary" sx={{ fontSize: 12 }}>--</Typography>
+                                )}
+                                <Link
+                                  component="button"
+                                  underline="hover"
+                                  onClick={() => navigate(`/data-models/${dataType.id}`)}
+                                >
+                                  {dataType.display_name}
+                                </Link>
+                              </Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ pl: depth > 0 ? 2.5 : 0 }}>
+                                <code>{dataType.name}</code>
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={categoryConfig.text} color={categoryConfig.color} size="small" />
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {dataType.description || '-'}
+                          </TableCell>
+                          <TableCell>{new Date(dataType.updated_at).toLocaleString()}</TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', gap: 0.5 }}>
+                              <IconButton
+                                size="small"
+                                onClick={() => navigate(`/data-models/${dataType.id}`)}
+                                title={t('dataModel.viewDetail')}
+                              >
+                                <VisibilityIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleEditDataType(dataType)}
+                                title={t('common.edit')}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                              {!hasChildren && (
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => setDeleteDataTypeId(dataType.id)}
+                                  title={t('common.delete')}
+                                >
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              )}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Box sx={{ textAlign: 'center', py: 6 }}>
+                <Typography color="text.secondary" sx={{ mb: 2 }}>{t('dataModel.noDataModels')}</Typography>
+                <Button variant="contained" onClick={handleCreateDataType}>
+                  {t('dataModel.new')}
+                </Button>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={2}>
+        <Card>
+          <CardHeader
+            title={t('workflow.title')}
+            action={
+              <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreateWorkflow}>
+                {t('workflow.new')}
+              </Button>
+            }
+          />
+          <CardContent>
+            {workflows.length > 0 ? (
+              <TableContainer component={Paper} variant="outlined">
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>{t('workflow.name')}</TableCell>
+                      <TableCell sx={{ width: 100 }}>{t('workflow.type')}</TableCell>
+                      <TableCell sx={{ width: 100 }}>{t('common.status')}</TableCell>
+                      <TableCell sx={{ width: 80 }}>{t('workflow.enabled')}</TableCell>
+                      <TableCell>{t('common.description')}</TableCell>
+                      <TableCell sx={{ width: 120 }}>{t('common.actions')}</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {workflows.map((workflow) => {
+                      const statusConfig = getWorkflowStatusConfig(workflow.status)
+                      return (
+                        <TableRow key={workflow.id}>
+                          <TableCell>
+                            <Box>
+                              <Link
+                                component="button"
+                                underline="hover"
+                                onClick={() => navigate(`/workflows/${workflow.id}`)}
+                              >
+                                {workflow.name}
+                              </Link>
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                <code>{workflow.slug}</code>
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={workflow.type === 'realtime' ? t('workflow.realtime') : t('workflow.batch')}
+                              color={workflow.type === 'realtime' ? 'primary' : 'secondary'}
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={statusConfig.text} color={statusConfig.color} size="small" />
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={workflow.schedule_enabled ? t('workflow.on') : t('workflow.off')}
+                              color={workflow.schedule_enabled ? 'success' : 'default'}
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {workflow.description || '-'}
+                          </TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', gap: 0.5 }}>
+                              <IconButton size="small" onClick={() => handleEditWorkflow(workflow)}>
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={() => setDeleteWorkflowId(workflow.id)}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Box sx={{ textAlign: 'center', py: 6 }}>
+                <Typography color="text.secondary" sx={{ mb: 2 }}>{t('project.noWorkflows')}</Typography>
+                <Button variant="contained" onClick={handleCreateWorkflow}>
+                  {t('workflow.new')}
+                </Button>
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      </TabPanel>
+
+      {/* Edit Project Modal */}
+      <Dialog open={editModalOpen} onClose={() => setEditModalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{t('project.edit')}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <TextField
+              label={t('project.name')}
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              required
+              fullWidth
+              placeholder={t('project.namePlaceholder')}
+            />
+            <TextField
+              label={t('project.alias')}
+              value={formData.alias}
+              onChange={(e) => setFormData({ ...formData, alias: e.target.value })}
+              required
+              fullWidth
+              placeholder={t('project.aliasPlaceholder')}
+              helperText={t('project.aliasHelp')}
+            />
+            <TextField
+              label={t('common.description')}
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              multiline
+              rows={3}
+              fullWidth
+              placeholder={t('project.descriptionPlaceholder')}
+            />
+            <Autocomplete
+              multiple
+              options={[...selectedOwners, ...userOptions.filter(opt => !selectedOwners.some(s => s.id === opt.id))]}
+              getOptionLabel={(option) => option.name || option.email}
+              value={selectedOwners}
+              loading={searchingUsers}
+              onInputChange={(_, value) => debouncedSearch(value)}
+              onChange={(_, newValue) => setSelectedOwners(newValue)}
+              renderOption={(props, option) => (
+                <Box component="li" {...props}>
+                  <Avatar src={option.avatar_url} sx={{ width: 24, height: 24, mr: 1 }}>
+                    <PersonIcon fontSize="small" />
+                  </Avatar>
+                  <Box>
+                    <Typography variant="body2">{option.name || option.email}</Typography>
+                    <Typography variant="caption" color="text.secondary">{option.email}</Typography>
+                  </Box>
+                </Box>
+              )}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={t('project.owners')}
+                  placeholder={t('project.ownersPlaceholder')}
+                />
+              )}
+            />
+            <FormControl fullWidth>
+              <InputLabel>{t('common.status')}</InputLabel>
+              <Select
+                value={formData.status}
+                label={t('common.status')}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value })}
               >
-                {dataTypes.length > 0 ? (
-                  <Table
-                    dataSource={hierarchicalDataTypes}
-                    columns={dataTypeColumns}
-                    rowKey="id"
-                    pagination={false}
-                  />
-                ) : (
-                  <Empty description={t('dataModel.noDataModels')}>
-                    <Button type="primary" onClick={handleCreateDataType}>
-                      {t('dataModel.new')}
-                    </Button>
-                  </Empty>
-                )}
-              </Card>
-            ),
-          },
-          {
-            key: 'workflows',
-            label: (
-              <span>
-                <TeamOutlined />
-                {t('project.workflows', { count: workflows.length })}
-              </span>
-            ),
-            children: (
-              <Card
-                title={t('workflow.title')}
-                extra={
-                  <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateWorkflow}>
-                    {t('workflow.new')}
-                  </Button>
-                }
+                <MenuItem value="active">{t('status.active')}</MenuItem>
+                <MenuItem value="inactive">{t('status.inactive')}</MenuItem>
+                <MenuItem value="archived">{t('status.archived')}</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label={t('common.tags')}
+              value={formData.tags}
+              onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+              fullWidth
+              placeholder="tag1, tag2, tag3"
+              helperText={t('common.tagsHelp')}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditModalOpen(false)}>{t('common.cancel')}</Button>
+          <Button variant="contained" onClick={handleEditSubmit}>{t('common.save')}</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Workflow Modal */}
+      <Dialog open={workflowModalOpen} onClose={() => setWorkflowModalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingWorkflow ? t('workflow.edit') : t('workflow.new')}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <TextField
+              label={t('workflow.name')}
+              value={workflowForm.name}
+              onChange={(e) => setWorkflowForm({ ...workflowForm, name: e.target.value })}
+              required
+              fullWidth
+              placeholder={t('workflow.namePlaceholder')}
+            />
+            <TextField
+              label={t('workflow.slug')}
+              value={workflowForm.slug}
+              onChange={(e) => setWorkflowForm({ ...workflowForm, slug: e.target.value })}
+              required
+              fullWidth
+              placeholder={t('workflow.slugPlaceholder')}
+              helperText={t('workflow.slugHelp')}
+            />
+            <FormControl fullWidth>
+              <InputLabel>{t('workflow.type')}</InputLabel>
+              <Select
+                value={workflowForm.type}
+                label={t('workflow.type')}
+                onChange={(e) => setWorkflowForm({ ...workflowForm, type: e.target.value as 'batch' | 'realtime' })}
               >
-                {workflows.length > 0 ? (
-                  <Table
-                    dataSource={workflows}
-                    columns={workflowColumns}
-                    rowKey="id"
-                    pagination={false}
+                <MenuItem value="batch">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={t('workflow.batch')} color="secondary" size="small" />
+                    <Typography variant="body2" color="text.secondary">{t('workflow.batchDesc')}</Typography>
+                  </Box>
+                </MenuItem>
+                <MenuItem value="realtime">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={t('workflow.realtime')} color="primary" size="small" />
+                    <Typography variant="body2" color="text.secondary">{t('workflow.realtimeDesc')}</Typography>
+                  </Box>
+                </MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label={t('workflow.description')}
+              value={workflowForm.description}
+              onChange={(e) => setWorkflowForm({ ...workflowForm, description: e.target.value })}
+              multiline
+              rows={3}
+              fullWidth
+              placeholder={t('workflow.descriptionPlaceholder')}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setWorkflowModalOpen(false)}>{t('common.cancel')}</Button>
+          <Button variant="contained" onClick={handleWorkflowSubmit} disabled={workflowSaving}>
+            {workflowSaving ? <CircularProgress size={20} /> : t('common.save')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* DataType Modal */}
+      <Dialog open={dataTypeModalOpen} onClose={() => setDataTypeModalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingDataType ? t('dataModel.edit') : t('dataModel.new')}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <TextField
+              label={t('dataModel.name')}
+              value={dataTypeForm.display_name}
+              onChange={(e) => setDataTypeForm({ ...dataTypeForm, display_name: e.target.value })}
+              required
+              fullWidth
+              placeholder={t('dataModel.namePlaceholder')}
+            />
+            <TextField
+              label={t('dataModel.slug')}
+              value={dataTypeForm.name}
+              onChange={(e) => setDataTypeForm({ ...dataTypeForm, name: e.target.value })}
+              required
+              fullWidth
+              placeholder={t('dataModel.slugPlaceholder')}
+              helperText={t('dataModel.slugHelp')}
+            />
+            <FormControl fullWidth>
+              <InputLabel>{t('dataModel.category')}</InputLabel>
+              <Select
+                value={dataTypeForm.category}
+                label={t('dataModel.category')}
+                onChange={(e) => setDataTypeForm({ ...dataTypeForm, category: e.target.value })}
+              >
+                <MenuItem value="master">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={t('dataModel.categories.master')} color="primary" size="small" />
+                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.masterDesc')}</Typography>
+                  </Box>
+                </MenuItem>
+                <MenuItem value="transaction">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={t('dataModel.categories.transaction')} color="success" size="small" />
+                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.transactionDesc')}</Typography>
+                  </Box>
+                </MenuItem>
+                <MenuItem value="log">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={t('dataModel.categories.log')} color="warning" size="small" />
+                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.logDesc')}</Typography>
+                  </Box>
+                </MenuItem>
+                <MenuItem value="metric">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={t('dataModel.categories.metric')} color="secondary" size="small" />
+                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.metricDesc')}</Typography>
+                  </Box>
+                </MenuItem>
+                <MenuItem value="reference">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={t('dataModel.categories.reference')} color="info" size="small" />
+                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.referenceDesc')}</Typography>
+                  </Box>
+                </MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>{t('dataModel.parent')}</InputLabel>
+              <Select
+                value={dataTypeForm.parent_id}
+                label={t('dataModel.parent')}
+                onChange={(e) => handleParentChange(e.target.value || undefined)}
+                disabled={editingDataType ? dataTypes.some(dt => dt.parent_id === editingDataType.id) : false}
+              >
+                <MenuItem value="">{t('dataModel.parentPlaceholder')}</MenuItem>
+                {dataTypes
+                  .filter(dt => dt.id !== editingDataType?.id)
+                  .map(dt => (
+                    <MenuItem key={dt.id} value={dt.id}>
+                      {dt.display_name} <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>({dt.name})</Typography>
+                    </MenuItem>
+                  ))}
+              </Select>
+              <FormHelperText>
+                {editingDataType && dataTypes.some(dt => dt.parent_id === editingDataType.id)
+                  ? t('dataModel.parentDisabledHasChildren')
+                  : t('dataModel.parentHelp')}
+              </FormHelperText>
+            </FormControl>
+            {selectedParentId ? (
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={dataTypeForm.id_fields}
+                onChange={(_, newValue) => setDataTypeForm({ ...dataTypeForm, id_fields: newValue as string[] })}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={t('dataModel.idFields')}
+                    placeholder={t('dataModel.idFieldsPlaceholder')}
+                    helperText={t('dataModel.idFieldsHelp')}
                   />
-                ) : (
-                  <Empty description={t('project.noWorkflows')}>
-                    <Button type="primary" onClick={handleCreateWorkflow}>
-                      {t('workflow.new')}
-                    </Button>
-                  </Empty>
                 )}
-              </Card>
-            ),
-          },
-        ]}
+              />
+            ) : (
+              <TextField
+                label={t('dataModel.keyField')}
+                value={dataTypeForm.key_field}
+                onChange={(e) => setDataTypeForm({ ...dataTypeForm, key_field: e.target.value })}
+                required
+                fullWidth
+                placeholder={t('dataModel.keyFieldPlaceholder')}
+                helperText={t('dataModel.keyFieldHelp')}
+              />
+            )}
+            <TextField
+              label={t('common.description')}
+              value={dataTypeForm.description}
+              onChange={(e) => setDataTypeForm({ ...dataTypeForm, description: e.target.value })}
+              multiline
+              rows={3}
+              fullWidth
+            />
+            <TextField
+              label={t('dataModel.jsonSchema')}
+              value={dataTypeForm.json_schema}
+              onChange={(e) => setDataTypeForm({ ...dataTypeForm, json_schema: e.target.value })}
+              multiline
+              rows={10}
+              fullWidth
+              placeholder={t('dataModel.jsonSchemaPlaceholder')}
+              helperText={t('dataModel.jsonSchemaHelp')}
+              InputProps={{ sx: { fontFamily: 'monospace' } }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDataTypeModalOpen(false)}>{t('common.cancel')}</Button>
+          <Button variant="contained" onClick={handleDataTypeSubmit} disabled={dataTypeSaving}>
+            {dataTypeSaving ? <CircularProgress size={20} /> : t('common.save')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Project Confirm Dialog */}
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        title={t('project.deleteConfirm')}
+        message={t('project.deleteWarning')}
+        confirmText={t('common.delete')}
+        cancelText={t('common.cancel')}
+        onConfirm={() => {
+          setDeleteDialogOpen(false)
+          handleDelete()
+        }}
+        onCancel={() => setDeleteDialogOpen(false)}
+        severity="error"
       />
 
-      <Modal
-        title={t('project.edit')}
-        open={editModalVisible}
-        onOk={handleEditSubmit}
-        onCancel={() => setEditModalVisible(false)}
-        okText={t('common.save')}
+      {/* Delete Workflow Confirm Dialog */}
+      <ConfirmDialog
+        open={!!deleteWorkflowId}
+        title={t('workflow.deleteConfirm')}
+        message={t('workflow.deleteWarning')}
+        confirmText={t('common.delete')}
         cancelText={t('common.cancel')}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="name"
-            label={t('project.name')}
-            rules={[{ required: true, message: t('project.nameRequired') }]}
-          >
-            <Input placeholder={t('project.namePlaceholder')} />
-          </Form.Item>
+        onConfirm={handleDeleteWorkflow}
+        onCancel={() => setDeleteWorkflowId(null)}
+        severity="error"
+      />
 
-          <Form.Item
-            name="alias"
-            label={t('project.alias')}
-            rules={[
-              { required: true, message: t('project.aliasRequired') },
-              { pattern: /^[a-z0-9-]+$/, message: t('project.aliasPattern') },
-            ]}
-            extra={t('project.aliasHelp')}
-          >
-            <Input placeholder={t('project.aliasPlaceholder')} />
-          </Form.Item>
-
-          <Form.Item name="description" label={t('common.description')}>
-            <Input.TextArea rows={3} placeholder={t('project.descriptionPlaceholder')} />
-          </Form.Item>
-
-          <Form.Item label={t('project.owners')}>
-            <Select
-              mode="multiple"
-              showSearch
-              placeholder={t('project.ownersPlaceholder')}
-              value={selectedOwners.map(o => o.id)}
-              onChange={(values: string[]) => {
-                // 선택된 사용자 ID로 selectedOwners 업데이트
-                const newOwners = values.map(id => {
-                  const existing = selectedOwners.find(o => o.id === id)
-                  if (existing) return existing
-                  const fromOptions = userOptions.find(o => o.id === id)
-                  return fromOptions || { id, email: '', name: '' }
-                })
-                setSelectedOwners(newOwners)
-              }}
-              onSearch={handleUserSearch}
-              filterOption={false}
-              notFoundContent={searchingUsers ? <Spin size="small" /> : null}
-              optionLabelProp="label"
-            >
-              {/* 현재 선택된 담당자들 */}
-              {selectedOwners.map(owner => (
-                <Select.Option key={owner.id} value={owner.id} label={owner.name || owner.email}>
-                  <Space>
-                    <Avatar size="small" src={owner.avatar_url} icon={<UserOutlined />} />
-                    <span>{owner.name || owner.email}</span>
-                    <span style={{ color: '#999' }}>{owner.email}</span>
-                  </Space>
-                </Select.Option>
-              ))}
-              {/* 검색 결과 (선택되지 않은 것만) */}
-              {userOptions
-                .filter(opt => !selectedOwners.some(s => s.id === opt.id))
-                .map(user => (
-                  <Select.Option key={user.id} value={user.id} label={user.name || user.email}>
-                    <Space>
-                      <Avatar size="small" src={user.avatar_url} icon={<UserOutlined />} />
-                      <span>{user.name || user.email}</span>
-                      <span style={{ color: '#999' }}>{user.email}</span>
-                    </Space>
-                  </Select.Option>
-                ))}
-            </Select>
-          </Form.Item>
-
-          <Form.Item name="status" label={t('common.status')}>
-            <Select>
-              <Select.Option value="active">{t('status.active')}</Select.Option>
-              <Select.Option value="inactive">{t('status.inactive')}</Select.Option>
-              <Select.Option value="archived">{t('status.archived')}</Select.Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="tags"
-            label={t('common.tags')}
-            extra={t('common.tagsHelp')}
-          >
-            <Input placeholder="tag1, tag2, tag3" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Workflow Create/Edit Modal */}
-      <Modal
-        title={editingWorkflow ? t('workflow.edit') : t('workflow.new')}
-        open={workflowModalVisible}
-        onOk={handleWorkflowSubmit}
-        onCancel={() => setWorkflowModalVisible(false)}
-        okText={t('common.save')}
+      {/* Delete DataType Confirm Dialog */}
+      <ConfirmDialog
+        open={!!deleteDataTypeId}
+        title={t('dataModel.deleteConfirm')}
+        message={t('dataModel.deleteWarning')}
+        confirmText={t('common.delete')}
         cancelText={t('common.cancel')}
-        confirmLoading={workflowSaving}
-      >
-        <Form form={workflowForm} layout="vertical">
-          <Form.Item
-            name="name"
-            label={t('workflow.name')}
-            rules={[{ required: true, message: t('workflow.nameRequired') }]}
-          >
-            <Input placeholder={t('workflow.namePlaceholder')} />
-          </Form.Item>
-
-          <Form.Item
-            name="slug"
-            label={t('workflow.slug')}
-            rules={[
-              { required: true, message: t('workflow.slugRequired') },
-              { pattern: /^[a-z0-9-]+$/, message: t('workflow.slugPattern') },
-            ]}
-            extra={t('workflow.slugHelp')}
-          >
-            <Input placeholder={t('workflow.slugPlaceholder')} />
-          </Form.Item>
-
-          <Form.Item
-            name="type"
-            label={t('workflow.type')}
-            rules={[{ required: true, message: t('workflow.typeRequired') }]}
-          >
-            <Select>
-              <Select.Option value="batch">
-                <Tag color="purple">{t('workflow.batch')}</Tag>
-                <span style={{ marginLeft: 8, color: '#666' }}>{t('workflow.batchDesc')}</span>
-              </Select.Option>
-              <Select.Option value="realtime">
-                <Tag color="blue">{t('workflow.realtime')}</Tag>
-                <span style={{ marginLeft: 8, color: '#666' }}>{t('workflow.realtimeDesc')}</span>
-              </Select.Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="description"
-            label={t('workflow.description')}
-          >
-            <Input.TextArea rows={3} placeholder={t('workflow.descriptionPlaceholder')} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* DataType Create/Edit Modal */}
-      <Modal
-        title={editingDataType ? t('dataModel.edit') : t('dataModel.new')}
-        open={dataTypeModalVisible}
-        onOk={handleDataTypeSubmit}
-        onCancel={() => setDataTypeModalVisible(false)}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
-        confirmLoading={dataTypeSaving}
-      >
-        <Form form={dataTypeForm} layout="vertical">
-          <Form.Item
-            name="display_name"
-            label={t('dataModel.name')}
-            rules={[{ required: true, message: t('dataModel.nameRequired') }]}
-          >
-            <Input placeholder={t('dataModel.namePlaceholder')} />
-          </Form.Item>
-
-          <Form.Item
-            name="name"
-            label={t('dataModel.slug')}
-            rules={[
-              { required: true, message: t('dataModel.slugRequired') },
-              { pattern: /^[a-z0-9_-]+$/, message: t('dataModel.slugPattern') },
-            ]}
-            extra={t('dataModel.slugHelp')}
-          >
-            <Input placeholder={t('dataModel.slugPlaceholder')} />
-          </Form.Item>
-
-          <Form.Item name="category" label={t('dataModel.category')}>
-            <Select>
-              <Select.Option value="master">
-                <div>
-                  <Tag color="blue">{t('dataModel.categories.master')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.masterDesc')}</span>
-                </div>
-              </Select.Option>
-              <Select.Option value="transaction">
-                <div>
-                  <Tag color="green">{t('dataModel.categories.transaction')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.transactionDesc')}</span>
-                </div>
-              </Select.Option>
-              <Select.Option value="log">
-                <div>
-                  <Tag color="orange">{t('dataModel.categories.log')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.logDesc')}</span>
-                </div>
-              </Select.Option>
-              <Select.Option value="metric">
-                <div>
-                  <Tag color="purple">{t('dataModel.categories.metric')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.metricDesc')}</span>
-                </div>
-              </Select.Option>
-              <Select.Option value="reference">
-                <div>
-                  <Tag color="cyan">{t('dataModel.categories.reference')}</Tag>
-                  <span style={{ marginLeft: 8, color: '#666', fontSize: 12 }}>{t('dataModel.categories.referenceDesc')}</span>
-                </div>
-              </Select.Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="parent_id"
-            label={t('dataModel.parent')}
-            extra={
-              editingDataType && dataTypes.some(dt => dt.parent_id === editingDataType.id)
-                ? t('dataModel.parentDisabledHasChildren')
-                : t('dataModel.parentHelp')
-            }
-          >
-            <Select
-              allowClear
-              placeholder={t('dataModel.parentPlaceholder')}
-              onChange={handleParentChange}
-              disabled={editingDataType ? dataTypes.some(dt => dt.parent_id === editingDataType.id) : false}
-            >
-              {dataTypes
-                .filter(dt => dt.id !== editingDataType?.id)
-                .map(dt => (
-                  <Select.Option key={dt.id} value={dt.id}>
-                    <span>{dt.display_name}</span>
-                    <span style={{ marginLeft: 8, color: '#999' }}>({dt.name})</span>
-                  </Select.Option>
-                ))}
-            </Select>
-          </Form.Item>
-
-          {selectedParentId ? (
-            <Form.Item
-              name="id_fields"
-              label={t('dataModel.idFields')}
-              extra={t('dataModel.idFieldsHelp')}
-              rules={[{ required: true, message: t('dataModel.idFieldsRequired') }]}
-            >
-              <Select
-                mode="tags"
-                placeholder={t('dataModel.idFieldsPlaceholder')}
-                tokenSeparators={[',']}
-              />
-            </Form.Item>
-          ) : (
-            <Form.Item
-              name="key_field"
-              label={t('dataModel.keyField')}
-              extra={t('dataModel.keyFieldHelp')}
-              rules={[
-                { required: true, message: t('dataModel.keyFieldRequired') },
-                { whitespace: true, message: t('dataModel.keyFieldRequired') },
-              ]}
-            >
-              <Input placeholder={t('dataModel.keyFieldPlaceholder')} />
-            </Form.Item>
-          )}
-
-          <Form.Item name="description" label={t('common.description')}>
-            <Input.TextArea rows={3} placeholder={t('project.descriptionPlaceholder')} />
-          </Form.Item>
-
-          <Form.Item
-            name="json_schema"
-            label={t('dataModel.jsonSchema')}
-            extra={t('dataModel.jsonSchemaHelp')}
-          >
-            <Input.TextArea
-              rows={10}
-              placeholder={t('dataModel.jsonSchemaPlaceholder')}
-              style={{ fontFamily: 'monospace' }}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+        onConfirm={handleDeleteDataType}
+        onCancel={() => setDeleteDataTypeId(null)}
+        severity="error"
+      />
+    </Box>
   )
 }

@@ -1,26 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Table,
+  Box,
   Button,
-  Space,
-  Tag,
-  Modal,
-  Form,
-  Input,
-  message,
-  Popconfirm,
   Typography,
-} from 'antd'
+  Chip,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+} from '@mui/material'
+import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
-  PlusOutlined,
-  DeleteOutlined,
-  EditOutlined,
-} from '@ant-design/icons'
+  Add as AddIcon,
+  Delete as DeleteIcon,
+  Edit as EditIcon,
+} from '@mui/icons-material'
 import { api } from '../services/api'
-
-const { Title } = Typography
-const { TextArea } = Input
+import { useSnackbar } from '../hooks/useSnackbar'
+import { ConfirmDialog } from '../components/common/ConfirmDialog'
 
 interface Pipeline {
   id: string
@@ -62,16 +62,19 @@ checkpoint:
 export default function PipelinesPage() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [loading, setLoading] = useState(true)
-  const [modalVisible, setModalVisible] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
   const [editingPipeline, setEditingPipeline] = useState<Pipeline | null>(null)
-  const [form] = Form.useForm()
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    config_yaml: defaultConfigYaml,
+  })
   const navigate = useNavigate()
+  const { showSuccess, showError } = useSnackbar()
 
-  useEffect(() => {
-    fetchPipelines()
-  }, [])
-
-  const fetchPipelines = async () => {
+  const fetchPipelines = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.getPipelines()
@@ -79,169 +82,204 @@ export default function PipelinesPage() {
         setPipelines(response.data.items || [])
       }
     } catch (error) {
-      message.error('파이프라인 목록을 불러오는데 실패했습니다')
+      showError('파이프라인 목록을 불러오는데 실패했습니다')
     } finally {
       setLoading(false)
     }
-  }
+  }, [showError])
+
+  useEffect(() => {
+    fetchPipelines()
+  }, [fetchPipelines])
 
   const handleCreate = () => {
     setEditingPipeline(null)
-    form.resetFields()
-    form.setFieldsValue({ config_yaml: defaultConfigYaml })
-    setModalVisible(true)
+    setFormData({ name: '', description: '', config_yaml: defaultConfigYaml })
+    setModalOpen(true)
   }
 
   const handleEdit = (pipeline: Pipeline) => {
     setEditingPipeline(pipeline)
-    form.setFieldsValue(pipeline)
-    setModalVisible(true)
+    setFormData({
+      name: pipeline.name,
+      description: pipeline.description,
+      config_yaml: pipeline.config_yaml,
+    })
+    setModalOpen(true)
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDeleteClick = (id: string) => {
+    setDeletingId(id)
+    setDeleteConfirmOpen(true)
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingId) return
     try {
-      await api.deletePipeline(id)
-      message.success('파이프라인이 삭제되었습니다')
+      await api.deletePipeline(deletingId)
+      showSuccess('파이프라인이 삭제되었습니다')
       fetchPipelines()
     } catch (error) {
-      message.error('파이프라인 삭제에 실패했습니다')
+      showError('파이프라인 삭제에 실패했습니다')
+    } finally {
+      setDeleteConfirmOpen(false)
+      setDeletingId(null)
     }
   }
-
-  // NOTE: 개별 파이프라인 실행 제어(start/stop/pause)는 지원하지 않음
-  // 파이프라인 실행 제어는 PipelineGroup 단위로만 가능
 
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields()
-
       if (editingPipeline) {
-        await api.updatePipeline(editingPipeline.id, values)
-        message.success('파이프라인이 수정되었습니다')
+        await api.updatePipeline(editingPipeline.id, formData)
+        showSuccess('파이프라인이 수정되었습니다')
       } else {
-        await api.createPipeline(values)
-        message.success('파이프라인이 생성되었습니다')
+        await api.createPipeline(formData)
+        showSuccess('파이프라인이 생성되었습니다')
       }
-
-      setModalVisible(false)
+      setModalOpen(false)
       fetchPipelines()
     } catch (error) {
-      message.error('저장에 실패했습니다')
+      showError('저장에 실패했습니다')
     }
   }
 
-  const columns = [
+  const columns: GridColDef[] = [
     {
-      title: '이름',
-      dataIndex: 'name',
-      key: 'name',
-      render: (name: string, record: Pipeline) => (
-        <a onClick={() => navigate(`/pipelines/${record.id}`)}>{name}</a>
+      field: 'name',
+      headerName: '이름',
+      flex: 1,
+      renderCell: (params: GridRenderCellParams<Pipeline>) => (
+        <Typography
+          component="a"
+          sx={{ cursor: 'pointer', color: 'primary.main', textDecoration: 'none' }}
+          onClick={() => navigate(`/pipelines/${params.row.id}`)}
+        >
+          {params.value}
+        </Typography>
       ),
     },
     {
-      title: '설명',
-      dataIndex: 'description',
-      key: 'description',
-      ellipsis: true,
+      field: 'description',
+      headerName: '설명',
+      flex: 1,
     },
     {
-      title: '상태',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status: string) => {
-        const statusConfig: Record<string, { color: string; text: string }> = {
-          running: { color: 'green', text: '실행 중' },
-          paused: { color: 'orange', text: '일시중지' },
+      field: 'status',
+      headerName: '상태',
+      width: 120,
+      renderCell: (params) => {
+        const statusConfig: Record<string, { color: 'success' | 'warning' | 'error' | 'info' | 'default'; text: string }> = {
+          running: { color: 'success', text: '실행 중' },
+          paused: { color: 'warning', text: '일시중지' },
           stopped: { color: 'default', text: '중지됨' },
-          failed: { color: 'red', text: '실패' },
-          pending: { color: 'blue', text: '대기 중' },
+          failed: { color: 'error', text: '실패' },
+          pending: { color: 'info', text: '대기 중' },
         }
-        const config = statusConfig[status || 'stopped'] || statusConfig.stopped
-        return <Tag color={config.color}>{config.text}</Tag>
+        const config = statusConfig[params.value || 'stopped'] || statusConfig.stopped
+        return <Chip label={config.text} color={config.color} size="small" />
       },
     },
     {
-      title: '생성일',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (date: string) => new Date(date).toLocaleDateString(),
+      field: 'created_at',
+      headerName: '생성일',
+      width: 120,
+      valueFormatter: ({ value }) => new Date(value).toLocaleDateString(),
     },
     {
-      title: '액션',
-      key: 'action',
-      render: (_: any, record: Pipeline) => (
-        <Space size="small">
-          <Button
-            type="text"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-            title="수정"
-          />
-          <Popconfirm
-            title="정말 삭제하시겠습니까?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="삭제"
-            cancelText="취소"
+      field: 'actions',
+      headerName: '액션',
+      width: 120,
+      sortable: false,
+      renderCell: (params: GridRenderCellParams<Pipeline>) => (
+        <Box>
+          <IconButton size="small" onClick={() => handleEdit(params.row)} title="수정">
+            <EditIcon fontSize="small" />
+          </IconButton>
+          <IconButton
+            size="small"
+            color="error"
+            onClick={() => handleDeleteClick(params.row.id)}
+            title="삭제"
           >
-            <Button type="text" danger icon={<DeleteOutlined />} title="삭제" />
-          </Popconfirm>
-        </Space>
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        </Box>
       ),
     },
   ]
 
   return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <Title level={4} style={{ margin: 0 }}>파이프라인</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+    <Box>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="h5">파이프라인</Typography>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
           새 파이프라인
         </Button>
-      </div>
+      </Box>
 
-      <Table
-        dataSource={pipelines}
+      <DataGrid
+        rows={pipelines}
         columns={columns}
-        rowKey="id"
         loading={loading}
+        autoHeight
+        pageSizeOptions={[10, 25, 50]}
+        initialState={{
+          pagination: { paginationModel: { pageSize: 10 } },
+        }}
+        disableRowSelectionOnClick
       />
 
-      <Modal
-        title={editingPipeline ? '파이프라인 수정' : '새 파이프라인'}
-        open={modalVisible}
-        onOk={handleSubmit}
-        onCancel={() => setModalVisible(false)}
-        width={800}
-        okText="저장"
-        cancelText="취소"
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="name"
+      <Dialog open={modalOpen} onClose={() => setModalOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>{editingPipeline ? '파이프라인 수정' : '새 파이프라인'}</DialogTitle>
+        <DialogContent>
+          <TextField
             label="이름"
-            rules={[{ required: true, message: '이름을 입력하세요' }]}
-          >
-            <Input />
-          </Form.Item>
-
-          <Form.Item name="description" label="설명">
-            <Input.TextArea rows={2} />
-          </Form.Item>
-
-          <Form.Item
-            name="config_yaml"
+            fullWidth
+            required
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            sx={{ mt: 2, mb: 2 }}
+          />
+          <TextField
+            label="설명"
+            fullWidth
+            multiline
+            rows={2}
+            value={formData.description}
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            sx={{ mb: 2 }}
+          />
+          <TextField
             label="설정 (YAML)"
-            rules={[{ required: true, message: 'YAML 설정을 입력하세요' }]}
-          >
-            <TextArea
-              rows={15}
-              style={{ fontFamily: 'monospace' }}
-              placeholder="파이프라인 설정을 YAML 형식으로 입력하세요"
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+            fullWidth
+            required
+            multiline
+            rows={15}
+            value={formData.config_yaml}
+            onChange={(e) => setFormData({ ...formData, config_yaml: e.target.value })}
+            placeholder="파이프라인 설정을 YAML 형식으로 입력하세요"
+            sx={{
+              '& .MuiInputBase-input': {
+                fontFamily: 'monospace',
+              },
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setModalOpen(false)}>취소</Button>
+          <Button variant="contained" onClick={handleSubmit}>
+            저장
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="삭제 확인"
+        message="정말 삭제하시겠습니까?"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteConfirmOpen(false)}
+      />
+    </Box>
   )
 }

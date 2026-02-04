@@ -1,9 +1,11 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { ConfigProvider } from 'antd'
-import enUS from 'antd/locale/en_US'
-import koKR from 'antd/locale/ko_KR'
+import { ThemeProvider, createTheme, CssBaseline } from '@mui/material'
+import { LocalizationProvider } from '@mui/x-date-pickers'
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { useTranslation } from 'react-i18next'
+import { useMemo } from 'react'
 import { useAuthStore } from './store/auth'
+import { useThemeStore } from './store/theme'
 import MainLayout from './components/Layout/MainLayout'
 import LoginPage from './pages/Login'
 import DashboardPage from './pages/Dashboard'
@@ -22,11 +24,7 @@ import StageEditorPage from './pages/StageEditor'
 import SourceEditorPage from './pages/SourceEditor'
 import DataModelsPage from './pages/DataModels'
 import DataModelDetailPage from './pages/DataModelDetail'
-
-const antdLocales: Record<string, typeof enUS> = {
-  en: enUS,
-  ko: koKR,
-}
+import 'dayjs/locale/ko'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
@@ -40,44 +38,77 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   const { i18n } = useTranslation()
-  const currentLocale = antdLocales[i18n.language] || enUS
+  const mode = useThemeStore((state) => state.mode)
+
+  const theme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode,
+        },
+        typography: {
+          fontFamily: [
+            '-apple-system',
+            'BlinkMacSystemFont',
+            '"Segoe UI"',
+            'Roboto',
+            '"Helvetica Neue"',
+            'Arial',
+            'sans-serif',
+          ].join(','),
+        },
+        components: {
+          MuiButton: {
+            styleOverrides: {
+              root: {
+                textTransform: 'none',
+              },
+            },
+          },
+        },
+      }),
+    [mode]
+  )
 
   return (
-    <ConfigProvider locale={currentLocale}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale={i18n.language === 'ko' ? 'ko' : 'en'}>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
 
-          <Route
-            path="/"
-            element={
-              <PrivateRoute>
-                <MainLayout />
-              </PrivateRoute>
-            }
-          >
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="workflows" element={<WorkflowsPage />} />
-            <Route path="pipelines" element={<PipelinesPage />} />
-            <Route path="pipelines/:id" element={<PipelineDetailPage />} />
-            <Route path="schedules" element={<SchedulesPage />} />
-            <Route path="agents" element={<AgentsPage />} />
-            <Route path="history" element={<HistoryPage />} />
-            <Route path="profile" element={<ProfilePage />} />
-            <Route path="users" element={<UsersPage />} />
-            <Route path="projects" element={<ProjectsPage />} />
-            <Route path="projects/:id" element={<ProjectDetailPage />} />
-            <Route path="workflows/:id" element={<WorkflowDetailPage />} />
-            <Route path="projects/:projectAlias/workflows/:workflowId" element={<WorkflowDetailPage />} />
-            <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/stages" element={<StageEditorPage />} />
-            <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/source" element={<SourceEditorPage />} />
-            <Route path="data-models" element={<DataModelsPage />} />
-            <Route path="data-models/:id" element={<DataModelDetailPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </ConfigProvider>
+            <Route
+              path="/"
+              element={
+                <PrivateRoute>
+                  <MainLayout />
+                </PrivateRoute>
+              }
+            >
+              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="workflows" element={<WorkflowsPage />} />
+              <Route path="pipelines" element={<PipelinesPage />} />
+              <Route path="pipelines/:id" element={<PipelineDetailPage />} />
+              <Route path="schedules" element={<SchedulesPage />} />
+              <Route path="agents" element={<AgentsPage />} />
+              <Route path="history" element={<HistoryPage />} />
+              <Route path="profile" element={<ProfilePage />} />
+              <Route path="users" element={<UsersPage />} />
+              <Route path="projects" element={<ProjectsPage />} />
+              <Route path="projects/:id" element={<ProjectDetailPage />} />
+              <Route path="workflows/:id" element={<WorkflowDetailPage />} />
+              <Route path="projects/:projectAlias/workflows/:workflowId" element={<WorkflowDetailPage />} />
+              <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/stages" element={<StageEditorPage />} />
+              <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/source" element={<SourceEditorPage />} />
+              <Route path="data-models" element={<DataModelsPage />} />
+              <Route path="data-models/:id" element={<DataModelDetailPage />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </LocalizationProvider>
+    </ThemeProvider>
   )
 }
 

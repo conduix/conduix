@@ -1,24 +1,33 @@
 import { useState } from 'react'
 import {
   Card,
+  CardContent,
   Button,
-  Space,
-  Input,
+  Stack,
+  TextField,
   Select,
+  MenuItem,
+  FormControlLabel,
   Checkbox,
-  Popconfirm,
-  Empty,
-  Dropdown,
-  message,
-} from 'antd'
-import {
-  PlusOutlined,
-  DeleteOutlined,
-  HolderOutlined,
-  KeyOutlined,
-  DownOutlined,
-} from '@ant-design/icons'
+  IconButton,
+  Menu,
+  Box,
+  Typography,
+  InputAdornment,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  FormControl,
+} from '@mui/material'
+import AddIcon from '@mui/icons-material/Add'
+import DeleteIcon from '@mui/icons-material/Delete'
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
+import VpnKeyIcon from '@mui/icons-material/VpnKey'
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown'
 import { useTranslation } from 'react-i18next'
+import { useSnackbar } from '../../hooks/useSnackbar'
 
 export interface DataTypeField {
   name: string
@@ -48,8 +57,11 @@ const FIELD_TYPES = [
 
 export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: VisualFieldBuilderProps) {
   const { t } = useTranslation()
+  const { showWarning } = useSnackbar()
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [deleteConfirmIndex, setDeleteConfirmIndex] = useState<number | null>(null)
+  const [quickAddAnchor, setQuickAddAnchor] = useState<null | HTMLElement>(null)
 
   const handleAddField = () => {
     const newField: DataTypeField = {
@@ -70,10 +82,11 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
     }
     // Check if id field already exists
     if (fields.some(f => f.name === 'id')) {
-      message.warning(t('dataModel.schema.duplicateFieldName'))
+      showWarning(t('dataModel.schema.duplicateFieldName'))
       return
     }
     onChange([newField, ...fields])
+    setQuickAddAnchor(null)
   }
 
   const handleAddTimestampFields = () => {
@@ -95,10 +108,11 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
       })
     }
     if (newFields.length === 0) {
-      message.warning(t('dataModel.schema.duplicateFieldName'))
+      showWarning(t('dataModel.schema.duplicateFieldName'))
       return
     }
     onChange([...fields, ...newFields])
+    setQuickAddAnchor(null)
   }
 
   const handleFieldChange = (index: number, field: Partial<DataTypeField>) => {
@@ -110,6 +124,7 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
   const handleDeleteField = (index: number) => {
     const newFields = fields.filter((_, i) => i !== index)
     onChange(newFields)
+    setDeleteConfirmIndex(null)
   }
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
@@ -150,109 +165,167 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
     setDragOverIndex(null)
   }
 
-  const quickAddItems = [
-    {
-      key: 'id',
-      label: t('dataModel.quickAdd.idField'),
-      onClick: handleAddIdField,
-    },
-    {
-      key: 'timestamps',
-      label: t('dataModel.quickAdd.timestamps'),
-      onClick: handleAddTimestampFields,
-    },
-  ]
-
   const isKeyField = (fieldName: string) => idFields.includes(fieldName)
 
   return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddField}>
+    <Box>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Stack direction="row" spacing={1}>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={handleAddField}
+          >
             {t('dataModel.schema.addField')}
           </Button>
-          <Dropdown menu={{ items: quickAddItems }} placement="bottomLeft">
-            <Button>
-              {t('dataModel.quickAdd.title')} <DownOutlined />
-            </Button>
-          </Dropdown>
-        </Space>
-      </div>
+          <Button
+            variant="outlined"
+            endIcon={<KeyboardArrowDownIcon />}
+            onClick={(e) => setQuickAddAnchor(e.currentTarget)}
+          >
+            {t('dataModel.quickAdd.title')}
+          </Button>
+          <Menu
+            anchorEl={quickAddAnchor}
+            open={Boolean(quickAddAnchor)}
+            onClose={() => setQuickAddAnchor(null)}
+          >
+            <MenuItem onClick={handleAddIdField}>
+              {t('dataModel.quickAdd.idField')}
+            </MenuItem>
+            <MenuItem onClick={handleAddTimestampFields}>
+              {t('dataModel.quickAdd.timestamps')}
+            </MenuItem>
+          </Menu>
+        </Stack>
+      </Box>
 
       {fields.length === 0 ? (
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={t('dataModel.schema.noFields')}
-        />
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            py: 6,
+            color: 'text.secondary',
+          }}
+        >
+          <Typography variant="body2">
+            {t('dataModel.schema.noFields')}
+          </Typography>
+        </Box>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <Stack spacing={1}>
           {fields.map((field, index) => (
             <Card
               key={index}
-              size="small"
+              variant="outlined"
               draggable
               onDragStart={(e) => handleDragStart(e, index)}
               onDragOver={(e) => handleDragOver(e, index)}
               onDragLeave={handleDragLeave}
               onDrop={(e) => handleDrop(e, index)}
               onDragEnd={handleDragEnd}
-              style={{
+              sx={{
                 cursor: 'grab',
                 opacity: draggedIndex === index ? 0.5 : 1,
-                borderColor: dragOverIndex === index ? '#1890ff' : undefined,
+                borderColor: dragOverIndex === index ? 'primary.main' : undefined,
                 borderStyle: dragOverIndex === index ? 'dashed' : undefined,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <HolderOutlined style={{ color: '#999', cursor: 'grab' }} />
+              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                <Stack direction="row" alignItems="center" spacing={1.5}>
+                  <DragIndicatorIcon sx={{ color: 'text.disabled', cursor: 'grab' }} />
 
-                <Input
-                  placeholder={t('dataModel.schema.fieldNamePlaceholder')}
-                  value={field.name}
-                  onChange={(e) => handleFieldChange(index, { name: e.target.value })}
-                  style={{ width: 150 }}
-                  status={!field.name ? 'error' : undefined}
-                  addonAfter={isKeyField(field.name) ? <KeyOutlined style={{ color: '#faad14' }} /> : null}
-                />
+                  <TextField
+                    size="small"
+                    placeholder={t('dataModel.schema.fieldNamePlaceholder')}
+                    value={field.name}
+                    onChange={(e) => handleFieldChange(index, { name: e.target.value })}
+                    sx={{ width: 150 }}
+                    error={!field.name}
+                    InputProps={{
+                      endAdornment: isKeyField(field.name) ? (
+                        <InputAdornment position="end">
+                          <VpnKeyIcon sx={{ color: 'warning.main', fontSize: 18 }} />
+                        </InputAdornment>
+                      ) : null,
+                    }}
+                  />
 
-                <Select
-                  value={field.type}
-                  onChange={(value) => handleFieldChange(index, { type: value })}
-                  style={{ width: 130 }}
-                  options={FIELD_TYPES.map(ft => ({
-                    value: ft.value,
-                    label: t(`dataModel.schema.fieldTypes.${ft.value}`, ft.label),
-                  }))}
-                />
+                  <FormControl size="small" sx={{ width: 130 }}>
+                    <Select
+                      value={field.type}
+                      onChange={(e) => handleFieldChange(index, { type: e.target.value })}
+                    >
+                      {FIELD_TYPES.map(ft => (
+                        <MenuItem key={ft.value} value={ft.value}>
+                          {t(`dataModel.schema.fieldTypes.${ft.value}`, ft.label)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
 
-                <Checkbox
-                  checked={field.required}
-                  onChange={(e) => handleFieldChange(index, { required: e.target.checked })}
-                >
-                  {t('dataModel.schema.fieldRequired')}
-                </Checkbox>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={field.required || false}
+                        onChange={(e) => handleFieldChange(index, { required: e.target.checked })}
+                      />
+                    }
+                    label={t('dataModel.schema.fieldRequired')}
+                    sx={{ minWidth: 100 }}
+                  />
 
-                <Input
-                  placeholder={t('dataModel.schema.fieldDescriptionPlaceholder')}
-                  value={field.description}
-                  onChange={(e) => handleFieldChange(index, { description: e.target.value })}
-                  style={{ flex: 1, minWidth: 150 }}
-                />
+                  <TextField
+                    size="small"
+                    placeholder={t('dataModel.schema.fieldDescriptionPlaceholder')}
+                    value={field.description || ''}
+                    onChange={(e) => handleFieldChange(index, { description: e.target.value })}
+                    sx={{ flex: 1, minWidth: 150 }}
+                  />
 
-                <Popconfirm
-                  title={t('dataModel.schema.deleteFieldConfirm')}
-                  onConfirm={() => handleDeleteField(index)}
-                  okText={t('common.delete')}
-                  cancelText={t('common.cancel')}
-                >
-                  <Button type="text" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              </div>
+                  <IconButton
+                    color="error"
+                    size="small"
+                    onClick={() => setDeleteConfirmIndex(index)}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </Stack>
+              </CardContent>
             </Card>
           ))}
-        </div>
+        </Stack>
       )}
-    </div>
+
+      <Dialog
+        open={deleteConfirmIndex !== null}
+        onClose={() => setDeleteConfirmIndex(null)}
+      >
+        <DialogTitle>{t('dataModel.schema.deleteFieldConfirm')}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {deleteConfirmIndex !== null && fields[deleteConfirmIndex]?.name
+              ? t('dataModel.schema.deleteFieldConfirmMessage', { name: fields[deleteConfirmIndex].name })
+              : t('dataModel.schema.deleteFieldConfirm')}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteConfirmIndex(null)}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => deleteConfirmIndex !== null && handleDeleteField(deleteConfirmIndex)}
+          >
+            {t('common.delete')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   )
 }

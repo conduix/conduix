@@ -1,12 +1,14 @@
-import { Typography } from 'antd'
-
-const { Title } = Typography
+import { Typography, Box } from '@mui/material'
 
 export default function SchedulesPage() {
   return (
-    <div>
-      <Title level={4}>스케줄</Title>
-      <p>스케줄 관리 기능이 구현될 예정입니다.</p>
-    </div>
+    <Box>
+      <Typography variant="h5" gutterBottom>
+        스케줄
+      </Typography>
+      <Typography color="text.secondary">
+        스케줄 관리 기능이 구현될 예정입니다.
+      </Typography>
+    </Box>
   )
 }

@@ -1,33 +1,40 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Table,
-  Button,
-  Space,
-  Tag,
-  message,
-  Popconfirm,
+  Box,
   Typography,
+  Chip,
   Card,
-  Row,
-  Col,
-  Statistic,
+  CardContent,
+  IconButton,
+  TextField,
+  InputAdornment,
+  FormControl,
   Select,
-  Badge,
-  Input,
-} from 'antd'
+  MenuItem,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  TablePagination,
+  CircularProgress,
+  Grid,
+} from '@mui/material'
 import {
-  DeleteOutlined,
-  EyeOutlined,
-  DatabaseOutlined,
-  AppstoreOutlined,
-  CheckCircleOutlined,
-} from '@ant-design/icons'
+  Delete as DeleteIcon,
+  Visibility as VisibilityIcon,
+  Storage as DatabaseIcon,
+  Apps as AppstoreIcon,
+  CheckCircle as CheckCircleIcon,
+  Search as SearchIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
-
-const { Title } = Typography
-const { Search } = Input
+import { useSnackbar } from '../hooks/useSnackbar'
+import { ConfirmDialog } from '../components/common/ConfirmDialog'
 
 interface DataType {
   id: string
@@ -62,23 +69,24 @@ interface Project {
 
 export default function DataModelsPage() {
   const { t } = useTranslation()
+  const { showSuccess, showError } = useSnackbar()
   const [dataModels, setDataModels] = useState<DataType[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
-  const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 })
+  const [pagination, setPagination] = useState({ page: 0, rowsPerPage: 20, total: 0 })
   const [filters, setFilters] = useState<{
     project_id?: string
     category?: string
     search?: string
   }>({})
+  const [searchInput, setSearchInput] = useState('')
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; id: string | null }>({
+    open: false,
+    id: null,
+  })
   const navigate = useNavigate()
 
-  useEffect(() => {
-    fetchDataModels()
-    fetchProjects()
-  }, [pagination.current, pagination.pageSize, filters])
-
-  const fetchDataModels = async () => {
+  const fetchDataModels = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.getDataTypes({
@@ -100,11 +108,16 @@ export default function DataModelsPage() {
         setPagination(prev => ({ ...prev, total: items.length }))
       }
     } catch (error) {
-      message.error(t('dataModel.loadError'))
+      showError(t('dataModel.loadError'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters.project_id, filters.category, filters.search, showError, t])
+
+  useEffect(() => {
+    fetchDataModels()
+    fetchProjects()
+  }, [pagination.page, pagination.rowsPerPage, fetchDataModels])
 
   const fetchProjects = async () => {
     try {
@@ -117,127 +130,59 @@ export default function DataModelsPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async () => {
+    if (!deleteDialog.id) return
     try {
-      const response = await api.deleteDataType(id)
+      const response = await api.deleteDataType(deleteDialog.id)
       if (response.success) {
-        message.success(t('dataModel.deleteSuccess'))
+        showSuccess(t('dataModel.deleteSuccess'))
         fetchDataModels()
       } else {
-        message.error(response.error || t('dataModel.deleteError'))
+        showError(response.error || t('dataModel.deleteError'))
       }
-    } catch (error: any) {
-      message.error(error.response?.data?.error || t('dataModel.deleteError'))
+    } catch (error: unknown) {
+      const errMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      showError(errMsg || t('dataModel.deleteError'))
+    } finally {
+      setDeleteDialog({ open: false, id: null })
     }
   }
 
-  const handleSearch = (value: string) => {
-    setFilters(prev => ({ ...prev, search: value }))
-    setPagination(prev => ({ ...prev, current: 1 }))
+  const handleSearch = () => {
+    setFilters(prev => ({ ...prev, search: searchInput }))
+    setPagination(prev => ({ ...prev, page: 0 }))
   }
 
-  const handleProjectChange = (value: string | undefined) => {
-    setFilters(prev => ({ ...prev, project_id: value }))
-    setPagination(prev => ({ ...prev, current: 1 }))
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSearch()
+    }
   }
 
-  const handleCategoryChange = (value: string | undefined) => {
-    setFilters(prev => ({ ...prev, category: value }))
-    setPagination(prev => ({ ...prev, current: 1 }))
+  const handleProjectChange = (value: string) => {
+    setFilters(prev => ({ ...prev, project_id: value || undefined }))
+    setPagination(prev => ({ ...prev, page: 0 }))
+  }
+
+  const handleCategoryChange = (value: string) => {
+    setFilters(prev => ({ ...prev, category: value || undefined }))
+    setPagination(prev => ({ ...prev, page: 0 }))
   }
 
   const getCategoryConfig = (category: string | undefined) => {
-    const configs: Record<string, { color: string; text: string }> = {
-      master: { color: 'blue', text: t('dataModel.categories.master') },
-      transaction: { color: 'green', text: t('dataModel.categories.transaction') },
-      log: { color: 'orange', text: t('dataModel.categories.log') },
-      metric: { color: 'purple', text: t('dataModel.categories.metric') },
-      reference: { color: 'cyan', text: t('dataModel.categories.reference') },
+    const configs: Record<string, { color: 'primary' | 'success' | 'warning' | 'secondary' | 'info' | 'default'; text: string }> = {
+      master: { color: 'primary', text: t('dataModel.categories.master') },
+      transaction: { color: 'success', text: t('dataModel.categories.transaction') },
+      log: { color: 'warning', text: t('dataModel.categories.log') },
+      metric: { color: 'secondary', text: t('dataModel.categories.metric') },
+      reference: { color: 'info', text: t('dataModel.categories.reference') },
     }
-    return configs[category || ''] || { color: 'default', text: category || '-' }
+    return configs[category || ''] || { color: 'default' as const, text: category || '-' }
   }
 
   const hasSchema = (dataModel: DataType): boolean => {
     return !!(dataModel.json_schema || (dataModel.schema?.fields && dataModel.schema.fields.length > 0))
   }
-
-  const columns = [
-    {
-      title: t('dataModel.name'),
-      dataIndex: 'display_name',
-      key: 'display_name',
-      render: (displayName: string, record: DataType) => (
-        <a onClick={() => navigate(`/data-models/${record.id}`)}>
-          <Space>
-            <DatabaseOutlined />
-            <span>{displayName}</span>
-            <code style={{ fontSize: 12, color: '#999' }}>{record.name}</code>
-          </Space>
-        </a>
-      ),
-    },
-    {
-      title: t('dataModel.category'),
-      dataIndex: 'category',
-      key: 'category',
-      width: 130,
-      render: (category: string) => {
-        const config = getCategoryConfig(category)
-        return <Tag color={config.color}>{config.text}</Tag>
-      },
-    },
-    {
-      title: t('dataModel.project'),
-      dataIndex: 'project',
-      key: 'project',
-      width: 150,
-      render: (project: Project | undefined) => project?.name || '-',
-    },
-    {
-      title: t('dataModel.schemaStatus'),
-      key: 'schema',
-      width: 120,
-      align: 'center' as const,
-      render: (_: unknown, record: DataType) => (
-        hasSchema(record) ? (
-          <Badge status="success" text={t('dataModel.schemaDefined')} />
-        ) : (
-          <Badge status="default" text={t('dataModel.schemaUndefined')} />
-        )
-      ),
-    },
-    {
-      title: t('common.updatedAt'),
-      dataIndex: 'updated_at',
-      key: 'updated_at',
-      width: 120,
-      render: (date: string) => new Date(date).toLocaleDateString(),
-    },
-    {
-      title: t('common.actions'),
-      key: 'action',
-      width: 100,
-      render: (_: unknown, record: DataType) => (
-        <Space size="small">
-          <Button
-            type="text"
-            icon={<EyeOutlined />}
-            onClick={() => navigate(`/data-models/${record.id}`)}
-            title={t('dataModel.viewDetail')}
-          />
-          <Popconfirm
-            title={t('dataModel.deleteConfirm')}
-            description={t('dataModel.deleteWarning')}
-            onConfirm={() => handleDelete(record.id)}
-            okText={t('common.delete')}
-            cancelText={t('common.cancel')}
-          >
-            <Button type="text" danger icon={<DeleteOutlined />} title={t('common.delete')} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ]
 
   // Calculate statistics
   const totalCount = dataModels.length
@@ -248,92 +193,247 @@ export default function DataModelsPage() {
     return acc
   }, {} as Record<string, number>)
 
+  // Paginated data
+  const paginatedData = dataModels.slice(
+    pagination.page * pagination.rowsPerPage,
+    pagination.page * pagination.rowsPerPage + pagination.rowsPerPage
+  )
+
   return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0 }}>{t('dataModel.list')}</Title>
-        <Space>
-          <Select
-            placeholder={t('dataModel.allProjects')}
-            allowClear
-            style={{ width: 180 }}
-            onChange={handleProjectChange}
-            value={filters.project_id}
-          >
-            {projects.map(p => (
-              <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
-            ))}
-          </Select>
-          <Select
-            placeholder={t('dataModel.category')}
-            allowClear
-            style={{ width: 150 }}
-            onChange={handleCategoryChange}
-            value={filters.category}
-          >
-            <Select.Option value="master">{t('dataModel.categories.master')}</Select.Option>
-            <Select.Option value="transaction">{t('dataModel.categories.transaction')}</Select.Option>
-            <Select.Option value="log">{t('dataModel.categories.log')}</Select.Option>
-            <Select.Option value="metric">{t('dataModel.categories.metric')}</Select.Option>
-            <Select.Option value="reference">{t('dataModel.categories.reference')}</Select.Option>
-          </Select>
-          <Search
+    <Box>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="h5">{t('dataModel.list')}</Typography>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <Select
+              displayEmpty
+              value={filters.project_id || ''}
+              onChange={(e) => handleProjectChange(e.target.value)}
+            >
+              <MenuItem value="">{t('dataModel.allProjects')}</MenuItem>
+              {projects.map(p => (
+                <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <Select
+              displayEmpty
+              value={filters.category || ''}
+              onChange={(e) => handleCategoryChange(e.target.value)}
+            >
+              <MenuItem value="">{t('dataModel.category')}</MenuItem>
+              <MenuItem value="master">{t('dataModel.categories.master')}</MenuItem>
+              <MenuItem value="transaction">{t('dataModel.categories.transaction')}</MenuItem>
+              <MenuItem value="log">{t('dataModel.categories.log')}</MenuItem>
+              <MenuItem value="metric">{t('dataModel.categories.metric')}</MenuItem>
+              <MenuItem value="reference">{t('dataModel.categories.reference')}</MenuItem>
+            </Select>
+          </FormControl>
+          <TextField
+            size="small"
             placeholder={t('dataModel.searchPlaceholder')}
-            onSearch={handleSearch}
-            style={{ width: 200 }}
-            allowClear
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            sx={{ width: 200 }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={handleSearch}>
+                    <SearchIcon />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
           />
-        </Space>
-      </div>
+        </Box>
+      </Box>
 
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title={t('dataModel.totalDataModels')}
-              value={totalCount}
-              prefix={<DatabaseOutlined />}
-            />
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent sx={{ py: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <DatabaseIcon color="primary" />
+                <Box>
+                  <Typography variant="body2" color="text.secondary">
+                    {t('dataModel.totalDataModels')}
+                  </Typography>
+                  <Typography variant="h5">{totalCount}</Typography>
+                </Box>
+              </Box>
+            </CardContent>
           </Card>
-        </Col>
-        <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title={t('dataModel.schemaDefined')}
-              value={schemaDefinedCount}
-              prefix={<CheckCircleOutlined />}
-              valueStyle={{ color: '#52c41a' }}
-              suffix={`/ ${totalCount}`}
-            />
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent sx={{ py: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CheckCircleIcon sx={{ color: 'success.main' }} />
+                <Box>
+                  <Typography variant="body2" color="text.secondary">
+                    {t('dataModel.schemaDefined')}
+                  </Typography>
+                  <Typography variant="h5" sx={{ color: 'success.main' }}>
+                    {schemaDefinedCount}
+                    <Typography component="span" variant="body2" color="text.secondary">
+                      {' '}/ {totalCount}
+                    </Typography>
+                  </Typography>
+                </Box>
+              </Box>
+            </CardContent>
           </Card>
-        </Col>
-        <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title={t('dataModel.byCategory')}
-              value={Object.keys(categoryStats).length}
-              prefix={<AppstoreOutlined />}
-            />
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent sx={{ py: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AppstoreIcon color="primary" />
+                <Box>
+                  <Typography variant="body2" color="text.secondary">
+                    {t('dataModel.byCategory')}
+                  </Typography>
+                  <Typography variant="h5">{Object.keys(categoryStats).length}</Typography>
+                </Box>
+              </Box>
+            </CardContent>
           </Card>
-        </Col>
-      </Row>
+        </Grid>
+      </Grid>
 
-      <Table
-        dataSource={dataModels}
-        columns={columns}
-        rowKey="id"
-        loading={loading}
-        pagination={{
-          current: pagination.current,
-          pageSize: pagination.pageSize,
-          total: pagination.total,
-          showSizeChanger: true,
-          showTotal: (total) => t('common.total', { count: total }),
-          onChange: (page, pageSize) => {
-            setPagination(prev => ({ ...prev, current: page, pageSize }))
-          },
-        }}
+      <TableContainer component={Paper}>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>{t('dataModel.name')}</TableCell>
+                  <TableCell sx={{ width: 130 }}>{t('dataModel.category')}</TableCell>
+                  <TableCell sx={{ width: 150 }}>{t('dataModel.project')}</TableCell>
+                  <TableCell sx={{ width: 120 }} align="center">{t('dataModel.schemaStatus')}</TableCell>
+                  <TableCell sx={{ width: 120 }}>{t('common.updatedAt')}</TableCell>
+                  <TableCell sx={{ width: 100 }}>{t('common.actions')}</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {paginatedData.map((record) => (
+                  <TableRow key={record.id} hover>
+                    <TableCell>
+                      <Box
+                        component="a"
+                        onClick={() => navigate(`/data-models/${record.id}`)}
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1,
+                          cursor: 'pointer',
+                          color: 'primary.main',
+                          textDecoration: 'none',
+                          '&:hover': { textDecoration: 'underline' },
+                        }}
+                      >
+                        <DatabaseIcon fontSize="small" />
+                        <span>{record.display_name}</span>
+                        <Typography
+                          component="code"
+                          sx={{ fontSize: 12, color: 'text.secondary' }}
+                        >
+                          {record.name}
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const config = getCategoryConfig(record.category)
+                        return <Chip label={config.text} color={config.color} size="small" />
+                      })()}
+                    </TableCell>
+                    <TableCell>{record.project?.name || '-'}</TableCell>
+                    <TableCell align="center">
+                      {hasSchema(record) ? (
+                        <Chip
+                          label={t('dataModel.schemaDefined')}
+                          color="success"
+                          size="small"
+                          variant="outlined"
+                        />
+                      ) : (
+                        <Chip
+                          label={t('dataModel.schemaUndefined')}
+                          size="small"
+                          variant="outlined"
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {new Date(record.updated_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => navigate(`/data-models/${record.id}`)}
+                          title={t('dataModel.viewDetail')}
+                        >
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => setDeleteDialog({ open: true, id: record.id })}
+                          title={t('common.delete')}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {paginatedData.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                      <Typography color="text.secondary">
+                        {t('common.noData')}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <TablePagination
+              component="div"
+              count={pagination.total}
+              page={pagination.page}
+              onPageChange={(_, newPage) => setPagination(prev => ({ ...prev, page: newPage }))}
+              rowsPerPage={pagination.rowsPerPage}
+              onRowsPerPageChange={(e) => setPagination(prev => ({
+                ...prev,
+                rowsPerPage: parseInt(e.target.value, 10),
+                page: 0,
+              }))}
+              labelRowsPerPage={t('common.rowsPerPage')}
+              labelDisplayedRows={({ from, to, count }) =>
+                t('common.displayedRows', { from, to, count })
+              }
+            />
+          </>
+        )}
+      </TableContainer>
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        title={t('dataModel.deleteConfirm')}
+        message={t('dataModel.deleteWarning')}
+        confirmText={t('common.delete')}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteDialog({ open: false, id: null })}
       />
-    </div>
+    </Box>
   )
 }

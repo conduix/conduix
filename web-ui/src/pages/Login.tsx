@@ -1,24 +1,37 @@
-import { useState, useEffect, useRef, ReactNode } from 'react'
+import { useState, useEffect, useRef, ReactNode, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Card, Button, message, Space, Typography, Spin, Divider } from 'antd'
-import { GithubOutlined, GoogleOutlined, GitlabOutlined, LoginOutlined } from '@ant-design/icons'
+import {
+  Card,
+  CardContent,
+  Button,
+  Box,
+  Typography,
+  CircularProgress,
+  Divider,
+  Stack,
+  Alert,
+} from '@mui/material'
+import {
+  GitHub as GitHubIcon,
+  Google as GoogleIcon,
+  Login as LoginIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../store/auth'
 import { api } from '../services/api'
-
-const { Text } = Typography
+import { useSnackbar } from '../hooks/useSnackbar'
 
 // Provider icons and colors (ID-based lookup)
 const PROVIDER_CONFIG: Record<string, { icon: ReactNode; color: string }> = {
-  github: { icon: <GithubOutlined />, color: '#24292e' },
-  google: { icon: <GoogleOutlined />, color: '#4285f4' },
-  naver: { icon: <span style={{ fontSize: 14, fontWeight: 'bold' }}>N</span>, color: '#03C75A' },
-  kakao: { icon: <span style={{ fontSize: 14, fontWeight: 'bold' }}>K</span>, color: '#FEE500' },
-  gitlab: { icon: <GitlabOutlined />, color: '#FC6D26' },
+  github: { icon: <GitHubIcon />, color: '#24292e' },
+  google: { icon: <GoogleIcon />, color: '#4285f4' },
+  naver: { icon: <Typography sx={{ fontSize: 14, fontWeight: 'bold' }}>N</Typography>, color: '#03C75A' },
+  kakao: { icon: <Typography sx={{ fontSize: 14, fontWeight: 'bold' }}>K</Typography>, color: '#FEE500' },
+  gitlab: { icon: <LoginIcon />, color: '#FC6D26' },
 }
 
 // Default fallback for unknown providers
-const DEFAULT_PROVIDER_CONFIG = { icon: <LoginOutlined />, color: '#666666' }
+const DEFAULT_PROVIDER_CONFIG = { icon: <LoginIcon />, color: '#666666' }
 
 // Get provider icon and color (with fallback)
 const getProviderConfig = (id: string) => PROVIDER_CONFIG[id] || DEFAULT_PROVIDER_CONFIG
@@ -57,6 +70,7 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const setAuth = useAuthStore((state) => state.setAuth)
   const callbackProcessed = useRef(false)
+  const { showSuccess, showError } = useSnackbar()
 
   // Fetch configured OAuth2 providers from server
   useEffect(() => {
@@ -64,7 +78,6 @@ export default function LoginPage() {
       try {
         const response = await api.get<ApiResponse<Provider[]>>('/auth/providers')
         if (response.data?.success && response.data.data) {
-          // 사전순 정렬 (이름 기준)
           const sorted = [...response.data.data].sort((a, b) => a.name.localeCompare(b.name))
           setProviders(sorted)
         }
@@ -77,6 +90,21 @@ export default function LoginPage() {
     fetchProviders()
   }, [])
 
+  const handleOAuthCallback = useCallback(async (token: string) => {
+    try {
+      const response = await api.get<ApiResponse<UserResponse>>('/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (response.data?.success && response.data.data) {
+        setAuth(token, response.data.data)
+        showSuccess(t('auth.loginSuccess'))
+        navigate('/dashboard')
+      }
+    } catch (error) {
+      showError(t('auth.loginError'))
+    }
+  }, [setAuth, showSuccess, showError, t, navigate])
+
   // Handle OAuth2 callback (if token in URL)
   useEffect(() => {
     const token = searchParams.get('token')
@@ -84,22 +112,7 @@ export default function LoginPage() {
       callbackProcessed.current = true
       handleOAuthCallback(token)
     }
-  }, [searchParams])
-
-  const handleOAuthCallback = async (token: string) => {
-    try {
-      const response = await api.get<ApiResponse<UserResponse>>('/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      if (response.data?.success && response.data.data) {
-        setAuth(token, response.data.data)
-        message.success(t('auth.loginSuccess'))
-        navigate('/dashboard')
-      }
-    } catch (error) {
-      message.error(t('auth.loginError'))
-    }
-  }
+  }, [searchParams, handleOAuthCallback])
 
   const handleLogin = async (providerId: string) => {
     setLoading(providerId)
@@ -108,19 +121,19 @@ export default function LoginPage() {
       if (response.data?.success && response.data.data?.auth_url) {
         window.location.href = response.data.data.auth_url
       } else {
-        message.error(response.data?.error || t('auth.loginError'))
+        showError(response.data?.error || t('auth.loginError'))
         setLoading(null)
       }
     } catch (error: unknown) {
       const errorMsg = (error as { response?: { data?: { error?: string } } }).response?.data?.error || t('auth.loginError')
-      message.error(errorMsg)
+      showError(errorMsg)
       setLoading(null)
     }
   }
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         minHeight: '100vh',
         display: 'flex',
         alignItems: 'center',
@@ -128,65 +141,72 @@ export default function LoginPage() {
         background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       }}
     >
-      <Card
-        style={{ width: 600, textAlign: 'center' }}
-        styles={{ body: { padding: '40px' } }}
-      >
-        <img
-          src="/logo-title-nobg.png"
-          alt="Conduix Logo"
-          style={{
-            width: 1000,
-            maxWidth: '100%',
-            marginBottom: 32,
-            objectFit: 'contain',
-          }}
-        />
+      <Card sx={{ width: 600, textAlign: 'center' }}>
+        <CardContent sx={{ p: 5 }}>
+          <img
+            src="/logo-title-nobg.png"
+            alt="Conduix Logo"
+            style={{
+              width: 1000,
+              maxWidth: '100%',
+              marginBottom: 32,
+              objectFit: 'contain',
+            }}
+          />
 
-        {loadingProviders ? (
-          <Spin tip={t('auth.loadingOptions')} />
-        ) : (
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            {providers.map((provider) => {
-              const config = getProviderConfig(provider.id)
-              return (
-                <Button
-                  key={provider.id}
-                  type="primary"
-                  icon={config.icon}
-                  size="large"
-                  block
-                  loading={loading === provider.id}
-                  onClick={() => handleLogin(provider.id)}
-                  style={{
-                    backgroundColor: config.color,
-                    borderColor: config.color,
-                  }}
-                >
-                  {t('auth.loginWith', { provider: provider.name })}
-                </Button>
-              )
-            })}
+          {loadingProviders ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
+              <CircularProgress size={20} />
+              <Typography>{t('auth.loadingOptions')}</Typography>
+            </Box>
+          ) : (
+            <Stack spacing={2}>
+              {providers.map((provider) => {
+                const config = getProviderConfig(provider.id)
+                return (
+                  <Button
+                    key={provider.id}
+                    variant="contained"
+                    startIcon={config.icon}
+                    size="large"
+                    fullWidth
+                    disabled={loading === provider.id}
+                    onClick={() => handleLogin(provider.id)}
+                    sx={{
+                      backgroundColor: config.color,
+                      '&:hover': {
+                        backgroundColor: config.color,
+                        filter: 'brightness(0.9)',
+                      },
+                    }}
+                  >
+                    {loading === provider.id ? (
+                      <CircularProgress size={24} color="inherit" />
+                    ) : (
+                      t('auth.loginWith', { provider: provider.name })
+                    )}
+                  </Button>
+                )
+              })}
 
-            {providers.length === 0 && (
-              <>
-                <Divider style={{ margin: '8px 0' }} />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('auth.noProviders')}
-                  <br />
-                  {t('auth.configureProviders')}
-                </Text>
-              </>
-            )}
-          </Space>
-        )}
+              {providers.length === 0 && (
+                <>
+                  <Divider sx={{ my: 1 }} />
+                  <Alert severity="info" sx={{ textAlign: 'left' }}>
+                    {t('auth.noProviders')}
+                    <br />
+                    {t('auth.configureProviders')}
+                  </Alert>
+                </>
+              )}
+            </Stack>
+          )}
 
-        <div style={{ marginTop: 24 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 3, display: 'block' }}>
             {t('auth.termsAgreement')}
-          </Text>
-        </div>
+          </Typography>
+        </CardContent>
       </Card>
-    </div>
+    </Box>
   )
 }

@@ -1,32 +1,29 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
+  Box,
   Card,
-  Descriptions,
-  Tag,
-  Table,
-  Spin,
-  message,
-  Avatar,
+  CardContent,
   Typography,
-  Space,
+  Grid,
+  Avatar,
+  Chip,
   Divider,
-  Empty,
-  Row,
-  Col,
-} from 'antd'
+  CircularProgress,
+  Stack,
+} from '@mui/material'
+import { DataGrid, GridColDef } from '@mui/x-data-grid'
 import {
-  UserOutlined,
-  MailOutlined,
-  CalendarOutlined,
-  SafetyCertificateOutlined,
-  ApiOutlined,
-  ClusterOutlined,
-} from '@ant-design/icons'
+  Person as UserIcon,
+  Email as MailIcon,
+  CalendarMonth as CalendarIcon,
+  Security as SecurityIcon,
+  Api as ApiIcon,
+  Dns as ClusterIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
+import { useSnackbar } from '../hooks/useSnackbar'
 import dayjs from 'dayjs'
-
-const { Title, Text } = Typography
 
 interface User {
   id: string
@@ -61,7 +58,7 @@ interface WorkflowAccess {
 
 interface UserProfile {
   user: User
-  permissions: any[]
+  permissions: string[]
   pipelines: PipelineAccess[]
   workflows: WorkflowAccess[]
   role_info: RoleInfo
@@ -73,219 +70,242 @@ interface ApiResponse<T> {
   error?: string
 }
 
-const roleColors: Record<string, string> = {
-  admin: 'red',
-  operator: 'blue',
-  viewer: 'green',
+const roleColors: Record<string, 'error' | 'primary' | 'success'> = {
+  admin: 'error',
+  operator: 'primary',
+  viewer: 'success',
 }
 
 export default function ProfilePage() {
   const { t } = useTranslation()
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<UserProfile | null>(null)
+  const { showError } = useSnackbar()
 
-  useEffect(() => {
-    fetchProfile()
-  }, [])
-
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
       const response = await api.get<ApiResponse<UserProfile>>('/auth/profile')
       if (response.data?.success && response.data.data) {
         setProfile(response.data.data)
       } else {
-        message.error(t('profile.loadError'))
+        showError(t('profile.loadError'))
       }
     } catch (error) {
-      message.error(t('profile.loadError'))
+      showError(t('profile.loadError'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [showError, t])
+
+  useEffect(() => {
+    fetchProfile()
+  }, [fetchProfile])
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '100px' }}>
-        <Spin size="large" tip={t('common.loading')} />
-      </div>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
+        <CircularProgress />
+      </Box>
     )
   }
 
   if (!profile) {
-    return <Empty description={t('profile.notFound')} />
+    return (
+      <Box sx={{ textAlign: 'center', py: 8 }}>
+        <Typography color="text.secondary">{t('profile.notFound')}</Typography>
+      </Box>
+    )
   }
 
   const { user, role_info, pipelines, workflows } = profile
 
-  const pipelineColumns = [
+  const pipelineColumns: GridColDef[] = [
+    { field: 'name', headerName: t('pipeline.title'), flex: 1 },
     {
-      title: t('pipeline.title'),
-      dataIndex: 'name',
-      key: 'name',
-    },
-    {
-      title: t('profile.permissions'),
-      dataIndex: 'actions',
-      key: 'actions',
-      render: (actions: string[]) => (
-        <Space>
-          {actions.map((action) => (
-            <Tag key={action} color="blue">
-              {action}
-            </Tag>
+      field: 'actions',
+      headerName: t('profile.permissions'),
+      flex: 1,
+      renderCell: (params) => (
+        <Stack direction="row" spacing={0.5}>
+          {params.value.map((action: string) => (
+            <Chip key={action} label={action} size="small" color="primary" variant="outlined" />
           ))}
-        </Space>
+        </Stack>
       ),
     },
   ]
 
-  const workflowColumns = [
+  const workflowColumns: GridColDef[] = [
+    { field: 'name', headerName: t('workflow.title'), flex: 1 },
     {
-      title: t('workflow.title'),
-      dataIndex: 'name',
-      key: 'name',
-    },
-    {
-      title: t('workflow.type'),
-      dataIndex: 'type',
-      key: 'type',
-      render: (type: string) => (
-        <Tag color={type === 'realtime' ? 'green' : 'orange'}>
-          {type === 'realtime' ? t('workflow.realtime') : t('workflow.batch')}
-        </Tag>
+      field: 'type',
+      headerName: t('workflow.type'),
+      width: 120,
+      renderCell: (params) => (
+        <Chip
+          label={params.value === 'realtime' ? t('workflow.realtime') : t('workflow.batch')}
+          color={params.value === 'realtime' ? 'success' : 'warning'}
+          size="small"
+        />
       ),
     },
     {
-      title: t('profile.permissions'),
-      dataIndex: 'actions',
-      key: 'actions',
-      render: (actions: string[]) => (
-        <Space>
-          {actions.map((action) => (
-            <Tag key={action} color="blue">
-              {action}
-            </Tag>
+      field: 'actions',
+      headerName: t('profile.permissions'),
+      flex: 1,
+      renderCell: (params) => (
+        <Stack direction="row" spacing={0.5}>
+          {params.value.map((action: string) => (
+            <Chip key={action} label={action} size="small" color="primary" variant="outlined" />
           ))}
-        </Space>
+        </Stack>
       ),
     },
   ]
 
   return (
-    <div style={{ padding: '24px' }}>
-      <Title level={2}>
-        <UserOutlined /> {t('profile.title')}
-      </Title>
+    <Box sx={{ p: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
+        <UserIcon />
+        <Typography variant="h5">{t('profile.title')}</Typography>
+      </Box>
 
-      <Row gutter={[24, 24]}>
+      <Grid container spacing={3}>
         {/* Account Info */}
-        <Col xs={24} lg={12}>
-          <Card title={t('profile.accountInfo')} style={{ height: '100%' }}>
-            <div style={{ textAlign: 'center', marginBottom: 24 }}>
-              <Avatar
-                size={100}
-                src={user.avatar_url}
-                icon={<UserOutlined />}
-              />
-              <Title level={4} style={{ marginTop: 16, marginBottom: 4 }}>
-                {user.name || user.email}
-              </Title>
-              <Tag color={roleColors[user.role] || 'default'} style={{ fontSize: 14 }}>
-                {role_info.display_name}
-              </Tag>
-            </div>
+        <Grid item xs={12} lg={6}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 2 }}>{t('profile.accountInfo')}</Typography>
 
-            <Descriptions column={1} bordered size="small">
-              <Descriptions.Item label={<><MailOutlined /> {t('profile.email')}</>}>
-                {user.email}
-              </Descriptions.Item>
-              <Descriptions.Item label={<><SafetyCertificateOutlined /> {t('profile.authProvider')}</>}>
-                <Tag>{user.provider?.toUpperCase() || 'N/A'}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label={<><CalendarOutlined /> {t('profile.joinedAt')}</>}>
-                {dayjs(user.created_at).format('YYYY-MM-DD HH:mm')}
-              </Descriptions.Item>
-              <Descriptions.Item label={<><CalendarOutlined /> {t('profile.lastLogin')}</>}>
-                {user.last_login
-                  ? dayjs(user.last_login).format('YYYY-MM-DD HH:mm')
-                  : '-'}
-              </Descriptions.Item>
-            </Descriptions>
+              <Box sx={{ textAlign: 'center', mb: 3 }}>
+                <Avatar
+                  src={user.avatar_url}
+                  sx={{ width: 100, height: 100, mx: 'auto', mb: 2 }}
+                >
+                  <UserIcon sx={{ fontSize: 50 }} />
+                </Avatar>
+                <Typography variant="h6">{user.name || user.email}</Typography>
+                <Chip
+                  label={role_info.display_name}
+                  color={roleColors[user.role] || 'default'}
+                  sx={{ mt: 1 }}
+                />
+              </Box>
+
+              <Divider sx={{ my: 2 }} />
+
+              <Stack spacing={2}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <MailIcon color="action" />
+                  <Typography variant="body2" color="text.secondary">{t('profile.email')}</Typography>
+                  <Typography sx={{ ml: 'auto' }}>{user.email}</Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <SecurityIcon color="action" />
+                  <Typography variant="body2" color="text.secondary">{t('profile.authProvider')}</Typography>
+                  <Chip label={user.provider?.toUpperCase() || 'N/A'} size="small" sx={{ ml: 'auto' }} />
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CalendarIcon color="action" />
+                  <Typography variant="body2" color="text.secondary">{t('profile.joinedAt')}</Typography>
+                  <Typography sx={{ ml: 'auto' }}>{dayjs(user.created_at).format('YYYY-MM-DD HH:mm')}</Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CalendarIcon color="action" />
+                  <Typography variant="body2" color="text.secondary">{t('profile.lastLogin')}</Typography>
+                  <Typography sx={{ ml: 'auto' }}>
+                    {user.last_login ? dayjs(user.last_login).format('YYYY-MM-DD HH:mm') : '-'}
+                  </Typography>
+                </Box>
+              </Stack>
+            </CardContent>
           </Card>
-        </Col>
+        </Grid>
 
         {/* Role & Permissions */}
-        <Col xs={24} lg={12}>
-          <Card title={t('profile.rolePermissions')} style={{ height: '100%' }}>
-            <div style={{ marginBottom: 16 }}>
-              <Text strong>{t('profile.role')}: </Text>
-              <Tag color={roleColors[role_info.role] || 'default'} style={{ fontSize: 14 }}>
-                {role_info.display_name}
-              </Tag>
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <Text type="secondary">{role_info.description}</Text>
-            </div>
+        <Grid item xs={12} lg={6}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 2 }}>{t('profile.rolePermissions')}</Typography>
 
-            <Divider orientation="left" plain>
-              {t('profile.permissions')}
-            </Divider>
-            <Space wrap>
-              {role_info.permissions.map((perm) => (
-                <Tag key={perm} color="geekblue">
-                  {perm}
-                </Tag>
-              ))}
-            </Space>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  {t('profile.role')}
+                </Typography>
+                <Chip label={role_info.display_name} color={roleColors[role_info.role] || 'default'} />
+              </Box>
+
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {role_info.description}
+              </Typography>
+
+              <Divider sx={{ my: 2 }} />
+
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                {t('profile.permissions')}
+              </Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                {role_info.permissions.map((perm) => (
+                  <Chip key={perm} label={perm} size="small" color="info" variant="outlined" />
+                ))}
+              </Stack>
+            </CardContent>
           </Card>
-        </Col>
+        </Grid>
 
         {/* Accessible Workflows */}
-        <Col xs={24}>
-          <Card
-            title={
-              <>
-                <ClusterOutlined /> {t('profile.accessibleWorkflows')}
-              </>
-            }
-          >
-            {workflows && workflows.length > 0 ? (
-              <Table
-                dataSource={workflows}
-                columns={workflowColumns}
-                rowKey="id"
-                pagination={false}
-                size="small"
-              />
-            ) : (
-              <Empty description={t('profile.noWorkflows')} />
-            )}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <ClusterIcon color="action" />
+                <Typography variant="h6">{t('profile.accessibleWorkflows')}</Typography>
+              </Box>
+              {workflows && workflows.length > 0 ? (
+                <DataGrid
+                  rows={workflows}
+                  columns={workflowColumns}
+                  autoHeight
+                  hideFooter
+                  disableRowSelectionOnClick
+                />
+              ) : (
+                <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+                  {t('profile.noWorkflows')}
+                </Typography>
+              )}
+            </CardContent>
           </Card>
-        </Col>
+        </Grid>
 
         {/* Accessible Pipelines */}
-        <Col xs={24}>
-          <Card
-            title={
-              <>
-                <ApiOutlined /> {t('profile.accessiblePipelines')}
-              </>
-            }
-          >
-            {pipelines && pipelines.length > 0 ? (
-              <Table
-                dataSource={pipelines}
-                columns={pipelineColumns}
-                rowKey="id"
-                pagination={{ pageSize: 10 }}
-                size="small"
-              />
-            ) : (
-              <Empty description={t('profile.noPipelines')} />
-            )}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <ApiIcon color="action" />
+                <Typography variant="h6">{t('profile.accessiblePipelines')}</Typography>
+              </Box>
+              {pipelines && pipelines.length > 0 ? (
+                <DataGrid
+                  rows={pipelines}
+                  columns={pipelineColumns}
+                  autoHeight
+                  pageSizeOptions={[10]}
+                  initialState={{
+                    pagination: { paginationModel: { pageSize: 10 } },
+                  }}
+                  disableRowSelectionOnClick
+                />
+              ) : (
+                <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+                  {t('profile.noPipelines')}
+                </Typography>
+              )}
+            </CardContent>
           </Card>
-        </Col>
-      </Row>
-    </div>
+        </Grid>
+      </Grid>
+    </Box>
   )
 }

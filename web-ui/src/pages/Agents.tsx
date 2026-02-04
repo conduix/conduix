@@ -1,33 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
-  Table,
-  Tag,
+  Box,
   Typography,
   Card,
-  Row,
-  Col,
-  Statistic,
-  Progress,
-  Space,
-  Badge,
-  Tooltip,
-  Collapse,
-  List,
-  message,
-} from 'antd'
+  CardContent,
+  Grid,
+  Chip,
+  LinearProgress,
+} from '@mui/material'
+import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
-  ClusterOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  DesktopOutlined,
-  HddOutlined,
-  CloudServerOutlined,
-} from '@ant-design/icons'
+  Dns as ClusterIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CloseCircleIcon,
+  Computer as DesktopIcon,
+  Storage as HddIcon,
+  Cloud as CloudIcon,
+} from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
-
-const { Title, Text } = Typography
+import { useSnackbar } from '../hooks/useSnackbar'
 
 interface PipelineStat {
   pipeline_id: string
@@ -60,48 +52,82 @@ interface Agent {
   uptime: string
 }
 
+function ResourceProgress({ label, value }: { label: string; value: number }) {
+  const getColor = (v: number): 'success' | 'warning' | 'error' => {
+    if (v >= 90) return 'error'
+    if (v >= 70) return 'warning'
+    return 'success'
+  }
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ width: 40 }}>
+        {label}
+      </Typography>
+      <Box sx={{ flex: 1 }}>
+        <LinearProgress
+          variant="determinate"
+          value={Math.round(value || 0)}
+          color={getColor(value || 0)}
+          sx={{ height: 8, borderRadius: 4 }}
+        />
+      </Box>
+      <Typography variant="caption" sx={{ width: 40, textAlign: 'right' }}>
+        {Math.round(value || 0)}%
+      </Typography>
+    </Box>
+  )
+}
+
+interface StatCardProps {
+  title: string
+  value: number
+  icon: React.ReactNode
+  color?: string
+}
+
+function StatCard({ title, value, icon, color }: StatCardProps) {
+  return (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+          <Box sx={{ color: color || 'text.secondary' }}>{icon}</Box>
+          <Typography variant="body2" color="text.secondary">
+            {title}
+          </Typography>
+        </Box>
+        <Typography variant="h4" sx={{ color: color || 'text.primary' }}>
+          {value}
+        </Typography>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function AgentsPage() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
+  const { showError } = useSnackbar()
 
-  useEffect(() => {
-    fetchAgents()
-    // 30초마다 자동 갱신
-    const interval = setInterval(fetchAgents, 30000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const fetchAgents = async () => {
+  const fetchAgents = useCallback(async () => {
     try {
       const response = await api.getAgents()
       if (response.success) {
         setAgents(response.data || [])
       }
-    } catch (error) {
-      message.error(t('agent.loadError'))
+    } catch {
+      showError(t('agent.loadError'))
     } finally {
       setLoading(false)
     }
-  }
+  }, [showError, t])
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'online':
-        return <Badge status="success" text={t('agent.online')} />
-      case 'offline':
-        return <Badge status="error" text={t('agent.offline')} />
-      default:
-        return <Badge status="default" text={t('agent.unknown')} />
-    }
-  }
-
-  const getProgressColor = (value: number) => {
-    if (value >= 90) return '#ff4d4f'
-    if (value >= 70) return '#faad14'
-    return '#52c41a'
-  }
+  useEffect(() => {
+    fetchAgents()
+    const interval = setInterval(fetchAgents, 30000)
+    return () => clearInterval(interval)
+  }, [fetchAgents])
 
   const formatLastHeartbeat = (heartbeat: string | null) => {
     if (!heartbeat) return '-'
@@ -118,226 +144,133 @@ export default function AgentsPage() {
   const offlineCount = agents.filter(a => a.status === 'offline').length
   const totalRunningWorkflows = agents.reduce((sum, a) => sum + (a.running_execs?.length || 0), 0)
 
-  const columns = [
+  const columns: GridColDef[] = [
     {
-      title: t('agent.hostname'),
-      dataIndex: 'hostname',
-      key: 'hostname',
-      render: (hostname: string, record: Agent) => (
-        <Space>
-          <DesktopOutlined />
-          <span>{hostname}</span>
-          {record.version && (
-            <Tag color="blue" style={{ fontSize: 10 }}>v{record.version}</Tag>
+      field: 'hostname',
+      headerName: t('agent.hostname'),
+      flex: 1,
+      renderCell: (params: GridRenderCellParams<Agent>) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <DesktopIcon fontSize="small" />
+          <span>{params.value}</span>
+          {params.row.version && (
+            <Chip label={`v${params.row.version}`} size="small" color="primary" variant="outlined" />
           )}
-        </Space>
+        </Box>
       ),
     },
     {
-      title: t('agent.status'),
-      dataIndex: 'status',
-      key: 'status',
+      field: 'status',
+      headerName: t('agent.status'),
       width: 120,
-      render: (status: string) => getStatusBadge(status),
-    },
-    {
-      title: t('agent.resources'),
-      key: 'resources',
-      width: 300,
-      render: (_: unknown, record: Agent) => (
-        <Space direction="vertical" size="small" style={{ width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tooltip title="CPU">
-              <Text type="secondary" style={{ width: 60 }}>CPU</Text>
-            </Tooltip>
-            <Progress
-              percent={Math.round(record.cpu_usage || 0)}
-              size="small"
-              strokeColor={getProgressColor(record.cpu_usage || 0)}
-              style={{ flex: 1, margin: 0 }}
-            />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tooltip title="Memory">
-              <Text type="secondary" style={{ width: 60 }}>MEM</Text>
-            </Tooltip>
-            <Progress
-              percent={Math.round(record.memory_usage || 0)}
-              size="small"
-              strokeColor={getProgressColor(record.memory_usage || 0)}
-              style={{ flex: 1, margin: 0 }}
-            />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tooltip title="Disk">
-              <Text type="secondary" style={{ width: 60 }}>DISK</Text>
-            </Tooltip>
-            <Progress
-              percent={Math.round(record.disk_usage || 0)}
-              size="small"
-              strokeColor={getProgressColor(record.disk_usage || 0)}
-              style={{ flex: 1, margin: 0 }}
-            />
-          </div>
-        </Space>
-      ),
-    },
-    {
-      title: t('agent.runningWorkflows'),
-      key: 'running',
-      width: 150,
-      render: (_: unknown, record: Agent) => {
-        const count = record.running_execs?.length || 0
+      renderCell: (params) => {
+        const isOnline = params.value === 'online'
         return (
-          <Tag color={count > 0 ? 'processing' : 'default'}>
-            {count} {t('agent.workflows')}
-          </Tag>
+          <Chip
+            icon={isOnline ? <CheckCircleIcon /> : <CloseCircleIcon />}
+            label={isOnline ? t('agent.online') : t('agent.offline')}
+            color={isOnline ? 'success' : 'error'}
+            size="small"
+          />
         )
       },
     },
     {
-      title: t('agent.uptime'),
-      dataIndex: 'uptime',
-      key: 'uptime',
-      width: 100,
-      render: (uptime: string) => uptime || '-',
+      field: 'resources',
+      headerName: t('agent.resources'),
+      width: 250,
+      sortable: false,
+      renderCell: (params: GridRenderCellParams<Agent>) => (
+        <Box sx={{ width: '100%', py: 1 }}>
+          <ResourceProgress label="CPU" value={params.row.cpu_usage} />
+          <ResourceProgress label="MEM" value={params.row.memory_usage} />
+          <ResourceProgress label="DISK" value={params.row.disk_usage} />
+        </Box>
+      ),
     },
     {
-      title: t('agent.lastHeartbeat'),
-      dataIndex: 'last_heartbeat',
-      key: 'last_heartbeat',
+      field: 'running',
+      headerName: t('agent.runningWorkflows'),
       width: 150,
-      render: (heartbeat: string | null) => formatLastHeartbeat(heartbeat),
+      valueGetter: (params) => params.row.running_execs?.length || 0,
+      renderCell: (params: GridRenderCellParams<Agent>) => {
+        const count = params.row.running_execs?.length || 0
+        return (
+          <Chip
+            label={`${count} ${t('agent.workflows')}`}
+            color={count > 0 ? 'primary' : 'default'}
+            size="small"
+          />
+        )
+      },
+    },
+    {
+      field: 'uptime',
+      headerName: t('agent.uptime'),
+      width: 100,
+      valueFormatter: ({ value }) => value || '-',
+    },
+    {
+      field: 'last_heartbeat',
+      headerName: t('agent.lastHeartbeat'),
+      width: 150,
+      valueFormatter: ({ value }) => formatLastHeartbeat(value),
     },
   ]
 
-  const expandedRowRender = (record: Agent) => {
-    return (
-      <div style={{ padding: '0 16px' }}>
-        <Collapse ghost>
-          {record.running_execs && record.running_execs.length > 0 && (
-            <Collapse.Panel header={t('agent.runningExecutions')} key="executions">
-              <List
-                size="small"
-                dataSource={record.running_execs}
-                renderItem={(exec) => (
-                  <List.Item>
-                    <Space>
-                      <Tag color="processing">{t('agent.running')}</Tag>
-                      <a onClick={() => navigate(`/workflows/${exec.workflow_id}`)}>
-                        Workflow: {exec.workflow_id.substring(0, 8)}...
-                      </a>
-                      <Text type="secondary">
-                        {t('agent.startedAt')}: {new Date(exec.started_at).toLocaleString()}
-                      </Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            </Collapse.Panel>
-          )}
-          {record.pipeline_stats && record.pipeline_stats.length > 0 && (
-            <Collapse.Panel header={t('agent.pipelineStats')} key="pipelines">
-              <List
-                size="small"
-                dataSource={record.pipeline_stats}
-                renderItem={(stat) => (
-                  <List.Item>
-                    <Space>
-                      <Tag color={stat.status === 'running' ? 'processing' : 'default'}>
-                        {stat.status}
-                      </Tag>
-                      <Text>Pipeline: {stat.pipeline_id.substring(0, 8)}...</Text>
-                      <Text type="secondary">
-                        {t('agent.processed')}: {stat.processed_count.toLocaleString()}
-                      </Text>
-                      {stat.error_count > 0 && (
-                        <Text type="danger">
-                          {t('agent.errors')}: {stat.error_count}
-                        </Text>
-                      )}
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            </Collapse.Panel>
-          )}
-          <Collapse.Panel header={t('agent.details')} key="details">
-            <Space direction="vertical">
-              <Text><strong>ID:</strong> {record.id}</Text>
-              <Text><strong>IP:</strong> {record.ip_address || '-'}</Text>
-              <Text><strong>{t('agent.registeredAt')}:</strong> {new Date(record.registered_at).toLocaleString()}</Text>
-            </Space>
-          </Collapse.Panel>
-        </Collapse>
-      </div>
-    )
-  }
-
   return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0 }}>
-          <ClusterOutlined style={{ marginRight: 8 }} />
-          {t('agent.title')}
-        </Title>
-      </div>
+    <Box>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <ClusterIcon />
+        <Typography variant="h5">{t('agent.title')}</Typography>
+      </Box>
 
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title={t('agent.totalAgents')}
-              value={agents.length}
-              prefix={<CloudServerOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title={t('agent.onlineAgents')}
-              value={onlineCount}
-              prefix={<CheckCircleOutlined />}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title={t('agent.offlineAgents')}
-              value={offlineCount}
-              prefix={<CloseCircleOutlined />}
-              valueStyle={{ color: offlineCount > 0 ? '#ff4d4f' : undefined }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title={t('agent.runningWorkflows')}
-              value={totalRunningWorkflows}
-              prefix={<HddOutlined />}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard
+            title={t('agent.totalAgents')}
+            value={agents.length}
+            icon={<CloudIcon />}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard
+            title={t('agent.onlineAgents')}
+            value={onlineCount}
+            icon={<CheckCircleIcon />}
+            color="#4caf50"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard
+            title={t('agent.offlineAgents')}
+            value={offlineCount}
+            icon={<CloseCircleIcon />}
+            color={offlineCount > 0 ? '#f44336' : undefined}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatCard
+            title={t('agent.runningWorkflows')}
+            value={totalRunningWorkflows}
+            icon={<HddIcon />}
+          />
+        </Grid>
+      </Grid>
 
-      <Table
-        dataSource={agents}
+      <DataGrid
+        rows={agents}
         columns={columns}
-        rowKey="id"
         loading={loading}
-        expandable={{
-          expandedRowRender,
-          rowExpandable: (record) =>
-            (record.running_execs?.length > 0) ||
-            (record.pipeline_stats?.length > 0) ||
-            true,
+        autoHeight
+        getRowHeight={() => 'auto'}
+        disableRowSelectionOnClick
+        sx={{
+          '& .MuiDataGrid-cell': {
+            py: 1,
+          },
         }}
-        pagination={false}
       />
-    </div>
+    </Box>
   )
 }

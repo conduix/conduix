@@ -46,6 +46,16 @@ spec:
           value: "2Gi"
 
         # ===========================================
+        # MySQL/Redis/Kafka 이미지 태그 (최신 버전으로 명시)
+        # ===========================================
+        - name: mysql.image.tag
+          value: "8.0"
+        - name: redis.image.tag
+          value: "7.2"
+        - name: kafka.image.tag
+          value: "3.6"
+
+        # ===========================================
         # MySQL/Redis 설정 (로컬용 - 리소스 최소화)
         # ===========================================
         - name: mysql.primary.persistence.size

@@ -200,24 +200,36 @@ redis:
       size: 5Gi
 
 # =============================================================================
-# Kafka (Bitnami subchart)
+# Kafka (Bitnami subchart v26.x - KRaft 모드)
 # 파이프라인 간 데이터 전달용
 # enabled: false 일 때 env.KAFKA_BROKERS 설정 사용
 # =============================================================================
 kafka:
   enabled: false  # 기본값은 false (선택적 배포)
-  replicaCount: 3
-  persistence:
+  # KRaft 모드 (Zookeeper 없이 동작, Kafka 3.x+)
+  kraft:
     enabled: true
-    size: 10Gi
   zookeeper:
-    enabled: true
-    replicaCount: 3
+    enabled: false
+  # Controller 노드 (KRaft 모드에서는 controller가 broker 역할도 수행)
+  controller:
+    replicaCount: 1
     persistence:
       enabled: true
-      size: 5Gi
+      size: 10Gi
+  # 별도 Broker 노드 (로컬에서는 0으로 설정, controller가 역할 수행)
+  broker:
+    replicaCount: 0
+  # 리소스 설정
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
   # Kafka 설정
-  config: |
+  extraConfig: |
     auto.create.topics.enable=true
     delete.topic.enable=true
     log.retention.hours=168

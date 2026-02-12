@@ -1,0 +1,148 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: conduix-local
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/conduix/conduix.git
+    targetRevision: main
+    path: deploy/helm/conduix
+    helm:
+      releaseName: conduix
+      valueFiles:
+        - values.yaml
+      parameters:
+        # ===========================================
+        # 내장 인프라 활성화 (로컬 개발용)
+        # ===========================================
+        - name: mysql.enabled
+          value: "true"
+        - name: redis.enabled
+          value: "true"
+        - name: kafka.enabled
+          value: "true"
+        - name: migration.enabled
+          value: "true"
+
+        # ===========================================
+        # Kafka 설정 (로컬용 - KRaft 모드, 리소스 최소화)
+        # ===========================================
+        # KRaft 모드 활성화 (Zookeeper 없이 동작)
+        - name: kafka.kraft.enabled
+          value: "true"
+        - name: kafka.zookeeper.enabled
+          value: "false"
+        # Controller + Broker 통합 모드
+        - name: kafka.controller.replicaCount
+          value: "1"
+        - name: kafka.broker.replicaCount
+          value: "0"
+        - name: kafka.controller.persistence.size
+          value: "2Gi"
+
+        # ===========================================
+        # MySQL/Redis 설정 (로컬용 - 리소스 최소화)
+        # ===========================================
+        - name: mysql.primary.persistence.size
+          value: "2Gi"
+        - name: redis.master.persistence.size
+          value: "1Gi"
+
+        # ===========================================
+        # 환경변수 (ConfigMap으로 주입)
+        # ===========================================
+        # Application Settings
+        - name: env.AUTO_MIGRATE
+          value: "true"
+        - name: env.FRONTEND_URL
+          value: "http://localhost:30000"
+        - name: env.MAX_DATATYPE_DEPTH
+          value: "5"
+
+        # Admin Users (comma-separated emails)
+        - name: env.CONDUIX_ADMIN_EMAILS
+          value: "herohyohwan@gmail.com,herohyohwan@users.noreply.github.com"
+
+        # ===========================================
+        # Replica 수 조정 (로컬용 - 최소화)
+        # ===========================================
+        - name: controlPlane.replicaCount
+          value: "1"
+        - name: agent.replicaCount
+          value: "1"
+        - name: webUI.replicaCount
+          value: "1"
+
+        # ===========================================
+        # Autoscaling 비활성화 (로컬용)
+        # ===========================================
+        - name: controlPlane.autoscaling.enabled
+          value: "false"
+        - name: agent.autoscaling.enabled
+          value: "false"
+
+        # ===========================================
+        # Image Pull Policy (Always for local dev)
+        # ===========================================
+        - name: controlPlane.image.pullPolicy
+          value: "Always"
+        - name: agent.image.pullPolicy
+          value: "Always"
+        - name: webUI.image.pullPolicy
+          value: "Always"
+
+        # ===========================================
+        # Service (NodePort for local access)
+        # Control Plane: http://localhost:30080
+        # Web UI: http://localhost:30000
+        # Agent: http://localhost:30081
+        # ===========================================
+        - name: controlPlane.service.type
+          value: "NodePort"
+        - name: controlPlane.service.nodePort
+          value: "30080"
+        - name: webUI.service.type
+          value: "NodePort"
+        - name: webUI.service.nodePort
+          value: "30000"
+        - name: agent.service.type
+          value: "NodePort"
+        - name: agent.service.nodePort
+          value: "30081"
+
+        # ===========================================
+        # Ingress (disabled for local)
+        # ===========================================
+        - name: ingress.enabled
+          value: "false"
+
+        # ===========================================
+        # Secrets (로컬 개발용 기본값)
+        # ===========================================
+        - name: secrets.dbPassword
+          value: "conduixpassword"
+        - name: secrets.jwtSecret
+          value: "local-dev-jwt-secret-key-for-testing"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: conduix
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

@@ -21,14 +21,14 @@ maintainers:
 
 dependencies:
   - name: mysql
-    version: "9.x.x"
-    repository: "https://charts.bitnami.com/bitnami"
+    version: "12.x.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
     condition: mysql.enabled
   - name: redis
-    version: "18.x.x"
-    repository: "https://charts.bitnami.com/bitnami"
+    version: "20.x.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
     condition: redis.enabled
   - name: kafka
-    version: "26.x.x"
-    repository: "https://charts.bitnami.com/bitnami"
+    version: "31.x.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
     condition: kafka.enabled

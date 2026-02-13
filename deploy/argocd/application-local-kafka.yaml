@@ -46,32 +46,8 @@ spec:
           value: "2Gi"
 
         # ===========================================
-        # MySQL/Redis/Kafka 이미지 설정 (공식 Docker 이미지 사용)
-        # ===========================================
-        # MySQL - 공식 이미지 사용
-        - name: mysql.image.registry
-          value: "docker.io"
-        - name: mysql.image.repository
-          value: "mysql"
-        - name: mysql.image.tag
-          value: "8.0"
-        # Redis - 공식 이미지 사용
-        - name: redis.image.registry
-          value: "docker.io"
-        - name: redis.image.repository
-          value: "redis"
-        - name: redis.image.tag
-          value: "7.2-alpine"
-        # Kafka - Apache 공식 이미지 사용
-        - name: kafka.image.registry
-          value: "docker.io"
-        - name: kafka.image.repository
-          value: "apache/kafka"
-        - name: kafka.image.tag
-          value: "3.7.0"
-
-        # ===========================================
         # MySQL/Redis 설정 (로컬용 - 리소스 최소화)
+        # Bitnami 기본 이미지 사용 (커스텀 이미지 제거)
         # ===========================================
         - name: mysql.primary.persistence.size
           value: "2Gi"

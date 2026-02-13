@@ -1,6 +1,6 @@
 module github.com/conduix/conduix/pipeline-core
 
-go 1.25
+go 1.26
 
 require (
 	github.com/conduix/conduix/shared v0.0.0

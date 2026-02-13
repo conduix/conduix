@@ -14,7 +14,7 @@ Conduix is an Actor Model-based scalable data pipeline platform that combines Be
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Node.js 18+
 - Docker & Docker Compose
 - MySQL 8.0

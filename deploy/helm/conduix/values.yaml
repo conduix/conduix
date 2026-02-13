@@ -1,7 +1,12 @@
 # Global settings
 global:
+  # Bitnami 이미지는 이제 docker.io가 아닌 registry.docker.io에서 제공
+  # 빈 값으로 두면 각 subchart의 기본 registry 사용
   imageRegistry: ""
   imagePullSecrets: []
+
+# Bitnami subchart 이미지 설정 (Docker Hub에서 더 이상 제공 안함)
+# registry-1.docker.io/bitnami/* 형식으로 pull됨
 
 # =============================================================================
 # 환경변수 설정 (ConfigMap으로 주입)
@@ -175,6 +180,9 @@ ingress:
 # =============================================================================
 mysql:
   enabled: true
+  image:
+    registry: registry-1.docker.io
+    repository: bitnami/mysql
   auth:
     rootPassword: "rootpassword"
     database: "conduix"
@@ -191,6 +199,9 @@ mysql:
 # =============================================================================
 redis:
   enabled: true
+  image:
+    registry: registry-1.docker.io
+    repository: bitnami/redis
   architecture: standalone
   auth:
     enabled: false
@@ -206,6 +217,9 @@ redis:
 # =============================================================================
 kafka:
   enabled: false  # 기본값은 false (선택적 배포)
+  image:
+    registry: registry-1.docker.io
+    repository: bitnami/kafka
   # KRaft 모드 (Zookeeper 없이 동작, Kafka 3.x+)
   kraft:
     enabled: true

@@ -180,9 +180,6 @@ ingress:
 # =============================================================================
 mysql:
   enabled: true
-  image:
-    registry: registry-1.docker.io
-    repository: bitnami/mysql
   auth:
     rootPassword: "rootpassword"
     database: "conduix"
@@ -199,9 +196,6 @@ mysql:
 # =============================================================================
 redis:
   enabled: true
-  image:
-    registry: registry-1.docker.io
-    repository: bitnami/redis
   architecture: standalone
   auth:
     enabled: false
@@ -217,9 +211,6 @@ redis:
 # =============================================================================
 kafka:
   enabled: false  # 기본값은 false (선택적 배포)
-  image:
-    registry: registry-1.docker.io
-    repository: bitnami/kafka
   # KRaft 모드 (Zookeeper 없이 동작, Kafka 3.x+)
   kraft:
     enabled: true

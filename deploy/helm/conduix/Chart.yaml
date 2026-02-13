@@ -20,15 +20,10 @@ maintainers:
     email: team@example.com
 
 dependencies:
-  - name: mysql
-    version: "12.x.x"
-    repository: "oci://registry-1.docker.io/bitnamicharts"
-    condition: mysql.enabled
+  # Redis만 Bitnami 사용 (이미지 존재함)
+  # MySQL: MySQL Operator로 별도 배포
+  # Kafka: Strimzi Operator로 별도 배포
   - name: redis
     version: "20.x.x"
     repository: "oci://registry-1.docker.io/bitnamicharts"
     condition: redis.enabled
-  - name: kafka
-    version: "31.x.x"
-    repository: "oci://registry-1.docker.io/bitnamicharts"
-    condition: kafka.enabled

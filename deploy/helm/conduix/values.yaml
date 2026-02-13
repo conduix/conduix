@@ -13,19 +13,19 @@ global:
 # ArgoCD에서 env.* 파라미터로 오버라이드 가능
 # =============================================================================
 env:
-  # Database (mysql.enabled=false 일 때 사용)
-  DB_HOST: "host.docker.internal"
-  DB_PORT: "3307"
-  DB_USER: "conduixuser"
+  # Database (MySQL Operator InnoDBCluster 서비스)
+  DB_HOST: "mysql-cluster"
+  DB_PORT: "3306"
+  DB_USER: "root"
   DB_NAME: "conduix"
 
-  # Redis (redis.enabled=false 일 때 사용)
-  REDIS_ADDR: "host.docker.internal:6379"
-  REDIS_HOST: "host.docker.internal"
+  # Redis (Bitnami subchart 서비스)
+  REDIS_ADDR: "conduix-redis-master:6379"
+  REDIS_HOST: "conduix-redis-master"
   REDIS_PORT: "6379"
 
-  # Kafka (kafka.enabled=false 일 때 사용)
-  KAFKA_BROKERS: "host.docker.internal:9092"
+  # Kafka (Strimzi Kafka 서비스)
+  KAFKA_BROKERS: "conduix-kafka-kafka-bootstrap:9092"
 
   # Application Settings
   AUTO_MIGRATE: "true"
@@ -56,8 +56,8 @@ secrets:
   create: true
   # JWT Secret (미설정 시 자동 생성)
   jwtSecret: ""
-  # Database Password
-  dbPassword: "conduixpassword"
+  # Database Password (MySQL Operator에서 설정한 패스워드와 일치해야 함)
+  dbPassword: "rootpassword"
   # Redis Password
   redisPassword: ""
   # OAuth2 Client Secrets
@@ -175,27 +175,13 @@ ingress:
   tls: []
 
 # =============================================================================
-# MySQL (Bitnami subchart)
-# enabled: false 일 때 env.DB_* 설정 사용
-# =============================================================================
-mysql:
-  enabled: true
-  auth:
-    rootPassword: "rootpassword"
-    database: "conduix"
-    username: "conduixuser"
-    password: "conduixpassword"
-  primary:
-    persistence:
-      enabled: true
-      size: 10Gi
-
-# =============================================================================
 # Redis (Bitnami subchart)
 # enabled: false 일 때 env.REDIS_* 설정 사용
 # =============================================================================
 redis:
   enabled: true
+  image:
+    tag: latest
   architecture: standalone
   auth:
     enabled: false
@@ -205,46 +191,10 @@ redis:
       size: 5Gi
 
 # =============================================================================
-# Kafka (Bitnami subchart v26.x - KRaft 모드)
-# 파이프라인 간 데이터 전달용
-# enabled: false 일 때 env.KAFKA_BROKERS 설정 사용
+# MySQL: MySQL Operator로 별도 배포 (mysql-cluster ArgoCD Application)
+# Kafka: Strimzi Operator로 별도 배포 (kafka-cluster CRD)
+# 아래 설정은 외부 서비스 연결용
 # =============================================================================
-kafka:
-  enabled: false  # 기본값은 false (선택적 배포)
-  # KRaft 모드 (Zookeeper 없이 동작, Kafka 3.x+)
-  kraft:
-    enabled: true
-  zookeeper:
-    enabled: false
-  # Controller 노드 (KRaft 모드에서는 controller가 broker 역할도 수행)
-  controller:
-    replicaCount: 1
-    persistence:
-      enabled: true
-      size: 10Gi
-  # 별도 Broker 노드 (로컬에서는 0으로 설정, controller가 역할 수행)
-  broker:
-    replicaCount: 0
-  # 리소스 설정
-  resources:
-    limits:
-      cpu: 1000m
-      memory: 2Gi
-    requests:
-      cpu: 250m
-      memory: 512Mi
-  # Kafka 설정
-  extraConfig: |
-    auto.create.topics.enable=true
-    delete.topic.enable=true
-    log.retention.hours=168
-    log.segment.bytes=1073741824
-    log.retention.check.interval.ms=300000
-    num.partitions=3
-    default.replication.factor=1
-    offsets.topic.replication.factor=1
-    transaction.state.log.replication.factor=1
-    transaction.state.log.min.isr=1
 
 # =============================================================================
 # ServiceAccount & Security

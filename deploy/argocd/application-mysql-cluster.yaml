@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mysql-cluster
+  namespace: argocd
+spec:
+  project: default
+  source:
+    chart: mysql-innodbcluster
+    repoURL: https://mysql.github.io/mysql-operator/
+    targetRevision: 2.2.7
+    helm:
+      values: |
+        credentials:
+          root:
+            password: rootpassword
+            user: root
+        serverInstances: 1
+        routerInstances: 1
+        tls:
+          useSelfSigned: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: conduix
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,3 +1,13 @@
+# ===========================================
+# Conduix Local ArgoCD Application
+# ===========================================
+# 배포 순서:
+# 1. MySQL Operator: kubectl apply -f application-mysql-operator.yaml
+# 2. MySQL Cluster: kubectl apply -f application-mysql-cluster.yaml
+# 3. Strimzi Kafka Operator: kubectl apply -f application-kafka-strimzi.yaml
+# 4. Kafka Cluster: kubectl apply -f kafka-cluster.yaml
+# 5. Conduix Application: kubectl apply -f application-local-kafka.yaml
+# ===========================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,46 +28,48 @@ spec:
         - values.yaml
       parameters:
         # ===========================================
-        # 내장 인프라 활성화 (로컬 개발용)
+        # Redis 활성화 (Bitnami subchart)
+        # MySQL: MySQL Operator로 별도 배포
+        # Kafka: Strimzi Operator로 별도 배포
         # ===========================================
-        - name: mysql.enabled
-          value: "true"
         - name: redis.enabled
           value: "true"
-        - name: kafka.enabled
-          value: "true"
+        - name: redis.image.tag
+          value: "latest"
         - name: migration.enabled
-          value: "true"
-
-        # ===========================================
-        # Kafka 설정 (로컬용 - KRaft 모드, 리소스 최소화)
-        # ===========================================
-        # KRaft 모드 활성화 (Zookeeper 없이 동작)
-        - name: kafka.kraft.enabled
-          value: "true"
-        - name: kafka.zookeeper.enabled
           value: "false"
-        # Controller + Broker 통합 모드
-        - name: kafka.controller.replicaCount
-          value: "1"
-        - name: kafka.broker.replicaCount
-          value: "0"
-        - name: kafka.controller.persistence.size
-          value: "2Gi"
 
         # ===========================================
-        # MySQL/Redis 설정 (로컬용 - 리소스 최소화)
-        # Bitnami 기본 이미지 사용 (커스텀 이미지 제거)
+        # Database 설정 (MySQL Operator InnoDBCluster)
         # ===========================================
-        - name: mysql.primary.persistence.size
-          value: "2Gi"
+        - name: env.DB_HOST
+          value: "mysql-cluster"
+        - name: env.DB_PORT
+          value: "3306"
+        - name: env.DB_USER
+          value: "root"
+        - name: env.DB_NAME
+          value: "conduix"
+        - name: secrets.dbPassword
+          value: "rootpassword"
+
+        # ===========================================
+        # Kafka 설정 (Strimzi Kafka Cluster)
+        # ===========================================
+        - name: env.KAFKA_BROKERS
+          value: "conduix-kafka-kafka-bootstrap:9092"
+
+        # ===========================================
+        # Redis 설정 (Bitnami subchart)
+        # ===========================================
         - name: redis.master.persistence.size
           value: "1Gi"
+        - name: redis.auth.enabled
+          value: "false"
 
         # ===========================================
-        # 환경변수 (ConfigMap으로 주입)
-        # ===========================================
         # Application Settings
+        # ===========================================
         - name: env.AUTO_MIGRATE
           value: "true"
         - name: env.FRONTEND_URL
@@ -125,8 +137,6 @@ spec:
         # ===========================================
         # Secrets (로컬 개발용 기본값)
         # ===========================================
-        - name: secrets.dbPassword
-          value: "conduixpassword"
         - name: secrets.jwtSecret
           value: "local-dev-jwt-secret-key-for-testing"
 

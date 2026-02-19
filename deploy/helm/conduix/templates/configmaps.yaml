@@ -42,18 +42,9 @@ data:
   CONDUIX_OPERATOR_EMAILS: "{{ .Values.env.CONDUIX_OPERATOR_EMAILS }}"
   {{- end }}
 
-  # OAuth2 Redirect URLs
-  {{- if .Values.env.GITHUB_REDIRECT_URL }}
-  GITHUB_REDIRECT_URL: "{{ .Values.env.GITHUB_REDIRECT_URL }}"
-  {{- end }}
-  {{- if .Values.env.GOOGLE_REDIRECT_URL }}
-  GOOGLE_REDIRECT_URL: "{{ .Values.env.GOOGLE_REDIRECT_URL }}"
-  {{- end }}
-  {{- if .Values.env.NAVER_REDIRECT_URL }}
-  NAVER_REDIRECT_URL: "{{ .Values.env.NAVER_REDIRECT_URL }}"
-  {{- end }}
-  {{- if .Values.env.KAKAO_REDIRECT_URL }}
-  KAKAO_REDIRECT_URL: "{{ .Values.env.KAKAO_REDIRECT_URL }}"
+  # OAuth2 Settings
+  {{- if .Values.env.OAUTH_REDIRECT_URL }}
+  OAUTH_REDIRECT_URL: "{{ .Values.env.OAUTH_REDIRECT_URL }}"
   {{- end }}
 
   # OAuth2 Client IDs (non-sensitive)

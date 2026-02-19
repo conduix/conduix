@@ -184,10 +184,8 @@ func main() {
 			upperID := strings.ToUpper(id)
 			provider.ClientID = os.Getenv(fmt.Sprintf("%s_CLIENT_ID", upperID))
 			provider.ClientSecret = os.Getenv(fmt.Sprintf("%s_CLIENT_SECRET", upperID))
-			provider.RedirectURL = os.Getenv(fmt.Sprintf("%s_REDIRECT_URL", upperID))
-			if provider.RedirectURL == "" {
-				provider.RedirectURL = cfg.OAuthDefaultRedirect
-			}
+			// 모든 provider가 공통 OAUTH_REDIRECT_URL 사용
+			provider.RedirectURL = cfg.OAuthDefaultRedirect
 		}
 	}
 

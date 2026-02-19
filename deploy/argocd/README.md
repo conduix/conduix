@@ -74,11 +74,11 @@ parameters:
   - name: env.FRONTEND_URL
     value: "https://conduix.yourdomain.com"
 
-  # OAuth2 Client IDs
+  # OAuth2 Settings
+  - name: env.OAUTH_REDIRECT_URL
+    value: "https://conduix.yourdomain.com/api/v1/auth/callback"
   - name: env.GITHUB_CLIENT_ID
     value: "your-client-id"
-  - name: env.GITHUB_REDIRECT_URL
-    value: "https://conduix.yourdomain.com/api/v1/auth/callback"
 ```
 
 ### Secret (secrets.*)
@@ -100,9 +100,9 @@ parameters:
     value: ""
 
   # OAuth2 Client Secrets
-  - name: secrets.githubClientSecret
+  - name: secrets.oauthGithubClientSecret
     value: "your-github-client-secret"
-  - name: secrets.googleClientSecret
+  - name: secrets.oauthGoogleClientSecret
     value: "your-google-client-secret"
 ```
 
@@ -122,12 +122,11 @@ parameters:
 | `env.FRONTEND_URL` | 프론트엔드 URL | `http://localhost:3000` |
 | `env.CONDUIX_ADMIN_EMAILS` | Admin 사용자 이메일 (콤마 구분) | - |
 | `env.CONDUIX_OPERATOR_EMAILS` | Operator 사용자 이메일 (콤마 구분) | - |
+| `env.OAUTH_REDIRECT_URL` | OAuth 공통 Redirect URL | - |
 | `env.GITHUB_CLIENT_ID` | GitHub OAuth Client ID | - |
-| `env.GITHUB_REDIRECT_URL` | GitHub OAuth Redirect URL | - |
 | `env.GOOGLE_CLIENT_ID` | Google OAuth Client ID | - |
-| `env.GOOGLE_REDIRECT_URL` | Google OAuth Redirect URL | - |
 | `env.NAVER_CLIENT_ID` | Naver OAuth Client ID | - |
-| `env.NAVER_REDIRECT_URL` | Naver OAuth Redirect URL | - |
+| `env.KAKAO_CLIENT_ID` | Kakao OAuth Client ID | - |
 
 ### secrets.* (Secret)
 
@@ -136,10 +135,10 @@ parameters:
 | `secrets.jwtSecret` | JWT 시크릿 키 | 자동 생성 |
 | `secrets.dbPassword` | DB 비밀번호 | `conduixpassword` |
 | `secrets.redisPassword` | Redis 비밀번호 | - |
-| `secrets.githubClientSecret` | GitHub OAuth Secret | - |
-| `secrets.googleClientSecret` | Google OAuth Secret | - |
-| `secrets.naverClientSecret` | Naver OAuth Secret | - |
-| `secrets.kakaoClientSecret` | Kakao OAuth Secret | - |
+| `secrets.oauthGithubClientSecret` | GitHub OAuth Secret | - |
+| `secrets.oauthGoogleClientSecret` | Google OAuth Secret | - |
+| `secrets.oauthNaverClientSecret` | Naver OAuth Secret | - |
+| `secrets.oauthKakaoClientSecret` | Kakao OAuth Secret | - |
 
 ## 프로덕션 보안 권장사항
 

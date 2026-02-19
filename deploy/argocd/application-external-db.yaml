@@ -62,15 +62,13 @@ spec:
         - name: env.FRONTEND_URL
           value: "https://conduix.yourdomain.com"
 
-        # OAuth2 Client IDs
+        # OAuth2 Settings
+        - name: env.OAUTH_REDIRECT_URL
+          value: "https://conduix.yourdomain.com/api/v1/auth/callback"
         - name: env.GITHUB_CLIENT_ID
           value: "your-github-client-id"
-        - name: env.GITHUB_REDIRECT_URL
-          value: "https://conduix.yourdomain.com/api/v1/auth/callback"
         - name: env.GOOGLE_CLIENT_ID
           value: "your-google-client-id"
-        - name: env.GOOGLE_REDIRECT_URL
-          value: "https://conduix.yourdomain.com/api/v1/auth/callback"
 
         # ===========================================
         # Secrets (Secret으로 주입)
@@ -82,9 +80,9 @@ spec:
           value: "your-secure-db-password"
         - name: secrets.redisPassword
           value: ""
-        - name: secrets.githubClientSecret
+        - name: secrets.oauthGithubClientSecret
           value: "your-github-client-secret"
-        - name: secrets.googleClientSecret
+        - name: secrets.oauthGoogleClientSecret
           value: "your-google-client-secret"
 
         # ===========================================

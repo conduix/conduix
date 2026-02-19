@@ -64,23 +64,17 @@ spec:
         # OAuth2 설정 (ConfigMap)
         # 실제 값은 로컬 배포 시 .env에서 주입
         # ===========================================
-        # GitHub OAuth2
+        # OAuth2 공통 Redirect URL
+        - name: env.OAUTH_REDIRECT_URL
+          value: "http://localhost:30080/api/v1/auth/callback"
+
+        # OAuth2 Client IDs
         - name: env.GITHUB_CLIENT_ID
           value: "${GITHUB_CLIENT_ID}"
-        - name: env.GITHUB_REDIRECT_URL
-          value: "http://localhost:30080/api/v1/auth/callback"
-
-        # Google OAuth2
         - name: env.GOOGLE_CLIENT_ID
           value: "${GOOGLE_CLIENT_ID}"
-        - name: env.GOOGLE_REDIRECT_URL
-          value: "http://localhost:30080/api/v1/auth/callback"
-
-        # Naver OAuth2
         - name: env.NAVER_CLIENT_ID
           value: "${NAVER_CLIENT_ID}"
-        - name: env.NAVER_REDIRECT_URL
-          value: "http://localhost:30080/api/v1/auth/callback"
 
         # ===========================================
         # Image Pull Policy (Always for local dev)
@@ -123,11 +117,11 @@ spec:
           value: "${DB_PASSWORD}"
         - name: secrets.jwtSecret
           value: "${JWT_SECRET}"
-        - name: secrets.githubClientSecret
+        - name: secrets.oauthGithubClientSecret
           value: "${GITHUB_CLIENT_SECRET}"
-        - name: secrets.googleClientSecret
+        - name: secrets.oauthGoogleClientSecret
           value: "${GOOGLE_CLIENT_SECRET}"
-        - name: secrets.naverClientSecret
+        - name: secrets.oauthNaverClientSecret
           value: "${NAVER_CLIENT_SECRET}"
 
   destination:

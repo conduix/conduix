@@ -37,15 +37,14 @@ env:
   CONDUIX_ADMIN_EMAILS: ""
   CONDUIX_OPERATOR_EMAILS: ""
 
+  # OAuth2 Settings
+  OAUTH_REDIRECT_URL: ""  # 공통 OAuth Redirect URL (예: http://localhost:30080/api/v1/auth/callback)
+
   # OAuth2 Client IDs (non-sensitive)
   GITHUB_CLIENT_ID: ""
-  GITHUB_REDIRECT_URL: ""
   GOOGLE_CLIENT_ID: ""
-  GOOGLE_REDIRECT_URL: ""
   NAVER_CLIENT_ID: ""
-  NAVER_REDIRECT_URL: ""
   KAKAO_CLIENT_ID: ""
-  KAKAO_REDIRECT_URL: ""
 
 # =============================================================================
 # Secrets (민감한 정보, Secret으로 주입)
@@ -60,11 +59,11 @@ secrets:
   dbPassword: "rootpassword"
   # Redis Password
   redisPassword: ""
-  # OAuth2 Client Secrets
-  githubClientSecret: ""
-  googleClientSecret: ""
-  naverClientSecret: ""
-  kakaoClientSecret: ""
+  # OAuth2 Client Secrets (secrets.oauth* 네이밍으로 통일)
+  oauthGithubClientSecret: ""
+  oauthGoogleClientSecret: ""
+  oauthNaverClientSecret: ""
+  oauthKakaoClientSecret: ""
 
 # =============================================================================
 # Control Plane

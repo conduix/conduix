@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
@@ -217,9 +218,7 @@ func (p *ElasticsearchProvisioner) createIndex(ctx context.Context, config *Elas
 	// 추가 설정 병합
 	if config.Settings != nil {
 		settings := indexBody["settings"].(map[string]any)
-		for k, v := range config.Settings {
-			settings[k] = v
-		}
+		maps.Copy(settings, config.Settings)
 	}
 
 	// 매핑 설정

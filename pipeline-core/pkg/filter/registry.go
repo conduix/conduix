@@ -5,6 +5,7 @@ package filter
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -323,56 +324,56 @@ func (r *FilterRegistry) ToTypeScript() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var sb string
-	sb += "// 자동 생성됨 - 직접 수정하지 마세요\n"
-	sb += "// go generate로 생성됨\n\n"
+	var sb strings.Builder
+	sb.WriteString("// 자동 생성됨 - 직접 수정하지 마세요\n")
+	sb.WriteString("// go generate로 생성됨\n\n")
 
 	// Operator union type
-	sb += "export type Operator =\n"
+	sb.WriteString("export type Operator =\n")
 	for i, id := range r.order {
 		if i == len(r.order)-1 {
-			sb += fmt.Sprintf("  | '%s';\n\n", id)
+			sb.WriteString(fmt.Sprintf("  | '%s';\n\n", id))
 		} else {
-			sb += fmt.Sprintf("  | '%s'\n", id)
+			sb.WriteString(fmt.Sprintf("  | '%s'\n", id))
 		}
 	}
 
 	// Operator metadata
-	sb += "export interface OperatorMeta {\n"
-	sb += "  id: Operator;\n"
-	sb += "  label: string;\n"
-	sb += "  description: string;\n"
-	sb += "  needsValue: boolean;\n"
-	sb += "  valueType?: 'string' | 'number' | 'boolean' | 'array' | 'regex';\n"
-	sb += "  category: string;\n"
-	sb += "}\n\n"
+	sb.WriteString("export interface OperatorMeta {\n")
+	sb.WriteString("  id: Operator;\n")
+	sb.WriteString("  label: string;\n")
+	sb.WriteString("  description: string;\n")
+	sb.WriteString("  needsValue: boolean;\n")
+	sb.WriteString("  valueType?: 'string' | 'number' | 'boolean' | 'array' | 'regex';\n")
+	sb.WriteString("  category: string;\n")
+	sb.WriteString("}\n\n")
 
 	// Operator list
-	sb += "export const OPERATORS: OperatorMeta[] = [\n"
+	sb.WriteString("export const OPERATORS: OperatorMeta[] = [\n")
 	for _, id := range r.order {
 		if op, ok := r.operators[id]; ok {
 			valueType := ""
 			if op.ValueType != "" {
 				valueType = fmt.Sprintf(", valueType: '%s'", op.ValueType)
 			}
-			sb += fmt.Sprintf("  { id: '%s', label: '%s', description: '%s', needsValue: %v%s, category: '%s' },\n",
-				op.ID, op.Label, op.Description, op.NeedsValue, valueType, op.Category)
+			sb.WriteString(fmt.Sprintf("  { id: '%s', label: '%s', description: '%s', needsValue: %v%s, category: '%s' },\n",
+				op.ID, op.Label, op.Description, op.NeedsValue, valueType, op.Category))
 		}
 	}
-	sb += "];\n\n"
+	sb.WriteString("];\n\n")
 
 	// Category type
-	sb += "export type OperatorCategory =\n"
+	sb.WriteString("export type OperatorCategory =\n")
 	categories := r.Categories()
 	for i, cat := range categories {
 		if i == len(categories)-1 {
-			sb += fmt.Sprintf("  | '%s';\n", cat)
+			sb.WriteString(fmt.Sprintf("  | '%s';\n", cat))
 		} else {
-			sb += fmt.Sprintf("  | '%s'\n", cat)
+			sb.WriteString(fmt.Sprintf("  | '%s'\n", cat))
 		}
 	}
 
-	return sb
+	return sb.String()
 }
 
 // RegisterCustom 커스텀 연산자 등록 헬퍼

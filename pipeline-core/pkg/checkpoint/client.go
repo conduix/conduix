@@ -24,8 +24,8 @@ type Checkpoint struct {
 	OffsetType   string    `json:"offset_type"` // timestamp, numeric, string
 	RecordCount  int64     `json:"record_count"`
 	Metadata     string    `json:"metadata,omitempty"`
-	CreatedAt    time.Time `json:"created_at,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Client 체크포인트 클라이언트

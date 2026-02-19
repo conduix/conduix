@@ -142,13 +142,11 @@ func (p *StreamProcessor) Start(ctx context.Context) error {
 	recordChan := make(chan *Record, p.bufferSize)
 
 	// Start source in separate goroutine (it produces to channel)
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.wg.Go(func() {
 		if err := p.source.Start(p.ctx, recordChan); err != nil && err != context.Canceled {
 			p.logger.Error("Source error", "error", err)
 		}
-	}()
+	})
 
 	// Start processing loop in main goroutine (reads from channel)
 	p.wg.Add(1)

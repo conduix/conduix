@@ -4,6 +4,7 @@ package processor
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math/rand"
 	"regexp"
 	"strings"
@@ -131,9 +132,7 @@ func (p *TransformProcessor) Process(ctx context.Context, record source.Record) 
 	result := make(map[string]any)
 
 	// 기존 데이터 복사
-	for k, v := range record.Data {
-		result[k] = v
-	}
+	maps.Copy(result, record.Data)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -150,8 +149,8 @@ func (p *TransformProcessor) Process(ctx context.Context, record source.Record) 
 		expr := strings.TrimSpace(parts[1])
 
 		// 필드 참조: .fieldname
-		if strings.HasPrefix(expr, ".") {
-			srcField := strings.TrimPrefix(expr, ".")
+		if after, ok := strings.CutPrefix(expr, "."); ok {
+			srcField := after
 			if val, ok := record.Data[srcField]; ok {
 				result[field] = val
 			}
@@ -185,8 +184,8 @@ func (p *FilterProcessor) Process(ctx context.Context, record source.Record) (*s
 	filter := strings.TrimSpace(p.filter)
 
 	// exists 체크
-	if strings.HasSuffix(filter, " exists") {
-		field := strings.TrimSuffix(filter, " exists")
+	if before, ok := strings.CutSuffix(filter, " exists"); ok {
+		field := before
 		field = strings.TrimPrefix(strings.TrimSpace(field), ".")
 		if _, ok := record.Data[field]; ok {
 			return &record, nil

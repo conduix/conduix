@@ -128,7 +128,7 @@ func TestMailboxDrain(t *testing.T) {
 	mb := NewMailbox(&types.MailboxConfig{Capacity: 10})
 
 	// Push multiple messages
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_ = mb.Push(Message{ID: string(rune('a' + i))})
 	}
 
@@ -155,7 +155,7 @@ func TestMailboxDropNewestStrategy(t *testing.T) {
 	})
 
 	// Fill mailbox
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		err := mb.Push(Message{ID: string(rune('a' + i))})
 		if err != nil {
 			t.Fatalf("push error: %v", err)
@@ -181,7 +181,7 @@ func TestMailboxDropOldestStrategy(t *testing.T) {
 	})
 
 	// Fill mailbox
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_ = mb.Push(Message{ID: string(rune('a' + i))})
 	}
 
@@ -209,11 +209,11 @@ func TestMailboxConcurrency(t *testing.T) {
 	numMessages := 100
 
 	// Writers
-	for i := 0; i < numWriters; i++ {
+	for i := range numWriters {
 		wg.Add(1)
 		go func(writerID int) {
 			defer wg.Done()
-			for j := 0; j < numMessages; j++ {
+			for j := range numMessages {
 				_ = mb.Push(Message{ID: string(rune(writerID*100 + j))})
 			}
 		}(i)

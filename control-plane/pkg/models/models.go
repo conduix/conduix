@@ -43,7 +43,7 @@ type PipelineRun struct {
 	ErrorMessage   string     `gorm:"type:text" json:"error_message,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 
-	Pipeline Pipeline `gorm:"foreignKey:PipelineID" json:"pipeline,omitempty"`
+	Pipeline Pipeline `gorm:"foreignKey:PipelineID" json:"pipeline"`
 }
 
 // TableName 테이블 이름
@@ -62,7 +62,7 @@ type Schedule struct {
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 
-	Pipeline Pipeline `gorm:"foreignKey:PipelineID" json:"pipeline,omitempty"`
+	Pipeline Pipeline `gorm:"foreignKey:PipelineID" json:"pipeline"`
 }
 
 // TableName 테이블 이름
@@ -113,7 +113,7 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
 
-	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	User User `gorm:"foreignKey:UserID" json:"user"`
 }
 
 // TableName 테이블 이름
@@ -153,7 +153,7 @@ type ProvisioningRequest struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 
-	Pipeline Pipeline `gorm:"foreignKey:PipelineID" json:"pipeline,omitempty"`
+	Pipeline Pipeline `gorm:"foreignKey:PipelineID" json:"pipeline"`
 }
 
 // TableName 테이블 이름
@@ -185,7 +185,7 @@ type ProvisioningResult struct {
 	CompletedBy string     `gorm:"size:255" json:"completed_by,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 
-	Request ProvisioningRequest `gorm:"foreignKey:RequestID" json:"request,omitempty"`
+	Request ProvisioningRequest `gorm:"foreignKey:RequestID" json:"request"`
 }
 
 // TableName 테이블 이름
@@ -230,7 +230,7 @@ type ProjectOwner struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// Relations
-	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	User User `gorm:"foreignKey:UserID" json:"user"`
 }
 
 // TableName 테이블 이름
@@ -293,7 +293,7 @@ type WorkflowExecution struct {
 	CreatedAt         time.Time  `json:"created_at"`
 
 	// Relations
-	Workflow Workflow `gorm:"foreignKey:WorkflowID" json:"workflow,omitempty"`
+	Workflow Workflow `gorm:"foreignKey:WorkflowID" json:"workflow"`
 }
 
 // TableName 테이블 이름
@@ -312,7 +312,7 @@ type ResourcePermission struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 
-	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	User User `gorm:"foreignKey:UserID" json:"user"`
 }
 
 // TableName 테이블 이름
@@ -436,7 +436,7 @@ type DataTypePrework struct {
 	UpdatedAt time.Time `json:"updated_at"`
 
 	// Relations
-	DataType DataType `gorm:"foreignKey:DataTypeID" json:"data_type,omitempty"`
+	DataType DataType `gorm:"foreignKey:DataTypeID" json:"data_type"`
 }
 
 // TableName 테이블 이름
@@ -515,9 +515,9 @@ type PipelineLink struct {
 	WorkflowID       string    `gorm:"size:36;not null;index" json:"workflow_id"`
 	ParentPipelineID string    `gorm:"size:36;not null;index:idx_pipeline_link,unique" json:"parent_pipeline_id"` // 부모 파이프라인
 	ChildPipelineID  string    `gorm:"size:36;not null;index:idx_pipeline_link,unique" json:"child_pipeline_id"`  // 자식 파이프라인
-	KafkaTopic       string    `gorm:"size:255;not null" json:"kafka_topic"`                                       // 자동 생성된 Kafka Topic 이름
-	Status           string    `gorm:"size:50;default:active" json:"status"`                                       // active, inactive, error
-	Metadata         string    `gorm:"type:text" json:"metadata,omitempty"`                                        // JSON - 추가 설정
+	KafkaTopic       string    `gorm:"size:255;not null" json:"kafka_topic"`                                      // 자동 생성된 Kafka Topic 이름
+	Status           string    `gorm:"size:50;default:active" json:"status"`                                      // active, inactive, error
+	Metadata         string    `gorm:"type:text" json:"metadata,omitempty"`                                       // JSON - 추가 설정
 	CreatedBy        string    `gorm:"size:36" json:"created_by,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`

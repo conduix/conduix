@@ -106,8 +106,8 @@ func (c *Converter) parseSingleCondition(expr string) (*FilterNode, error) {
 	}
 
 	// exists 체크
-	if strings.HasSuffix(expr, " exists") {
-		field := strings.TrimSuffix(expr, " exists")
+	if before, ok := strings.CutSuffix(expr, " exists"); ok {
+		field := before
 		field = strings.TrimPrefix(strings.TrimSpace(field), ".")
 		return &FilterNode{
 			Type: "condition",

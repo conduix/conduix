@@ -527,7 +527,7 @@ func splitActions(actions string) []string {
 		return []string{}
 	}
 	result := []string{}
-	for _, a := range strings.Split(actions, ",") {
+	for a := range strings.SplitSeq(actions, ",") {
 		result = append(result, strings.TrimSpace(a))
 	}
 	return result

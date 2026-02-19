@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -46,7 +47,7 @@ func LoadUsersConfigFromEnv() *UsersConfig {
 	cfg := &UsersConfig{}
 
 	if adminEmails := os.Getenv("CONDUIX_ADMIN_EMAILS"); adminEmails != "" {
-		for _, email := range strings.Split(adminEmails, ",") {
+		for email := range strings.SplitSeq(adminEmails, ",") {
 			email = strings.TrimSpace(strings.ToLower(email))
 			if email != "" {
 				cfg.AdminEmails = append(cfg.AdminEmails, email)
@@ -55,7 +56,7 @@ func LoadUsersConfigFromEnv() *UsersConfig {
 	}
 
 	if operatorEmails := os.Getenv("CONDUIX_OPERATOR_EMAILS"); operatorEmails != "" {
-		for _, email := range strings.Split(operatorEmails, ",") {
+		for email := range strings.SplitSeq(operatorEmails, ",") {
 			email = strings.TrimSpace(strings.ToLower(email))
 			if email != "" {
 				cfg.OperatorEmails = append(cfg.OperatorEmails, email)
@@ -78,23 +79,13 @@ func (c *UsersConfig) Merge(other *UsersConfig) {
 // IsAdmin 이메일이 관리자인지 확인
 func (c *UsersConfig) IsAdmin(email string) bool {
 	email = strings.TrimSpace(strings.ToLower(email))
-	for _, adminEmail := range c.AdminEmails {
-		if adminEmail == email {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.AdminEmails, email)
 }
 
 // IsOperator 이메일이 운영자인지 확인
 func (c *UsersConfig) IsOperator(email string) bool {
 	email = strings.TrimSpace(strings.ToLower(email))
-	for _, opEmail := range c.OperatorEmails {
-		if opEmail == email {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.OperatorEmails, email)
 }
 
 // GetRole 이메일에 해당하는 역할 반환

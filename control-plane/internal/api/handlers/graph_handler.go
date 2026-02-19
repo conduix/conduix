@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -359,13 +360,7 @@ func applyActorEdgeChanges(root *types.ActorDefinition, req *types.GraphUpdateRe
 		}
 
 		// 중복 확인
-		found := false
-		for _, output := range sourceActor.Outputs {
-			if output == edge.Target {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(sourceActor.Outputs, edge.Target)
 		if !found {
 			sourceActor.Outputs = append(sourceActor.Outputs, edge.Target)
 		}
@@ -497,12 +492,7 @@ func isValidConnection(sourceType, targetType string) bool {
 }
 
 func containsString(slice []string, str string) bool {
-	for _, s := range slice {
-		if s == str {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, str)
 }
 
 // GetActorMetrics GET /api/v1/pipelines/:id/actor-metrics

@@ -258,7 +258,7 @@ func TestIndexRoute(t *testing.T) {
 		t.Error("Expected go_version to be set")
 	}
 
-	if info.Endpoints == nil || len(info.Endpoints) == 0 {
+	if len(info.Endpoints) == 0 {
 		t.Error("Expected endpoints to be set")
 	}
 

@@ -223,7 +223,7 @@ func (fc *FilterConfig) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // MarshalYAML 커스텀 YAML 마샬링
-func (fc FilterConfig) MarshalYAML() (interface{}, error) {
+func (fc FilterConfig) MarshalYAML() (any, error) {
 	// 문자열 표현식만 있는 경우
 	if fc.Root == nil && fc.Expression != "" {
 		return fc.Expression, nil

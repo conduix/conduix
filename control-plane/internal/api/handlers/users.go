@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -58,10 +59,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 		}
 	}
 	if ps := c.Query("page_size"); ps != "" {
-		pageSize = parseIntDefault(ps, 20)
-		if pageSize > 100 {
-			pageSize = 100
-		}
+		pageSize = min(parseIntDefault(ps, 20), 100)
 	}
 
 	// 검색/필터 파라미터
@@ -177,13 +175,7 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 
 	// 유효한 역할인지 확인
 	validRoles := []string{string(types.UserRoleAdmin), string(types.UserRoleOperator), string(types.UserRoleViewer)}
-	isValid := false
-	for _, r := range validRoles {
-		if req.Role == r {
-			isValid = true
-			break
-		}
-	}
+	isValid := slices.Contains(validRoles, req.Role)
 	if !isValid {
 		h.errorResponse(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "유효하지 않은 역할입니다. (admin, operator, viewer)", "Invalid role. (admin, operator, viewer)")
 		return
@@ -238,13 +230,7 @@ func (h *UserHandler) CreatePermission(c *gin.Context) {
 
 	// 유효한 리소스 타입 확인
 	validTypes := []string{"provider", "group", "pipeline"}
-	isValidType := false
-	for _, t := range validTypes {
-		if req.ResourceType == t {
-			isValidType = true
-			break
-		}
-	}
+	isValidType := slices.Contains(validTypes, req.ResourceType)
 	if !isValidType {
 		h.errorResponse(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "유효하지 않은 리소스 타입입니다. (provider, group, pipeline)", "Invalid resource type. (provider, group, pipeline)")
 		return
@@ -432,10 +418,7 @@ func (h *UserHandler) SearchUsers(c *gin.Context) {
 	// 최대 10개까지만 반환
 	limit := 10
 	if l := c.Query("limit"); l != "" {
-		limit = parseIntDefault(l, 10)
-		if limit > 20 {
-			limit = 20
-		}
+		limit = min(parseIntDefault(l, 10), 20)
 	}
 
 	var users []models.User

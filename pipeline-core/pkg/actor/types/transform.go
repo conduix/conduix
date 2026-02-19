@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/actor"
@@ -132,9 +133,7 @@ func (t *TransformActor) transform(ctx actor.ActorContext, data map[string]any) 
 func (t *TransformActor) remap(data map[string]any) (map[string]any, error) {
 	// TODO: VRL 같은 표현식 지원
 	result := make(map[string]any)
-	for k, v := range data {
-		result[k] = v
-	}
+	maps.Copy(result, data)
 
 	// 타임스탬프 추가
 	result["processed_at"] = time.Now().Format(time.RFC3339)
@@ -143,9 +142,7 @@ func (t *TransformActor) remap(data map[string]any) (map[string]any, error) {
 	if msg, ok := data["message"].(string); ok {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
-			for k, v := range parsed {
-				result[k] = v
-			}
+			maps.Copy(result, parsed)
 		}
 	}
 
@@ -194,9 +191,7 @@ func (t *TransformActor) sample(data map[string]any) (map[string]any, error) {
 // enrich 데이터 보강
 func (t *TransformActor) enrich(data map[string]any) (map[string]any, error) {
 	result := make(map[string]any)
-	for k, v := range data {
-		result[k] = v
-	}
+	maps.Copy(result, data)
 
 	// 룩업 테이블에서 보강
 	if lookupTable, ok := t.config["lookup_table"].(string); ok {

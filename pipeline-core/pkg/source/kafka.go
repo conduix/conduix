@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -209,9 +210,7 @@ func (s *KafkaSource) GetCheckpoints() map[string]int64 {
 	defer s.checkpointMu.RUnlock()
 
 	result := make(map[string]int64)
-	for k, v := range s.checkpoints {
-		result[k] = v
-	}
+	maps.Copy(result, s.checkpoints)
 	return result
 }
 
@@ -220,9 +219,7 @@ func (s *KafkaSource) SetCheckpointsLegacy(checkpoints map[string]int64) {
 	s.checkpointMu.Lock()
 	defer s.checkpointMu.Unlock()
 
-	for k, v := range checkpoints {
-		s.checkpoints[k] = v
-	}
+	maps.Copy(s.checkpoints, checkpoints)
 }
 
 // SourceType 소스 타입 반환 (CheckpointableSource 구현)

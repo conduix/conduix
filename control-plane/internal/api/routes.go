@@ -277,15 +277,15 @@ func (s *Server) setupRoutes() {
 
 // IndexInfo 인덱스 페이지 정보
 type IndexInfo struct {
-	Service     string            `json:"service"`
-	Version     string            `json:"version"`
-	Uptime      string            `json:"uptime"`
-	UptimeSec   float64           `json:"uptime_seconds"`
-	StartTime   string            `json:"start_time"`
-	GoVersion   string            `json:"go_version"`
-	NumGoroutine int              `json:"num_goroutine"`
-	MemoryMB    float64           `json:"memory_mb"`
-	Endpoints   map[string]string `json:"endpoints"`
+	Service      string            `json:"service"`
+	Version      string            `json:"version"`
+	Uptime       string            `json:"uptime"`
+	UptimeSec    float64           `json:"uptime_seconds"`
+	StartTime    string            `json:"start_time"`
+	GoVersion    string            `json:"go_version"`
+	NumGoroutine int               `json:"num_goroutine"`
+	MemoryMB     float64           `json:"memory_mb"`
+	Endpoints    map[string]string `json:"endpoints"`
 }
 
 // index 서비스 정보 페이지

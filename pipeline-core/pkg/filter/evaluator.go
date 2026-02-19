@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -168,8 +169,8 @@ func (e *Evaluator) evaluateExpression(expr string, data map[string]any) (bool, 
 
 	// AND 처리
 	if strings.Contains(expr, "&&") {
-		parts := strings.Split(expr, "&&")
-		for _, part := range parts {
+		parts := strings.SplitSeq(expr, "&&")
+		for part := range parts {
 			result, err := e.evaluateExpression(strings.TrimSpace(part), data)
 			if err != nil {
 				return false, err
@@ -183,8 +184,8 @@ func (e *Evaluator) evaluateExpression(expr string, data map[string]any) (bool, 
 
 	// OR 처리
 	if strings.Contains(expr, "||") {
-		parts := strings.Split(expr, "||")
-		for _, part := range parts {
+		parts := strings.SplitSeq(expr, "||")
+		for part := range parts {
 			result, err := e.evaluateExpression(strings.TrimSpace(part), data)
 			if err != nil {
 				return false, err
@@ -205,8 +206,8 @@ func (e *Evaluator) evaluateSingleExpression(expr string, data map[string]any) (
 	expr = strings.TrimSpace(expr)
 
 	// exists 체크
-	if strings.HasSuffix(expr, " exists") {
-		field := strings.TrimSuffix(expr, " exists")
+	if before, ok := strings.CutSuffix(expr, " exists"); ok {
+		field := before
 		field = strings.TrimPrefix(strings.TrimSpace(field), ".")
 		_, exists := getNestedValue(data, field)
 		return exists, nil
@@ -346,10 +347,8 @@ func inArray(value any, arr any) bool {
 		}
 	case []string:
 		strVal := toString(value)
-		for _, item := range a {
-			if strVal == item {
-				return true
-			}
+		if slices.Contains(a, strVal) {
+			return true
 		}
 	}
 	return false

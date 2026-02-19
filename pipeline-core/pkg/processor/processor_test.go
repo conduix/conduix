@@ -208,7 +208,7 @@ func TestSampleProcessor(t *testing.T) {
 	passed := 0
 	iterations := 10000
 
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		result, err := p.Process(context.Background(), record)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

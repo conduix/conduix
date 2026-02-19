@@ -2,6 +2,7 @@ package bento
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/warpstreamlabs/bento/public/service"
 )
@@ -307,12 +308,12 @@ func getStringSlice(config map[string]any, key string, defaultVal []string) []st
 }
 
 func joinStrings(strs []string) string {
-	result := ""
+	var result strings.Builder
 	for i, s := range strs {
 		if i > 0 {
-			result += ", "
+			result.WriteString(", ")
 		}
-		result += fmt.Sprintf(`"%s"`, s)
+		result.WriteString(fmt.Sprintf(`"%s"`, s))
 	}
-	return result
+	return result.String()
 }

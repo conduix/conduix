@@ -100,7 +100,7 @@ func (fc *FilterConfig) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // MarshalYAML 커스텀 YAML 마샬링
-func (fc FilterConfig) MarshalYAML() (interface{}, error) {
+func (fc FilterConfig) MarshalYAML() (any, error) {
 	// 간단한 표현식만 있는 경우 문자열로 출력
 	if fc.filter != nil && fc.filter.Root == nil && fc.filter.Expression != "" {
 		return fc.filter.Expression, nil

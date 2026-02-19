@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math/rand"
 	"sync"
 	"time"
@@ -146,9 +147,7 @@ func (s *RemapStage) Process(ctx context.Context, record *Record) (*Record, erro
 
 	// Create new data map
 	newData := make(map[string]any, len(record.Data))
-	for k, v := range record.Data {
-		newData[k] = v
-	}
+	maps.Copy(newData, record.Data)
 
 	// Add timestamp
 	newData["processed_at"] = time.Now().Format(time.RFC3339)
@@ -157,9 +156,7 @@ func (s *RemapStage) Process(ctx context.Context, record *Record) (*Record, erro
 	if msg, ok := record.Data["message"].(string); ok {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
-			for k, v := range parsed {
-				newData[k] = v
-			}
+			maps.Copy(newData, parsed)
 		}
 	}
 
@@ -229,9 +226,7 @@ func (s *EnrichStage) Process(ctx context.Context, record *Record) (*Record, err
 	s.incrementInput()
 
 	// Add enrichment fields
-	for k, v := range s.staticFields {
-		record.Data[k] = v
-	}
+	maps.Copy(record.Data, s.staticFields)
 
 	if lookupTable, ok := s.config["lookup_table"].(string); ok {
 		record.Data["enriched_from"] = lookupTable

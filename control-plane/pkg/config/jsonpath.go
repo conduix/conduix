@@ -9,23 +9,23 @@ import (
 
 // ExtractJSONPath JSON 데이터에서 경로를 따라 값을 추출
 // 경로 형식: "field", "parent.child", "response.user.email" 등
-func ExtractJSONPath(data map[string]interface{}, path string) (interface{}, error) {
+func ExtractJSONPath(data map[string]any, path string) (any, error) {
 	if path == "" {
 		return nil, fmt.Errorf("empty path")
 	}
 
 	parts := strings.Split(path, ".")
-	var current interface{} = data
+	var current any = data
 
 	for _, part := range parts {
 		switch v := current.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			val, ok := v[part]
 			if !ok {
 				return nil, fmt.Errorf("key '%s' not found in path '%s'", part, path)
 			}
 			current = val
-		case []interface{}:
+		case []any:
 			// 배열 인덱스 지원 (예: "items.0.name")
 			idx, err := strconv.Atoi(part)
 			if err != nil {
@@ -44,7 +44,7 @@ func ExtractJSONPath(data map[string]interface{}, path string) (interface{}, err
 }
 
 // ExtractJSONPathString JSON 데이터에서 문자열 값 추출
-func ExtractJSONPathString(data map[string]interface{}, path string) string {
+func ExtractJSONPathString(data map[string]any, path string) string {
 	if path == "" {
 		return ""
 	}
@@ -81,7 +81,7 @@ type ParsedUserInfo struct {
 
 // ParseUserInfo JSON 응답과 매핑 설정을 사용해 사용자 정보 추출
 func ParseUserInfo(jsonData []byte, mapping UserMappingConfig) (*ParsedUserInfo, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.Unmarshal(jsonData, &data); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}

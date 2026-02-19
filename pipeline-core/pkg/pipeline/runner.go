@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -125,9 +126,7 @@ func (r *Runner) startFlatPipeline() error {
 		srcConfig := map[string]any{
 			"source_type": src.Type,
 		}
-		for k, v := range src.Options {
-			srcConfig[k] = v
-		}
+		maps.Copy(srcConfig, src.Options)
 
 		ref, err := r.system.Spawn(actor.Props{
 			Name: name,
@@ -148,9 +147,7 @@ func (r *Runner) startFlatPipeline() error {
 			"transform_type": trans.Type,
 			"inputs":         trans.Inputs,
 		}
-		for k, v := range trans.Options {
-			transConfig[k] = v
-		}
+		maps.Copy(transConfig, trans.Options)
 
 		ref, err := r.system.Spawn(actor.Props{
 			Name: name,
@@ -170,9 +167,7 @@ func (r *Runner) startFlatPipeline() error {
 			"sink_type": sink.Type,
 			"inputs":    sink.Inputs,
 		}
-		for k, v := range sink.Options {
-			sinkConfig[k] = v
-		}
+		maps.Copy(sinkConfig, sink.Options)
 
 		_, err := r.system.Spawn(actor.Props{
 			Name: name,
@@ -249,9 +244,7 @@ func (r *Runner) startStreamPipeline() error {
 	var source stream.Source
 	for name, src := range r.config.Sources {
 		srcConfig := make(map[string]any)
-		for k, v := range src.Options {
-			srcConfig[k] = v
-		}
+		maps.Copy(srcConfig, src.Options)
 
 		var err error
 		source, err = stream.NewSource(stream.SourceConfig{
@@ -273,9 +266,7 @@ func (r *Runner) startStreamPipeline() error {
 	var stages []stream.Stage
 	for name, trans := range r.config.Transforms {
 		transConfig := make(map[string]any)
-		for k, v := range trans.Options {
-			transConfig[k] = v
-		}
+		maps.Copy(transConfig, trans.Options)
 
 		s, err := stream.NewStage(stream.StageConfig{
 			Type:   trans.Type,
@@ -292,9 +283,7 @@ func (r *Runner) startStreamPipeline() error {
 	var sink stream.Sink
 	for name, s := range r.config.Sinks {
 		sinkConfig := make(map[string]any)
-		for k, v := range s.Options {
-			sinkConfig[k] = v
-		}
+		maps.Copy(sinkConfig, s.Options)
 
 		var err error
 		sink, err = stream.NewSink(stream.SinkConfig{

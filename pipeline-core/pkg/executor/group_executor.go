@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -468,9 +469,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	}
 
 	// 주입된 Kafka Sink도 sinkStages에 추가
-	for name, s := range injectedKafkaSinks {
-		sinkStages[name] = s
-	}
+	maps.Copy(sinkStages, injectedKafkaSinks)
 
 	// 싱크 정리 defer
 	defer func() {
@@ -732,12 +731,8 @@ func (e *GroupExecutor) runMultiPartitionSource(ctx context.Context, gs types.Gr
 
 			// 파티션별 설정 병합
 			config := make(map[string]any)
-			for k, v := range gs.Config {
-				config[k] = v
-			}
-			for k, v := range p.Config {
-				config[k] = v
-			}
+			maps.Copy(config, gs.Config)
+			maps.Copy(config, p.Config)
 
 			partitionSource := types.GroupedSource{
 				Type:   gs.Type,
@@ -799,9 +794,7 @@ func (e *GroupExecutor) createSource(gs types.GroupedSource) (source.Source, err
 	configWithRateLimit := gs.Config
 	if gs.RateLimit != nil && gs.RateLimit.Enabled {
 		configWithRateLimit = make(map[string]any)
-		for k, v := range gs.Config {
-			configWithRateLimit[k] = v
-		}
+		maps.Copy(configWithRateLimit, gs.Config)
 		configWithRateLimit["rate_limit"] = map[string]any{
 			"enabled":  gs.RateLimit.Enabled,
 			"rate":     gs.RateLimit.Rate,
@@ -878,15 +871,13 @@ func (e *GroupExecutor) applyStage(data map[string]any, stage types.Stage) (map[
 		if mapping, ok := stage.Config["mapping"].(map[string]any); ok {
 			result := make(map[string]any)
 			// 기존 데이터 복사
-			for k, v := range data {
-				result[k] = v
-			}
+			maps.Copy(result, data)
 			// 매핑 적용
 			for newField, expr := range mapping {
 				if exprStr, ok := expr.(string); ok {
-					if strings.HasPrefix(exprStr, ".") {
+					if after, ok0 := strings.CutPrefix(exprStr, "."); ok0 {
 						// 필드 참조
-						srcField := strings.TrimPrefix(exprStr, ".")
+						srcField := after
 						if val, ok := data[srcField]; ok {
 							result[newField] = val
 						}
@@ -988,8 +979,8 @@ func (e *GroupExecutor) evaluateCondition(data map[string]any, condition string)
 	}
 
 	// .field exists
-	if strings.HasSuffix(condition, " exists") {
-		field := strings.TrimSuffix(condition, " exists")
+	if before, ok := strings.CutSuffix(condition, " exists"); ok {
+		field := before
 		field = strings.TrimPrefix(strings.TrimSpace(field), ".")
 		_, ok := data[field]
 		return ok

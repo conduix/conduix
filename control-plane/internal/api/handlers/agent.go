@@ -248,7 +248,7 @@ func (h *AgentHandler) RegisterAgent(c *gin.Context) {
 
 	// 이미 존재하는 경우 업데이트
 	if result.RowsAffected == 0 {
-		h.db.Model(&agent).Updates(map[string]interface{}{
+		h.db.Model(&agent).Updates(map[string]any{
 			"hostname":       req.Hostname,
 			"ip_address":     req.IPAddress,
 			"status":         "online",
@@ -298,7 +298,7 @@ func (h *AgentHandler) Heartbeat(c *gin.Context) {
 	now := time.Now()
 
 	// DB에서 에이전트 업데이트
-	result := h.db.Model(&models.Agent{}).Where("id = ?", id).Updates(map[string]interface{}{
+	result := h.db.Model(&models.Agent{}).Where("id = ?", id).Updates(map[string]any{
 		"status":         "online",
 		"last_heartbeat": now,
 	})

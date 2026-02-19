@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -228,9 +229,7 @@ func (t *BentoTransformActor) builtinTransform(ctx actor.ActorContext, data map[
 // remap 필드 변환 (Bento 실패 시 폴백)
 func (t *BentoTransformActor) remap(data map[string]any) (map[string]any, error) {
 	result := make(map[string]any)
-	for k, v := range data {
-		result[k] = v
-	}
+	maps.Copy(result, data)
 
 	// 타임스탬프 추가
 	result["processed_at"] = time.Now().Format(time.RFC3339)
@@ -239,9 +238,7 @@ func (t *BentoTransformActor) remap(data map[string]any) (map[string]any, error)
 	if msg, ok := data["message"].(string); ok {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
-			for k, v := range parsed {
-				result[k] = v
-			}
+			maps.Copy(result, parsed)
 		}
 	}
 
@@ -325,9 +322,7 @@ func (t *BentoTransformActor) sample(data map[string]any) (map[string]any, error
 // enrich 데이터 보강
 func (t *BentoTransformActor) enrich(data map[string]any) (map[string]any, error) {
 	result := make(map[string]any)
-	for k, v := range data {
-		result[k] = v
-	}
+	maps.Copy(result, data)
 
 	if lookupTable, ok := t.config["lookup_table"].(string); ok {
 		result["enriched_from"] = lookupTable

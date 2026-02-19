@@ -260,7 +260,7 @@ func (s *FileSource) Start(ctx context.Context, out chan<- *Record) error {
 
 	var counter int64
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

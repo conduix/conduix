@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -223,16 +224,12 @@ func (s *CDCSource) convertEventToRecord(event *CDCEvent) Record {
 	}
 
 	// 현재 데이터 병합
-	for k, v := range event.Data {
-		data[k] = v
-	}
+	maps.Copy(data, event.Data)
 
 	// 이전 데이터가 있으면 _old_ 접두사로 추가
 	if event.OldData != nil {
 		oldData := make(map[string]any)
-		for k, v := range event.OldData {
-			oldData[k] = v
-		}
+		maps.Copy(oldData, event.OldData)
 		data["_old_data"] = oldData
 	}
 

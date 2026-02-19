@@ -187,7 +187,7 @@ func (a *Agent) registerToControlPlane() error {
 
 	url := fmt.Sprintf("%s/api/v1/agents/register", a.controlPlaneURL)
 
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"id":       a.ID,
 		"hostname": a.Hostname,
 		"labels":   a.config.Labels,

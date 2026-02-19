@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,10 +44,7 @@ type ProjectListResponse struct {
 func (h *ProjectHandler) ListProjects(c *gin.Context) {
 	// 페이징 파라미터
 	page := parseIntDefault(c.Query("page"), 1)
-	pageSize := parseIntDefault(c.Query("page_size"), 20)
-	if pageSize > 100 {
-		pageSize = 100
-	}
+	pageSize := min(parseIntDefault(c.Query("page_size"), 20), 100)
 
 	// 필터 파라미터
 	search := c.Query("search")
@@ -281,13 +279,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 	if req.Status != "" {
 		// 유효한 상태인지 확인
 		validStatuses := []string{"active", "inactive", "archived"}
-		isValid := false
-		for _, s := range validStatuses {
-			if req.Status == s {
-				isValid = true
-				break
-			}
-		}
+		isValid := slices.Contains(validStatuses, req.Status)
 		if !isValid {
 			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "유효하지 않은 상태입니다. (active, inactive, archived)")
 			return

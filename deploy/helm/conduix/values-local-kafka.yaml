@@ -1,0 +1,130 @@
+# Local deployment with Kafka (for Colima/K8s)
+# Bitnami charts with default images
+
+# ============================================
+# Global settings
+# ============================================
+global:
+  # Bitnami chart 보안 검증 비활성화 (latest 태그 사용)
+  security:
+    allowInsecureImages: true
+
+# ============================================
+# Infrastructure - MySQL (Bitnami)
+# ============================================
+mysql:
+  enabled: true
+  image:
+    tag: latest
+  auth:
+    rootPassword: "rootpassword"
+    database: "conduix"
+    username: "conduixuser"
+    password: "conduixpassword"
+  primary:
+    persistence:
+      enabled: true
+      size: 2Gi
+
+# ============================================
+# Infrastructure - Redis (Bitnami)
+# ============================================
+redis:
+  enabled: true
+  image:
+    tag: latest
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+
+# ============================================
+# Infrastructure - Kafka (Bitnami, KRaft mode)
+# ============================================
+kafka:
+  enabled: true
+  image:
+    tag: latest
+  kraft:
+    enabled: true
+  zookeeper:
+    enabled: false
+  controller:
+    replicaCount: 1
+    persistence:
+      enabled: true
+      size: 2Gi
+  broker:
+    replicaCount: 0
+
+# ============================================
+# Control Plane
+# ============================================
+controlPlane:
+  replicaCount: 1
+  image:
+    pullPolicy: Always
+  service:
+    type: NodePort
+    port: 8080
+    nodePort: 30080
+  autoscaling:
+    enabled: false
+
+# ============================================
+# Pipeline Agent
+# ============================================
+agent:
+  replicaCount: 1
+  image:
+    pullPolicy: Always
+  service:
+    type: NodePort
+    port: 8081
+    nodePort: 30081
+  autoscaling:
+    enabled: false
+
+# ============================================
+# Web UI
+# ============================================
+webUI:
+  replicaCount: 1
+  image:
+    pullPolicy: Always
+  service:
+    type: NodePort
+    port: 80
+    nodePort: 30000
+
+# ============================================
+# Ingress (disabled for local)
+# ============================================
+ingress:
+  enabled: false
+
+# ============================================
+# Environment Variables
+# ============================================
+env:
+  AUTO_MIGRATE: "true"
+  FRONTEND_URL: "http://localhost:30000"
+  MAX_DATATYPE_DEPTH: "5"
+  CONDUIX_ADMIN_EMAILS: "herohyohwan@gmail.com"
+
+# ============================================
+# Secrets
+# ============================================
+secrets:
+  create: true
+  dbPassword: "conduixpassword"
+  jwtSecret: "local-dev-jwt-secret-key-for-testing"
+
+# ============================================
+# Migration
+# ============================================
+migration:
+  enabled: true

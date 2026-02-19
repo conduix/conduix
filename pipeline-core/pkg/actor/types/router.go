@@ -164,8 +164,8 @@ func (r *RouterActor) evaluate(condition string, data map[string]any) bool {
 	}
 
 	// .field exists 체크
-	if strings.HasSuffix(condition, " exists") {
-		field := strings.TrimSuffix(condition, " exists")
+	if before, ok := strings.CutSuffix(condition, " exists"); ok {
+		field := before
 		field = strings.TrimSpace(field)
 		field = strings.TrimPrefix(field, ".")
 		_, exists := data[field]

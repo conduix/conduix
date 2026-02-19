@@ -46,7 +46,7 @@ func (s *PipelineLinkService) CreateLink(ctx context.Context, workflowID, parent
 	}
 
 	// Parse PipelinesConfig to extract pipeline names
-	var pipelines []map[string]interface{}
+	var pipelines []map[string]any
 	if err := json.Unmarshal([]byte(workflow.PipelinesConfig), &pipelines); err != nil {
 		return nil, fmt.Errorf("failed to parse pipelines config: %w", err)
 	}
@@ -207,7 +207,7 @@ func (s *PipelineLinkService) CleanupOrphanedLinks(ctx context.Context) error {
 				continue
 			}
 
-			var pipelines []map[string]interface{}
+			var pipelines []map[string]any
 			if err := json.Unmarshal([]byte(workflow.PipelinesConfig), &pipelines); err != nil {
 				s.logger.Warn("Failed to parse pipelines config", "workflow_id", workflow.ID, "error", err)
 				continue

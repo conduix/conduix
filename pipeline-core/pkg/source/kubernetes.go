@@ -249,10 +249,7 @@ func (s *KubernetesSource) streamPodLogsWithRetry(ctx context.Context, clientset
 		}
 
 		// Exponential backoff
-		delay := baseDelay * time.Duration(1<<uint(retryCount-1))
-		if delay > maxDelay {
-			delay = maxDelay
-		}
+		delay := min(baseDelay*time.Duration(1<<uint(retryCount-1)), maxDelay)
 
 		select {
 		case errs <- fmt.Errorf("reconnecting to pod %s (attempt %d/%d) after error: %v", pod.Name, retryCount, maxRetries, err):

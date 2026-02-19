@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"time"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
@@ -237,9 +238,7 @@ func (p *Pipeline) applyUpsertLogic(ctx context.Context, record source.Record) s
 			// UPDATE → CREATE 변환
 			log.Printf("[pipeline] Upsert: converting UPDATE to CREATE for entity %s", entityID)
 			newData := make(map[string]any)
-			for k, v := range record.Data {
-				newData[k] = v
-			}
+			maps.Copy(newData, record.Data)
 			newData[p.eventTypeField] = string(dedup.EventCreate)
 			record.Data = newData
 		}

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -85,7 +86,7 @@ func AuthMiddleware(jwtSecret []byte) gin.HandlerFunc {
 		tokenString := parts[1]
 
 		// JWT 토큰 파싱
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
 			}
@@ -120,11 +121,9 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 		}
 
 		roleStr := role.(string)
-		for _, allowed := range allowedRoles {
-			if roleStr == allowed {
-				c.Next()
-				return
-			}
+		if slices.Contains(allowedRoles, roleStr) {
+			c.Next()
+			return
 		}
 
 		ErrorResponseWithCode(c, http.StatusForbidden, types.ErrCodeInsufficientPerms, "Insufficient permissions")

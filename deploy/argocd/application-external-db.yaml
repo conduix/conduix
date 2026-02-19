@@ -80,9 +80,9 @@ spec:
           value: "your-secure-db-password"
         - name: secrets.redisPassword
           value: ""
-        - name: secrets.oauthGithubClientSecret
+        - name: secrets.GITHUB_CLIENT_SECRET
           value: "your-github-client-secret"
-        - name: secrets.oauthGoogleClientSecret
+        - name: secrets.GOOGLE_CLIENT_SECRET
           value: "your-google-client-secret"
 
         # ===========================================

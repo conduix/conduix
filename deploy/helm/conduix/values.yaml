@@ -59,11 +59,11 @@ secrets:
   dbPassword: "rootpassword"
   # Redis Password
   redisPassword: ""
-  # OAuth2 Client Secrets (secrets.oauth* 네이밍으로 통일)
-  oauthGithubClientSecret: ""
-  oauthGoogleClientSecret: ""
-  oauthNaverClientSecret: ""
-  oauthKakaoClientSecret: ""
+  # OAuth2 Client Secrets
+  GITHUB_CLIENT_SECRET: ""
+  GOOGLE_CLIENT_SECRET: ""
+  NAVER_CLIENT_SECRET: ""
+  KAKAO_CLIENT_SECRET: ""
 
 # =============================================================================
 # Control Plane

@@ -100,9 +100,9 @@ parameters:
     value: ""
 
   # OAuth2 Client Secrets
-  - name: secrets.oauthGithubClientSecret
+  - name: secrets.GITHUB_CLIENT_SECRET
     value: "your-github-client-secret"
-  - name: secrets.oauthGoogleClientSecret
+  - name: secrets.GOOGLE_CLIENT_SECRET
     value: "your-google-client-secret"
 ```
 
@@ -135,10 +135,10 @@ parameters:
 | `secrets.jwtSecret` | JWT 시크릿 키 | 자동 생성 |
 | `secrets.dbPassword` | DB 비밀번호 | `conduixpassword` |
 | `secrets.redisPassword` | Redis 비밀번호 | - |
-| `secrets.oauthGithubClientSecret` | GitHub OAuth Secret | - |
-| `secrets.oauthGoogleClientSecret` | Google OAuth Secret | - |
-| `secrets.oauthNaverClientSecret` | Naver OAuth Secret | - |
-| `secrets.oauthKakaoClientSecret` | Kakao OAuth Secret | - |
+| `secrets.GITHUB_CLIENT_SECRET` | GitHub OAuth Secret | - |
+| `secrets.GOOGLE_CLIENT_SECRET` | Google OAuth Secret | - |
+| `secrets.NAVER_CLIENT_SECRET` | Naver OAuth Secret | - |
+| `secrets.KAKAO_CLIENT_SECRET` | Kakao OAuth Secret | - |
 
 ## 프로덕션 보안 권장사항
 

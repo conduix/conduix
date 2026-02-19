@@ -117,11 +117,11 @@ spec:
           value: "${DB_PASSWORD}"
         - name: secrets.jwtSecret
           value: "${JWT_SECRET}"
-        - name: secrets.oauthGithubClientSecret
+        - name: secrets.GITHUB_CLIENT_SECRET
           value: "${GITHUB_CLIENT_SECRET}"
-        - name: secrets.oauthGoogleClientSecret
+        - name: secrets.GOOGLE_CLIENT_SECRET
           value: "${GOOGLE_CLIENT_SECRET}"
-        - name: secrets.oauthNaverClientSecret
+        - name: secrets.NAVER_CLIENT_SECRET
           value: "${NAVER_CLIENT_SECRET}"
 
   destination:

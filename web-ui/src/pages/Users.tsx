@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Box,
   Card,
@@ -78,11 +79,7 @@ const roleColors: Record<string, 'error' | 'primary' | 'success' | 'default'> = 
   viewer: 'success',
 }
 
-const roleDisplayNames: Record<string, string> = {
-  admin: '관리자',
-  operator: '운영자',
-  viewer: '뷰어',
-}
+// roleDisplayNames removed - use i18n t('user.roles.*') instead
 
 // TabPanel component
 interface TabPanelProps {
@@ -107,6 +104,7 @@ function TabPanel(props: TabPanelProps) {
 }
 
 export default function UsersPage() {
+  const { t } = useTranslation()
   const { showSuccess, showError } = useSnackbar()
   const [loading, setLoading] = useState(true)
   const [users, setUsers] = useState<User[]>([])
@@ -276,11 +274,11 @@ export default function UsersPage() {
     },
     {
       field: 'role',
-      headerName: '역할',
+      headerName: String(t('user.role')),
       width: 120,
       renderCell: (params) => (
         <Chip
-          label={roleDisplayNames[params.value] || params.value}
+          label={String(t(`user.roles.${params.value}`, params.value))}
           color={roleColors[params.value] || 'default'}
           size="small"
         />
@@ -541,35 +539,35 @@ export default function UsersPage() {
           {selectedUser && (
             <Box sx={{ pt: 1 }}>
               <Typography sx={{ mb: 1 }}>
-                <strong>사용자:</strong> {selectedUser.name || selectedUser.email}
+                <strong>{t('user.name')}:</strong> {selectedUser.name || selectedUser.email}
               </Typography>
               <Typography sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <strong>현재 역할:</strong>
+                <strong>{t('user.role')}:</strong>
                 <Chip
-                  label={roleDisplayNames[selectedUser.role]}
+                  label={t(`user.roles.${selectedUser.role}`, selectedUser.role)}
                   color={roleColors[selectedUser.role]}
                   size="small"
                 />
               </Typography>
               <FormControl fullWidth>
-                <InputLabel>새 역할</InputLabel>
-                <Select value={newRole} onChange={(e) => setNewRole(e.target.value)} label="새 역할">
+                <InputLabel>{t('user.role')}</InputLabel>
+                <Select value={newRole} onChange={(e) => setNewRole(e.target.value)} label={t('user.role')}>
                   <MenuItem value="admin">
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Chip label="관리자" color="error" size="small" />
-                      <Typography variant="caption">- 모든 권한</Typography>
+                      <Chip label={t('user.roles.admin')} color="error" size="small" />
+                      <Typography variant="caption">- {t('user.roleDescriptions.admin_description')}</Typography>
                     </Box>
                   </MenuItem>
                   <MenuItem value="operator">
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Chip label="운영자" color="primary" size="small" />
-                      <Typography variant="caption">- 파이프라인 생성/수정/실행</Typography>
+                      <Chip label={t('user.roles.operator')} color="primary" size="small" />
+                      <Typography variant="caption">- {t('user.roleDescriptions.operator_description')}</Typography>
                     </Box>
                   </MenuItem>
                   <MenuItem value="viewer">
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Chip label="뷰어" color="success" size="small" />
-                      <Typography variant="caption">- 읽기 전용</Typography>
+                      <Chip label={t('user.roles.viewer')} color="success" size="small" />
+                      <Typography variant="caption">- {t('user.roleDescriptions.viewer_description')}</Typography>
                     </Box>
                   </MenuItem>
                 </Select>
@@ -578,9 +576,9 @@ export default function UsersPage() {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRoleModalVisible(false)}>취소</Button>
+          <Button onClick={() => setRoleModalVisible(false)}>{t('common.cancel')}</Button>
           <Button variant="contained" onClick={handleRoleChange}>
-            변경
+            {t('common.save')}
           </Button>
         </DialogActions>
       </Dialog>

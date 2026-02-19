@@ -291,9 +291,14 @@
     "email": "이메일",
     "role": "역할",
     "roles": {
-      "admin": "Admin",
-      "operator": "Operator",
-      "viewer": "Viewer"
+      "admin": "관리자",
+      "operator": "운영자",
+      "viewer": "뷰어"
+    },
+    "roleDescriptions": {
+      "admin_description": "모든 리소스에 대한 전체 권한",
+      "operator_description": "파이프라인 생성/수정 및 실행 권한",
+      "viewer_description": "읽기 전용 접근"
     },
     "lastLogin": "마지막 로그인"
   },

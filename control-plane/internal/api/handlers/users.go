@@ -371,20 +371,20 @@ func (h *UserHandler) GetRoles(c *gin.Context) {
 	roles := []RoleInfo{
 		{
 			Role:        string(types.UserRoleAdmin),
-			DisplayName: "관리자",
-			Description: "모든 리소스에 대한 전체 권한",
+			DisplayName: "admin", // i18n key for frontend translation
+			Description: "admin_description",
 			Permissions: []string{"read", "write", "execute", "delete", "admin", "user_management"},
 		},
 		{
 			Role:        string(types.UserRoleOperator),
-			DisplayName: "운영자",
-			Description: "파이프라인 생성/수정 및 실행 권한",
+			DisplayName: "operator", // i18n key for frontend translation
+			Description: "operator_description",
 			Permissions: []string{"read", "write", "execute"},
 		},
 		{
 			Role:        string(types.UserRoleViewer),
-			DisplayName: "뷰어",
-			Description: "읽기 전용 접근",
+			DisplayName: "viewer", // i18n key for frontend translation
+			Description: "viewer_description",
 			Permissions: []string{"read"},
 		},
 	}

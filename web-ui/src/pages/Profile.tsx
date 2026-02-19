@@ -186,7 +186,7 @@ export default function ProfilePage() {
                 </Avatar>
                 <Typography variant="h6">{user.name || user.email}</Typography>
                 <Chip
-                  label={role_info.display_name}
+                  label={t(`user.roles.${role_info.display_name}`, role_info.display_name)}
                   color={roleColors[user.role] || 'default'}
                   sx={{ mt: 1 }}
                 />
@@ -232,11 +232,11 @@ export default function ProfilePage() {
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                   {t('profile.role')}
                 </Typography>
-                <Chip label={role_info.display_name} color={roleColors[role_info.role] || 'default'} />
+                <Chip label={t(`user.roles.${role_info.display_name}`, role_info.display_name)} color={roleColors[role_info.role] || 'default'} />
               </Box>
 
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {role_info.description}
+                {t(`user.roleDescriptions.${role_info.description}`, role_info.description)}
               </Typography>
 
               <Divider sx={{ my: 2 }} />

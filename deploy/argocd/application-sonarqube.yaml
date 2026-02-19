@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sonarqube
+  namespace: argocd
+spec:
+  project: default
+  source:
+    chart: sonarqube
+    repoURL: https://SonarSource.github.io/helm-chart-sonarqube
+    targetRevision: 10.7.0
+    helm:
+      values: |
+        service:
+          type: NodePort
+          nodePort: 30900
+        persistence:
+          enabled: true
+          size: 10Gi
+        sonarqube:
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "400m"
+        postgresql:
+          image:
+            registry: docker.io
+            repository: postgres
+            tag: "15.8"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sonarqube
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

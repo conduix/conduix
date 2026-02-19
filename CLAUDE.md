@@ -225,3 +225,61 @@ For in-pipeline branching without Kafka:
 ModeRedis (default) → ModeHybrid → ModeREST (fallback)
 ```
 Agent automatically switches modes when Redis becomes unavailable.
+
+## Local Kubernetes (Colima) Setup
+
+### Prerequisites
+- Colima with Kubernetes enabled
+- ArgoCD installed in `argocd` namespace
+
+### Start Colima
+```bash
+colima start --arch arm64 --kubernetes
+```
+
+### Deploy Order (ArgoCD Applications)
+```bash
+# 1. Operators (infrastructure)
+kubectl apply -f deploy/argocd/application-mysql-operator.yaml
+kubectl apply -f deploy/argocd/application-kafka-strimzi.yaml
+
+# 2. Clusters (databases/messaging)
+kubectl apply -f deploy/argocd/application-mysql-cluster.yaml
+kubectl apply -f deploy/argocd/kafka-cluster.yaml
+
+# 3. Applications
+kubectl apply -f deploy/argocd/application-sonarqube.yaml
+kubectl apply -f deploy/argocd/application-kafka-ui.yaml
+kubectl apply -f deploy/argocd/application-local-kafka.yaml
+```
+
+### Service Access URLs (Fixed NodePorts)
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **Conduix Web UI** | http://localhost:30000 | - |
+| **Conduix API** | http://localhost:30080 | - |
+| **ArgoCD** | https://localhost:30443 | admin / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" \| base64 -d` |
+| **SonarQube** | http://localhost:30900 | admin / admin |
+| **Kafka UI** | http://localhost:30808 | - |
+
+### Resource Management
+Local Colima has limited resources. Keep replicas minimal:
+- Control Plane: 1 replica
+- Agent: 1 replica
+- Web UI: 1 replica
+
+### Troubleshooting
+```bash
+# Check all pods
+kubectl get pods -A | grep -v Running
+
+# Check ArgoCD sync status
+kubectl get applications -n argocd
+
+# Check resource usage
+kubectl top nodes
+
+# Scale down if CPU/memory issues
+kubectl scale deployment <name> -n conduix --replicas=1
+```

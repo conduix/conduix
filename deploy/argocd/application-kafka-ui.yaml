@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka-ui
+  namespace: argocd
+spec:
+  project: default
+  source:
+    chart: kafka-ui
+    repoURL: https://provectus.github.io/kafka-ui-charts
+    targetRevision: 0.7.6
+    helm:
+      values: |
+        yamlApplicationConfig:
+          kafka:
+            clusters:
+              - name: conduix-kafka
+                bootstrapServers: conduix-kafka-kafka-bootstrap.conduix.svc.cluster.local:9092
+          auth:
+            type: disabled
+        service:
+          type: NodePort
+          nodePort: 30808
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: conduix
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

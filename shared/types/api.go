@@ -21,9 +21,11 @@ const (
 	ErrCodeMissingField       ErrorCode = "REQUEST_MISSING_FIELD"
 
 	// 리소스 에러 (RESOURCE_*)
-	ErrCodeNotFound           ErrorCode = "RESOURCE_NOT_FOUND"
-	ErrCodeAlreadyExists      ErrorCode = "RESOURCE_ALREADY_EXISTS"
-	ErrCodeConflict           ErrorCode = "RESOURCE_CONFLICT"
+	ErrCodeNotFound          ErrorCode = "RESOURCE_NOT_FOUND"
+	ErrCodeAlreadyExists     ErrorCode = "RESOURCE_ALREADY_EXISTS"
+	ErrCodeConflict          ErrorCode = "RESOURCE_CONFLICT"
+	ErrCodeDuplicateResource ErrorCode = "RESOURCE_DUPLICATE"
+	ErrCodeResourceInUse     ErrorCode = "RESOURCE_IN_USE"
 
 	// 서버 에러 (SERVER_*)
 	ErrCodeInternalError      ErrorCode = "SERVER_INTERNAL_ERROR"

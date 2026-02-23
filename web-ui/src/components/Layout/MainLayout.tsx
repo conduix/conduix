@@ -25,6 +25,7 @@ import {
   AccountTree as BranchesIcon,
   Schedule as ScheduleIcon,
   Dns as ClusterIcon,
+  Computer as DesktopIcon,
   History as HistoryIcon,
   Person as UserIcon,
   Logout as LogoutIcon,
@@ -75,14 +76,19 @@ export default function MainLayout() {
       label: t('nav.schedules'),
     },
     {
-      key: '/agents',
+      key: '/clusters',
       icon: <ClusterIcon />,
+      label: t('nav.clusters'),
+    },
+    {
+      key: '/agents',
+      icon: <DesktopIcon />,
       label: t('nav.agents'),
     },
     {
       key: '/history',
       icon: <HistoryIcon />,
-      label: 'History',
+      label: t('nav.history'),
     },
   ]
 

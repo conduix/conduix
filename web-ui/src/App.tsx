@@ -14,6 +14,7 @@ import PipelineDetailPage from './pages/PipelineDetail'
 import WorkflowsPage from './pages/Workflows'
 import SchedulesPage from './pages/Schedules'
 import AgentsPage from './pages/Agents'
+import ClustersPage from './pages/Clusters'
 import HistoryPage from './pages/History'
 import ProfilePage from './pages/Profile'
 import UsersPage from './pages/Users'
@@ -93,6 +94,7 @@ function App() {
               <Route path="pipelines/:id" element={<PipelineDetailPage />} />
               <Route path="schedules" element={<SchedulesPage />} />
               <Route path="agents" element={<AgentsPage />} />
+              <Route path="clusters" element={<ClustersPage />} />
               <Route path="history" element={<HistoryPage />} />
               <Route path="profile" element={<ProfilePage />} />
               <Route path="users" element={<UsersPage />} />

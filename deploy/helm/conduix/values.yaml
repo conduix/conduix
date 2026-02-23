@@ -134,6 +134,33 @@ agent:
     targetCPUUtilizationPercentage: 70
 
 # =============================================================================
+# Batch Job 설정 (Kubernetes Job으로 실행되는 Batch 워크플로우용)
+# =============================================================================
+batchJob:
+  # Batch Job이 실행될 네임스페이스 (기본: 릴리스 네임스페이스)
+  namespace: ""
+  # Batch Job에 사용될 이미지 (기본: agent 이미지 사용)
+  image:
+    repository: ""  # 비어있으면 agent.image.repository 사용
+    tag: ""         # 비어있으면 agent.image.tag 사용
+    pullPolicy: IfNotPresent
+  # 기본 리소스 설정 (워크플로우 JobConfig에서 오버라이드 가능)
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  # 기본 Job 설정 (워크플로우 JobConfig에서 오버라이드 가능)
+  defaults:
+    timeoutSeconds: 3600      # 최대 실행 시간 (1시간)
+    backoffLimit: 3           # 재시도 횟수
+    ttlAfterFinished: 300     # 완료 후 삭제 대기 (5분)
+  # ServiceAccount (기본: 릴리스 ServiceAccount)
+  serviceAccount: ""
+
+# =============================================================================
 # Web UI
 # =============================================================================
 webUI:

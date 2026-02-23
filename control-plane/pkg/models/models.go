@@ -88,6 +88,26 @@ func (User) TableName() string {
 	return "users"
 }
 
+// Cluster 클러스터 모델
+// 여러 Kubernetes 클러스터를 관리하기 위한 모델
+type Cluster struct {
+	ID           string         `gorm:"primaryKey;size:36" json:"id"`
+	Name         string         `gorm:"size:255;not null;uniqueIndex" json:"name"`
+	Description  string         `gorm:"type:text" json:"description,omitempty"`
+	APIServerURL string         `gorm:"size:500" json:"api_server_url,omitempty"` // 정보성 (직접 연결 안 함)
+	Region       string         `gorm:"size:100" json:"region,omitempty"`
+	Status       string         `gorm:"size:50;default:active" json:"status"` // active, inactive
+	CreatedBy    string         `gorm:"size:36" json:"created_by,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// TableName 테이블 이름
+func (Cluster) TableName() string {
+	return "clusters"
+}
+
 // Agent 에이전트 모델
 type Agent struct {
 	ID            string     `gorm:"primaryKey;size:36" json:"id"`
@@ -98,6 +118,7 @@ type Agent struct {
 	RegisteredAt  time.Time  `json:"registered_at"`
 	Version       string     `gorm:"size:50" json:"version,omitempty"`
 	Labels        string     `gorm:"type:text" json:"labels,omitempty"` // JSON array
+	ClusterID     string     `gorm:"size:36;index" json:"cluster_id,omitempty"`
 }
 
 // TableName 테이블 이름
@@ -242,6 +263,7 @@ func (ProjectOwner) TableName() string {
 type Workflow struct {
 	ID               string         `gorm:"primaryKey;size:36" json:"id"`
 	ProjectID        string         `gorm:"size:36;not null;index" json:"project_id"` // 프로젝트 FK (필수)
+	ClusterID        string         `gorm:"size:36;index" json:"cluster_id,omitempty"`
 	Name             string         `gorm:"size:255;not null" json:"name"`
 	Slug             string         `gorm:"size:255;index" json:"slug,omitempty"` // URL 경로명
 	Description      string         `gorm:"type:text" json:"description,omitempty"`
@@ -257,6 +279,7 @@ type Workflow struct {
 	FailurePolicy    string         `gorm:"type:text" json:"failure_policy,omitempty"` // JSON
 	Metadata         string         `gorm:"type:text" json:"metadata,omitempty"`       // JSON
 	Tags             string         `gorm:"type:text" json:"tags,omitempty"`           // JSON array
+	JobConfig        string         `gorm:"type:text" json:"job_config,omitempty"`     // JSON - Kubernetes Job 설정 (Type=batch일 때)
 	LastRunAt        *time.Time     `json:"last_run_at,omitempty"`
 	NextRunAt        *time.Time     `json:"next_run_at,omitempty"`
 	CreatedBy        string         `gorm:"size:36" json:"created_by"`
@@ -266,6 +289,7 @@ type Workflow struct {
 
 	// Relations
 	Project    *Project            `gorm:"foreignKey:ProjectID" json:"project,omitempty"`
+	Cluster    *Cluster            `gorm:"foreignKey:ClusterID" json:"cluster,omitempty"`
 	Executions []WorkflowExecution `gorm:"foreignKey:WorkflowID" json:"executions,omitempty"`
 }
 
@@ -278,6 +302,8 @@ func (Workflow) TableName() string {
 type WorkflowExecution struct {
 	ID                string     `gorm:"primaryKey;size:36" json:"id"`
 	WorkflowID        string     `gorm:"size:36;not null;index" json:"workflow_id"`
+	ClusterID         string     `gorm:"size:36;index" json:"cluster_id,omitempty"` // 실행 시점 클러스터
+	AgentID           string     `gorm:"size:36;index" json:"agent_id,omitempty"`   // 실행한 Agent
 	Status            string     `gorm:"size:50;not null" json:"status"`
 	StartedAt         time.Time  `json:"started_at"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`

@@ -61,6 +61,7 @@ type Agent struct {
 // Config 에이전트 설정
 type Config struct {
 	ID                string        `json:"id"`
+	ClusterID         string        `json:"cluster_id"` // 에이전트가 속한 클러스터 ID
 	ControlPlaneURL   string        `json:"control_plane_url"`
 	RedisHost         string        `json:"redis_host"`
 	RedisPort         int           `json:"redis_port"`
@@ -188,9 +189,10 @@ func (a *Agent) registerToControlPlane() error {
 	url := fmt.Sprintf("%s/api/v1/agents/register", a.controlPlaneURL)
 
 	reqBody := map[string]any{
-		"id":       a.ID,
-		"hostname": a.Hostname,
-		"labels":   a.config.Labels,
+		"id":         a.ID,
+		"hostname":   a.Hostname,
+		"labels":     a.config.Labels,
+		"cluster_id": a.config.ClusterID,
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -421,6 +423,7 @@ func (a *Agent) sendHeartbeat() {
 
 	heartbeat := types.AgentHeartbeat{
 		AgentID:       a.ID,
+		ClusterID:     a.config.ClusterID,
 		Hostname:      a.Hostname,
 		Timestamp:     time.Now(),
 		Pipelines:     pipelineIDs,
@@ -544,13 +547,26 @@ func (a *Agent) commandLoop() {
 			fmt.Printf("Subscribed to Redis channel: %s\n", channel)
 		}
 
-		// 그룹 실행 브로드캐스트 채널
-		groupChannel := "group:execute:broadcast"
-		err = a.redisClient.Subscribe(a.ctx, groupChannel, a.handleGroupExecution)
-		if err != nil {
-			fmt.Printf("Failed to subscribe to group execution channel: %v\n", err)
-		} else {
-			fmt.Printf("Subscribed to Redis channel: %s\n", groupChannel)
+		// 클러스터별 실행 채널 (ClusterID가 있는 경우)
+		if a.config.ClusterID != "" {
+			clusterChannel := fmt.Sprintf("cluster:%s:execute", a.config.ClusterID)
+			err = a.redisClient.Subscribe(a.ctx, clusterChannel, a.handleGroupExecution)
+			if err != nil {
+				fmt.Printf("Failed to subscribe to cluster execution channel: %v\n", err)
+			} else {
+				fmt.Printf("Subscribed to Redis channel: %s\n", clusterChannel)
+			}
+		}
+
+		// 그룹 실행 브로드캐스트 채널 (하위 호환성 - ClusterID 없는 경우에만)
+		if a.config.ClusterID == "" {
+			groupChannel := "group:execute:broadcast"
+			err = a.redisClient.Subscribe(a.ctx, groupChannel, a.handleGroupExecution)
+			if err != nil {
+				fmt.Printf("Failed to subscribe to group execution channel: %v\n", err)
+			} else {
+				fmt.Printf("Subscribed to Redis channel: %s\n", groupChannel)
+			}
 		}
 	}
 

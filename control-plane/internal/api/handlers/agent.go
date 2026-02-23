@@ -36,6 +36,7 @@ type AgentWithHeartbeat struct {
 	PipelineStats []types.PipelineStatShort    `json:"pipeline_stats,omitempty"`
 	RunningExecs  []types.RunningExecutionInfo `json:"running_execs,omitempty"`
 	Uptime        string                       `json:"uptime,omitempty"`
+	ClusterName   string                       `json:"cluster_name,omitempty"`
 }
 
 // ListAgents 에이전트 목록 조회 (Redis 하트비트 기반)
@@ -43,9 +44,13 @@ type AgentWithHeartbeat struct {
 // @Tags agents
 // @Accept json
 // @Produce json
+// @Param cluster_id query string false "Filter by cluster ID"
 // @Success 200 {object} gin.H{success=bool,data=[]AgentWithHeartbeat}
 // @Router /agents [get]
 func (h *AgentHandler) ListAgents(c *gin.Context) {
+	// 클러스터 필터
+	filterClusterID := c.Query("cluster_id")
+
 	// Redis에서 모든 에이전트 하트비트 조회
 	heartbeats, err := h.redis.GetAllAgentHeartbeats()
 	if err != nil {
@@ -56,10 +61,18 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 		return
 	}
 
+	// 클러스터 이름 캐시 (DB 조회 최소화)
+	clusterNames := make(map[string]string)
+
 	now := time.Now()
 	agentsWithHeartbeat := make([]AgentWithHeartbeat, 0, len(heartbeats))
 
 	for agentID, heartbeat := range heartbeats {
+		// 클러스터 필터링
+		if filterClusterID != "" && heartbeat.ClusterID != filterClusterID {
+			continue
+		}
+
 		// 하트비트가 30초 이내인 에이전트만 표시 (online)
 		// 30초 초과 에이전트는 하트비트 키가 TTL로 자동 만료됨
 		status := "online"
@@ -74,6 +87,7 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 				Status:        status,
 				LastHeartbeat: &heartbeat.Timestamp,
 				RegisteredAt:  heartbeat.Timestamp, // 첫 하트비트 시간을 등록 시간으로 사용
+				ClusterID:     heartbeat.ClusterID,
 			},
 			CPUUsage:      heartbeat.CPUUsage,
 			MemoryUsage:   heartbeat.MemoryUsage,
@@ -81,6 +95,19 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 			Pipelines:     heartbeat.Pipelines,
 			PipelineStats: heartbeat.PipelineStats,
 			RunningExecs:  heartbeat.RunningExecs,
+		}
+
+		// 클러스터 이름 조회
+		if heartbeat.ClusterID != "" {
+			if clusterName, ok := clusterNames[heartbeat.ClusterID]; ok {
+				agent.ClusterName = clusterName
+			} else {
+				var cluster models.Cluster
+				if err := h.db.First(&cluster, "id = ?", heartbeat.ClusterID).Error; err == nil {
+					clusterNames[heartbeat.ClusterID] = cluster.Name
+					agent.ClusterName = cluster.Name
+				}
+			}
 		}
 
 		// Uptime 계산 (하트비트 타임스탬프 기준)
@@ -183,6 +210,7 @@ type RegisterAgentRequest struct {
 	IPAddress string   `json:"ip_address,omitempty"`
 	Version   string   `json:"version,omitempty"`
 	Labels    []string `json:"labels,omitempty"`
+	ClusterID string   `json:"cluster_id,omitempty"`
 }
 
 // RegisterAgent 에이전트 등록 (인증 불필요 - 클러스터 내부 통신)
@@ -234,6 +262,7 @@ func (h *AgentHandler) RegisterAgent(c *gin.Context) {
 		RegisteredAt:  now,
 		Version:       req.Version,
 		Labels:        labelsJSON,
+		ClusterID:     req.ClusterID,
 	}
 
 	// Upsert: 존재하면 업데이트, 없으면 생성
@@ -255,6 +284,7 @@ func (h *AgentHandler) RegisterAgent(c *gin.Context) {
 			"last_heartbeat": now,
 			"version":        req.Version,
 			"labels":         labelsJSON,
+			"cluster_id":     req.ClusterID,
 		})
 	}
 

@@ -171,8 +171,16 @@ func (s *RedisService) retryPendingCommands() {
 }
 
 // PublishWorkflowExecution 워크플로우 실행 명령 발행
+// ClusterID가 지정된 경우 해당 클러스터 채널로, 그렇지 않으면 브로드캐스트 채널로 발행
 func (s *RedisService) PublishWorkflowExecution(cmd *types.WorkflowExecutionCommand) error {
-	channel := "group:execute:broadcast"
+	var channel string
+	if cmd.TargetClusterID != "" {
+		// 특정 클러스터에만 발행
+		channel = fmt.Sprintf("cluster:%s:execute", cmd.TargetClusterID)
+	} else {
+		// 모든 Agent에 브로드캐스트 (하위 호환성)
+		channel = "group:execute:broadcast"
+	}
 
 	err := s.client.Publish(s.ctx, channel, cmd)
 	if err != nil {
@@ -180,7 +188,23 @@ func (s *RedisService) PublishWorkflowExecution(cmd *types.WorkflowExecutionComm
 		return fmt.Errorf("failed to publish workflow execution: %w", err)
 	}
 
-	fmt.Printf("[RedisService] Workflow execution command published for workflow %s (execution: %s)\n", cmd.WorkflowID, cmd.ExecutionID)
+	fmt.Printf("[RedisService] Workflow execution command published for workflow %s (execution: %s) to channel %s\n",
+		cmd.WorkflowID, cmd.ExecutionID, channel)
+	return nil
+}
+
+// PublishWorkflowExecutionToCluster 특정 클러스터에 워크플로우 실행 명령 발행
+func (s *RedisService) PublishWorkflowExecutionToCluster(clusterID string, cmd *types.WorkflowExecutionCommand) error {
+	channel := fmt.Sprintf("cluster:%s:execute", clusterID)
+
+	err := s.client.Publish(s.ctx, channel, cmd)
+	if err != nil {
+		fmt.Printf("[RedisService] Failed to publish workflow execution to cluster %s: %v\n", clusterID, err)
+		return fmt.Errorf("failed to publish workflow execution to cluster: %w", err)
+	}
+
+	fmt.Printf("[RedisService] Workflow execution command published for workflow %s to cluster %s\n",
+		cmd.WorkflowID, clusterID)
 	return nil
 }
 

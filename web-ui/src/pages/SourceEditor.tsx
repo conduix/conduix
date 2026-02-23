@@ -684,11 +684,17 @@ export default function SourceEditorPage() {
           rate_limit_burst: parsed.rate_limit?.burst || '',
           rate_limit_strategy: parsed.rate_limit?.strategy || 'token_bucket',
         }
-        // Load config fields
+        // Load config fields (객체 필드는 JSON 문자열로 변환)
         const cfg = parsed.config || {}
         Object.keys(cfg).forEach(key => {
           if (key in newFormState) {
-            (newFormState as unknown as Record<string, unknown>)[key] = cfg[key]
+            const value = cfg[key]
+            // headers, query_params 등 객체 필드는 JSON 문자열로 변환
+            if ((key === 'headers' || key === 'query_params') && value && typeof value === 'object') {
+              (newFormState as unknown as Record<string, unknown>)[key] = JSON.stringify(value, null, 2)
+            } else {
+              (newFormState as unknown as Record<string, unknown>)[key] = value
+            }
           }
         })
         setFormState(newFormState)

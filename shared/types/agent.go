@@ -26,6 +26,7 @@ type Agent struct {
 // AgentHeartbeat 에이전트 하트비트
 type AgentHeartbeat struct {
 	AgentID       string                 `json:"agent_id"`
+	ClusterID     string                 `json:"cluster_id,omitempty"` // 에이전트가 속한 클러스터
 	Hostname      string                 `json:"hostname"`
 	Timestamp     time.Time              `json:"timestamp"`
 	CPUUsage      float64                `json:"cpu_usage"`
@@ -88,14 +89,15 @@ type AgentCommandResponse struct {
 // WorkflowExecutionCommand 워크플로우 실행 명령
 // Control Plane에서 Agent로 전송되어 워크플로우 실행을 트리거
 type WorkflowExecutionCommand struct {
-	ID             string         `json:"id"`
-	WorkflowID     string         `json:"workflow_id"`
-	ExecutionID    string         `json:"execution_id"`
-	TriggeredBy    string         `json:"triggered_by"` // "user", "schedule", "event"
-	UserID         string         `json:"user_id,omitempty"`
-	WorkflowConfig *Workflow      `json:"workflow_config,omitempty"`
-	Timestamp      time.Time      `json:"timestamp"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
+	ID              string         `json:"id"`
+	WorkflowID      string         `json:"workflow_id"`
+	ExecutionID     string         `json:"execution_id"`
+	TargetClusterID string         `json:"target_cluster_id,omitempty"` // 대상 클러스터 ID
+	TriggeredBy     string         `json:"triggered_by"`                // "user", "schedule", "event"
+	UserID          string         `json:"user_id,omitempty"`
+	WorkflowConfig  *Workflow      `json:"workflow_config,omitempty"`
+	Timestamp       time.Time      `json:"timestamp"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
 // WorkflowExecutionResult 워크플로우 실행 결과

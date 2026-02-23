@@ -3,6 +3,22 @@ import { useAuthStore } from '../store/auth'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1'
 
+// JobConfig Kubernetes Job 설정 타입
+export interface JobConfig {
+  cpu?: string
+  memory?: string
+  cpu_limit?: string
+  memory_limit?: string
+  timeout_seconds?: number
+  backoff_limit?: number
+  ttl_after_finished?: number
+  node_selector?: Record<string, string>
+  service_account?: string
+  namespace?: string
+  image?: string
+  image_pull_policy?: string
+}
+
 class ApiService {
   private client: AxiosInstance
 
@@ -162,13 +178,55 @@ class ApiService {
   }
 
   // 에이전트
-  async getAgents() {
-    const response = await this.client.get('/agents')
+  async getAgents(params?: { cluster_id?: string }) {
+    const response = await this.client.get('/agents', { params })
     return response.data
   }
 
   async getAgentStatus(id: string) {
     const response = await this.client.get(`/agents/${id}/status`)
+    return response.data
+  }
+
+  // 클러스터
+  async getClusters(params?: { status?: string; search?: string }) {
+    const response = await this.client.get('/clusters', { params })
+    return response.data
+  }
+
+  async getCluster(id: string) {
+    const response = await this.client.get(`/clusters/${id}`)
+    return response.data
+  }
+
+  async createCluster(data: {
+    name: string
+    description?: string
+    api_server_url?: string
+    region?: string
+  }) {
+    const response = await this.client.post('/clusters', data)
+    return response.data
+  }
+
+  async updateCluster(id: string, data: {
+    name?: string
+    description?: string
+    api_server_url?: string
+    region?: string
+    status?: string
+  }) {
+    const response = await this.client.put(`/clusters/${id}`, data)
+    return response.data
+  }
+
+  async deleteCluster(id: string) {
+    const response = await this.client.delete(`/clusters/${id}`)
+    return response.data
+  }
+
+  async getClusterAgents(id: string) {
+    const response = await this.client.get(`/clusters/${id}/agents`)
     return response.data
   }
 
@@ -333,6 +391,7 @@ class ApiService {
 
   async createWorkflow(data: {
     project_id: string
+    cluster_id?: string
     name: string
     slug?: string
     description?: string
@@ -340,6 +399,7 @@ class ApiService {
     schedule_type?: string
     schedule_cron?: string
     schedule_enabled?: boolean
+    job_config?: JobConfig  // Batch 워크플로우용 Kubernetes Job 설정
   }) {
     const response = await this.client.post('/workflows', data)
     return response.data
@@ -349,10 +409,12 @@ class ApiService {
     name?: string
     slug?: string
     description?: string
+    cluster_id?: string | null
     type?: 'batch' | 'realtime'
     schedule_type?: string
     schedule_cron?: string
     schedule_enabled?: boolean
+    job_config?: JobConfig | null  // Batch 워크플로우용 Kubernetes Job 설정
     pipelines?: Array<{
       id: string
       name: string

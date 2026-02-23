@@ -7,6 +7,11 @@ import {
   Grid,
   Chip,
   LinearProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  SelectChangeEvent,
 } from '@mui/material'
 import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
@@ -20,6 +25,15 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
 import { useSnackbar } from '../hooks/useSnackbar'
+
+interface Cluster {
+  id: string
+  name: string
+  description: string
+  status: string
+  agent_count: number
+  online_agent_count: number
+}
 
 interface PipelineStat {
   pipeline_id: string
@@ -43,6 +57,8 @@ interface Agent {
   registered_at: string
   version: string
   labels: string
+  cluster_id: string
+  cluster_name: string
   cpu_usage: number
   memory_usage: number
   disk_usage: number
@@ -107,12 +123,26 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
 export default function AgentsPage() {
   const { t } = useTranslation()
   const [agents, setAgents] = useState<Agent[]>([])
+  const [clusters, setClusters] = useState<Cluster[]>([])
+  const [selectedCluster, setSelectedCluster] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const { showError } = useSnackbar()
 
+  const fetchClusters = useCallback(async () => {
+    try {
+      const response = await api.getClusters()
+      if (response.success) {
+        setClusters(response.data || [])
+      }
+    } catch {
+      // 클러스터 로드 실패는 무시 (필터 없이 동작)
+    }
+  }, [])
+
   const fetchAgents = useCallback(async () => {
     try {
-      const response = await api.getAgents()
+      const params = selectedCluster ? { cluster_id: selectedCluster } : undefined
+      const response = await api.getAgents(params)
       if (response.success) {
         setAgents(response.data || [])
       }
@@ -121,13 +151,22 @@ export default function AgentsPage() {
     } finally {
       setLoading(false)
     }
-  }, [showError, t])
+  }, [showError, t, selectedCluster])
+
+  useEffect(() => {
+    fetchClusters()
+  }, [fetchClusters])
 
   useEffect(() => {
     fetchAgents()
     const interval = setInterval(fetchAgents, 30000)
     return () => clearInterval(interval)
   }, [fetchAgents])
+
+  const handleClusterChange = (event: SelectChangeEvent) => {
+    setSelectedCluster(event.target.value)
+    setLoading(true)
+  }
 
   const formatLastHeartbeat = (heartbeat: string | null) => {
     if (!heartbeat) return '-'
@@ -158,6 +197,24 @@ export default function AgentsPage() {
           )}
         </Box>
       ),
+    },
+    {
+      field: 'cluster_name',
+      headerName: t('agent.cluster'),
+      width: 150,
+      renderCell: (params: GridRenderCellParams<Agent>) => {
+        if (!params.row.cluster_name) {
+          return <Typography variant="body2" color="text.secondary">-</Typography>
+        }
+        return (
+          <Chip
+            icon={<ClusterIcon />}
+            label={params.row.cluster_name}
+            size="small"
+            variant="outlined"
+          />
+        )
+      },
     },
     {
       field: 'status',
@@ -220,9 +277,26 @@ export default function AgentsPage() {
 
   return (
     <Box>
-      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-        <ClusterIcon />
-        <Typography variant="h5">{t('agent.title')}</Typography>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <DesktopIcon />
+          <Typography variant="h5">{t('agent.title')}</Typography>
+        </Box>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>{t('agent.filterByCluster')}</InputLabel>
+          <Select
+            value={selectedCluster}
+            label={t('agent.filterByCluster')}
+            onChange={handleClusterChange}
+          >
+            <MenuItem value="">{t('agent.allClusters')}</MenuItem>
+            {clusters.map((cluster) => (
+              <MenuItem key={cluster.id} value={cluster.id}>
+                {cluster.name} ({cluster.online_agent_count}/{cluster.agent_count})
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
       </Box>
 
       <Grid container spacing={2} sx={{ mb: 2 }}>

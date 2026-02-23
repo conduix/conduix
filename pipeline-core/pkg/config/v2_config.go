@@ -271,6 +271,18 @@ type OutputConfig struct {
 	// Kafka Sink
 	Brokers []string `yaml:"brokers,omitempty"` // Kafka broker addresses
 	Topic   string   `yaml:"topic,omitempty"`   // Kafka topic name
+
+	// REST API Sink
+	URL            string            `yaml:"url,omitempty"`             // Target URL
+	Method         string            `yaml:"method,omitempty"`          // HTTP method (POST, PUT, PATCH)
+	Headers        map[string]string `yaml:"headers,omitempty"`         // HTTP headers
+	Timeout        string            `yaml:"timeout,omitempty"`         // Request timeout (default: 30s)
+	RetryCount     int               `yaml:"retry_count,omitempty"`     // Number of retries (default: 3)
+	RetryDelay     string            `yaml:"retry_delay,omitempty"`     // Delay between retries (default: 1s)
+	SuccessCodes   []int             `yaml:"success_codes,omitempty"`   // HTTP status codes considered success (default: 200, 201, 202, 204)
+	BatchEnabled   bool              `yaml:"batch_enabled,omitempty"`   // Enable batch mode
+	BatchSizeHTTP  int               `yaml:"batch_size_http,omitempty"` // Batch size for HTTP (default: 1)
+	BatchDelimiter string            `yaml:"batch_delimiter,omitempty"` // Delimiter for batch (default: newline)
 }
 
 // MetricsOutputConfig 메트릭 출력 설정

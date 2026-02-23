@@ -20,8 +20,39 @@ var (
 )
 
 func main() {
+	// Batch 모드 확인 (환경변수 기반)
+	if os.Getenv("EXECUTION_MODE") == "batch" {
+		runBatchMode()
+		return
+	}
+
+	// 기존 Agent 모드
+	runAgentMode()
+}
+
+// runBatchMode Kubernetes Job용 1회 실행 모드
+func runBatchMode() {
+	fmt.Println("Starting in batch mode...")
+
+	batchRunner, err := agent.NewBatchRunner()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating batch runner: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := batchRunner.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Batch execution failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Batch execution completed successfully")
+}
+
+// runAgentMode 기존 상주 Agent 모드
+func runAgentMode() {
 	// 명령행 인자 파싱
 	agentID := flag.String("id", "", "Agent ID (default: auto-generated)")
+	clusterID := flag.String("cluster-id", "", "Cluster ID this agent belongs to")
 	controlPlaneURL := flag.String("control-plane", "http://localhost:8080", "Control plane URL")
 	redisHost := flag.String("redis-host", "localhost", "Redis host")
 	redisPort := flag.Int("redis-port", 6379, "Redis port")
@@ -39,6 +70,9 @@ func main() {
 	if env := os.Getenv("AGENT_ID"); env != "" && *agentID == "" {
 		*agentID = env
 	}
+	if env := os.Getenv("CLUSTER_ID"); env != "" && *clusterID == "" {
+		*clusterID = env
+	}
 	if env := os.Getenv("CONTROL_PLANE_URL"); env != "" {
 		*controlPlaneURL = env
 	}
@@ -49,6 +83,7 @@ func main() {
 	// 에이전트 설정
 	cfg := &agent.Config{
 		ID:                *agentID,
+		ClusterID:         *clusterID,
 		ControlPlaneURL:   *controlPlaneURL,
 		RedisHost:         *redisHost,
 		RedisPort:         *redisPort,
@@ -100,3 +135,4 @@ func main() {
 
 	fmt.Println("Agent stopped")
 }
+

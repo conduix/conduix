@@ -1061,6 +1061,38 @@ func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error
 		if createTable, ok := stage.Config["create_table"].(string); ok {
 			cfg.CreateTable = createTable
 		}
+
+		// REST API Sink 필드 매핑
+		if url, ok := stage.Config["url"].(string); ok {
+			cfg.URL = os.ExpandEnv(url)
+		}
+		if method, ok := stage.Config["method"].(string); ok {
+			cfg.Method = method
+		}
+		if headers, ok := stage.Config["headers"].(map[string]any); ok {
+			cfg.Headers = make(map[string]string)
+			for k, v := range headers {
+				if str, ok := v.(string); ok {
+					cfg.Headers[k] = str
+				}
+			}
+		}
+		if timeout, ok := stage.Config["timeout"].(string); ok {
+			cfg.Timeout = timeout
+		}
+		if retryCount, ok := stage.Config["retry_count"].(float64); ok {
+			cfg.RetryCount = int(retryCount)
+		}
+		if retryDelay, ok := stage.Config["retry_delay"].(string); ok {
+			cfg.RetryDelay = retryDelay
+		}
+		if successCodes, ok := stage.Config["success_codes"].([]any); ok {
+			for _, code := range successCodes {
+				if codeFloat, ok := code.(float64); ok {
+					cfg.SuccessCodes = append(cfg.SuccessCodes, int(codeFloat))
+				}
+			}
+		}
 	}
 
 	return sink.NewSink(cfg)

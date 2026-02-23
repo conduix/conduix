@@ -31,6 +31,7 @@ type Server struct {
 	userHandler         *handlers.UserHandler
 	projectHandler      *handlers.ProjectHandler
 	agentHandler        *handlers.AgentHandler
+	clusterHandler      *handlers.ClusterHandler
 	utilsHandler        *handlers.UtilsHandler
 	checkpointHandler   *handlers.CheckpointHandler
 	pipelineLinkHandler *handlers.PipelineLinkHandler
@@ -65,6 +66,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		userHandler:         handlers.NewUserHandler(db),
 		projectHandler:      handlers.NewProjectHandler(db),
 		agentHandler:        handlers.NewAgentHandler(db, redisService),
+		clusterHandler:      handlers.NewClusterHandler(db, redisService),
 		utilsHandler:        handlers.NewUtilsHandler(),
 		checkpointHandler:   handlers.NewCheckpointHandler(db),
 		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),
@@ -105,6 +107,12 @@ func (s *Server) setupRoutes() {
 		internal := v1.Group("/workflows")
 		{
 			internal.POST("/:id/executions/:executionId/result", s.workflowHandler.ReceiveExecutionResult)
+		}
+
+		// Job 결과 콜백 API (Kubernetes Job Pod에서 호출)
+		internalJob := v1.Group("/internal")
+		{
+			internalJob.POST("/job-result", s.workflowHandler.HandleJobResultCallback)
 		}
 
 		// 파이프라인 체크포인트 내부 API (Agent에서 호출)
@@ -249,6 +257,17 @@ func (s *Server) setupRoutes() {
 				agents.GET("/:id", s.agentHandler.GetAgent)
 			}
 
+			// 클러스터
+			clusters := authenticated.Group("/clusters")
+			{
+				clusters.GET("", s.clusterHandler.ListClusters)
+				clusters.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.clusterHandler.CreateCluster)
+				clusters.GET("/:id", s.clusterHandler.GetCluster)
+				clusters.PUT("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.clusterHandler.UpdateCluster)
+				clusters.DELETE("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.clusterHandler.DeleteCluster)
+				clusters.GET("/:id/agents", s.clusterHandler.GetClusterAgents)
+			}
+
 			// 유틸리티 (연결 테스트)
 			utils := authenticated.Group("/utils")
 			{
@@ -312,6 +331,7 @@ func (s *Server) index(c *gin.Context) {
 			"pipelines":  "/api/v1/pipelines",
 			"workflows":  "/api/v1/workflows",
 			"agents":     "/api/v1/agents",
+			"clusters":   "/api/v1/clusters",
 			"data-types": "/api/v1/data-types",
 			"projects":   "/api/v1/projects",
 		},

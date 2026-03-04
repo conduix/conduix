@@ -16,7 +16,7 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
-	"github.com/conduix/conduix/pipeline-core/pkg/sink"
+	"github.com/conduix/conduix/pipeline-core/pkg/output"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
 	"github.com/conduix/conduix/pipeline-core/pkg/validator"
 	"github.com/conduix/conduix/shared/types"
@@ -448,7 +448,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	injectedKafkaSinks := e.injectKafkaSinksForParent(ctx, &pipeline)
 
 	// Output Sink 및 PreStages 매핑
-	outputSinks := make(map[string]sink.Sink)       // output name -> sink
+	outputSinks := make(map[string]output.Output)       // output name -> sink
 	outputsWithSinks := make([]OutputWithSink, 0)   // Output + Sink + PreStages
 
 	// 1. Outputs 배열에서 Sink 생성 (권장 방식)
@@ -1075,7 +1075,7 @@ func (e *GroupExecutor) evaluateCondition(data map[string]any, condition string)
 }
 
 // sendToSink 싱크로 전송
-func (e *GroupExecutor) sendToSink(ctx context.Context, data map[string]any, s sink.Sink) error {
+func (e *GroupExecutor) sendToSink(ctx context.Context, data map[string]any, s output.Output) error {
 	record := source.Record{
 		Data: data,
 		Metadata: source.Metadata{
@@ -1087,7 +1087,7 @@ func (e *GroupExecutor) sendToSink(ctx context.Context, data map[string]any, s s
 }
 
 // createSinkFromStage Stage에서 Sink 생성
-func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error) {
+func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (output.Output, error) {
 	cfg := config.OutputConfig{
 		Type: stage.Type,
 	}
@@ -1198,14 +1198,14 @@ func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error
 		}
 
 		// Sink 생성
-		s, err := sink.NewSink(cfg)
+		s, err := output.NewOutput(cfg)
 		if err != nil {
 			return nil, err
 		}
 
 		// 배치가 활성화된 경우 BatchingWrapper로 감싸기
 		if cfg.BatchEnabled {
-			batchConfig := sink.BatchConfig{
+			batchConfig := output.BatchConfig{
 				Enabled:       true,
 				Size:          cfg.BatchSizeHTTP,
 				FlushInterval: flushInterval,
@@ -1220,17 +1220,17 @@ func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error
 			if batchConfig.FlushInterval <= 0 {
 				batchConfig.FlushInterval = 5 * time.Second
 			}
-			return sink.WrapWithBatching(s, batchConfig), nil
+			return output.WrapWithBatching(s, batchConfig), nil
 		}
 
 		return s, nil
 	}
 
-	return sink.NewSink(cfg)
+	return output.NewOutput(cfg)
 }
 
 // createSinkFromOutput Output에서 Sink 생성
-func (e *GroupExecutor) createSinkFromOutput(output types.Output) (sink.Sink, error) {
+func (e *GroupExecutor) createSinkFromOutput(output types.Output) (output.Output, error) {
 	// Output을 Stage로 변환하여 기존 로직 재사용
 	stage := types.Stage{
 		ID:     output.ID,
@@ -1244,7 +1244,7 @@ func (e *GroupExecutor) createSinkFromOutput(output types.Output) (sink.Sink, er
 // OutputWithSink Output과 해당 Sink, PreStages를 묶는 구조체
 type OutputWithSink struct {
 	Output    types.Output
-	Sink      sink.Sink
+	Sink      output.Output
 	PreStages []types.Stage
 }
 
@@ -1450,8 +1450,8 @@ func (e *GroupExecutor) GetMonitoringInfo() *types.ExecutionMonitoringInfo {
 
 // injectKafkaSinksForParent 부모 파이프라인에 Kafka Sink 주입
 // 자식이 있는 경우에만 Kafka Sink를 자동으로 추가
-func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline *types.GroupedPipeline) map[string]sink.Sink {
-	injectedSinks := make(map[string]sink.Sink)
+func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline *types.GroupedPipeline) map[string]output.Output {
+	injectedSinks := make(map[string]output.Output)
 
 	// 링크가 없으면 주입하지 않음
 	if e.linkClient == nil || len(e.pipelineLinks) == 0 {
@@ -1482,7 +1482,7 @@ func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline 
 		}
 
 		// Kafka Sink 생성
-		kafkaSink, err := sink.NewSink(cfg)
+		kafkaSink, err := output.NewOutput(cfg)
 		if err != nil {
 			fmt.Printf("[injectKafkaSinksForParent] Failed to create Kafka sink for link %s: %v\n", l.ID, err)
 			continue
@@ -1554,7 +1554,7 @@ func (e *GroupExecutor) runPipelineBatch(
 	pipeline types.GroupedPipeline,
 	records <-chan source.Record,
 	errs <-chan error,
-	outputSinks map[string]sink.Sink,
+	outputSinks map[string]output.Output,
 	statsCollector *StatsCollector,
 	sampleBuffer *SampleBuffer,
 	sourceValidator *validator.SchemaValidator,
@@ -1703,7 +1703,7 @@ func (e *GroupExecutor) runPipelineBatch(
 		for stageName, s := range outputSinks {
 			if outputMode == types.OutputModeBulk {
 				// Bulk 모드: BatchSink 인터페이스 사용
-				if batchSink, ok := s.(sink.BatchSink); ok && batchSink.SupportsBatch() {
+				if batchSink, ok := s.(output.BatchOutput); ok && batchSink.SupportsBatch() {
 					batchRecords := make([]source.Record, len(transformed))
 					for i, data := range transformed {
 						batchRecords[i] = source.Record{Data: data}

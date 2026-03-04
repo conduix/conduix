@@ -11,7 +11,7 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/dedup"
 	"github.com/conduix/conduix/pipeline-core/pkg/processor"
-	"github.com/conduix/conduix/pipeline-core/pkg/sink"
+	"github.com/conduix/conduix/pipeline-core/pkg/output"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
 )
 
@@ -20,7 +20,7 @@ type Pipeline struct {
 	config     *config.PipelineConfigV2
 	source     source.Source
 	processors []processor.Processor
-	sink       sink.Sink
+	output     output.Output
 	dedup      dedup.DedupService
 
 	// 실시간 설정
@@ -61,17 +61,17 @@ func New(cfg *config.PipelineConfigV2) (*Pipeline, error) {
 		processors = append(processors, p)
 	}
 
-	// 싱크 생성
-	snk, err := sink.NewSink(cfg.Output)
+	// Output 생성
+	out, err := output.NewOutput(cfg.Output)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create sink: %w", err)
+		return nil, fmt.Errorf("failed to create output: %w", err)
 	}
 
 	p := &Pipeline{
 		config:     cfg,
 		source:     src,
 		processors: processors,
-		sink:       snk,
+		output:     out,
 	}
 
 	// 실시간 모드 설정
@@ -105,11 +105,11 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	}
 	defer func() { _ = p.source.Close() }()
 
-	// 싱크 열기
-	if err := p.sink.Open(ctx); err != nil {
-		return fmt.Errorf("failed to open sink: %w", err)
+	// Output 열기
+	if err := p.output.Open(ctx); err != nil {
+		return fmt.Errorf("failed to open output: %w", err)
 	}
-	defer func() { _ = p.sink.Close() }()
+	defer func() { _ = p.output.Close() }()
 
 	// 데이터 읽기
 	records, errs := p.source.Read(ctx)
@@ -134,7 +134,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			if !ok {
 				// 소스 완료
 				log.Printf("[pipeline] Source completed")
-				return p.sink.Flush(ctx)
+				return p.output.Flush(ctx)
 			}
 
 			p.stats.TotalRecords++
@@ -152,7 +152,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		}
 	}
 
-	return p.sink.Flush(ctx)
+	return p.output.Flush(ctx)
 }
 
 func (p *Pipeline) processRecord(ctx context.Context, record source.Record) error {
@@ -190,9 +190,9 @@ func (p *Pipeline) processRecord(ctx context.Context, record source.Record) erro
 		current = result
 	}
 
-	// 싱크에 기록
-	if err := p.sink.Write(ctx, *current); err != nil {
-		return fmt.Errorf("sink write failed: %w", err)
+	// Output에 기록
+	if err := p.output.Write(ctx, *current); err != nil {
+		return fmt.Errorf("output write failed: %w", err)
 	}
 
 	p.stats.ProcessedCount++

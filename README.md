@@ -6,23 +6,23 @@
 
 A platform service that connects data, controls flow, and orchestrates pipelines.
 
-Actor Model-based Large-scale Data Pipeline Platform
+Scalable Data Pipeline Platform with Parallel Processing
 
 [한국어](README.ko.md)
 
 ## Overview
 
-Conduix is a scalable data pipeline system that combines [Bento](https://github.com/warpstreamlabs/bento) (MIT License) proven connectors with Apache Flink-style Actor Model.
+Conduix is a scalable data pipeline system that combines [Bento](https://github.com/warpstreamlabs/bento) (MIT License) proven connectors with parallel processing architecture.
 
 **Hybrid Architecture**:
-- **Actor System**: Flink-style control with Supervisor pattern, Mailbox, Backpressure
+- **Parallel Processing**: Stage-level parallel processing, batch optimization
 - **Bento Connectors**: Reuse proven connectors for Kafka, Elasticsearch, S3, etc.
 - **Pure Go**: Single binary, no external dependencies
 
 ## Key Features
 
-- **Actor Model-based Pipeline**: Automatic fault recovery with hierarchical Supervisor pattern
-- **Flat/Hierarchical Structure Support**: Both simple flat structure and advanced hierarchical Actor structure
+- **Parallel Batch Processing**: Stage always parallel, Output selectable bulk/individual mode
+- **Input/Stage/Output Separation**: Clear separation of data ingestion (Input), transformation (Stage+PreStages), and storage (Output)
 - **Bento Connector Integration**: Rich connectors including Kafka, ES, S3, HTTP, NATS, AMQP
 - **High Availability**: Redis-based checkpoints, automatic fault handling
 - **Operations Tools**: Web-based pipeline configuration, monitoring, scheduling
@@ -45,10 +45,10 @@ Conduix is a scalable data pipeline system that combines [Bento](https://github.
 ┌─────────────────────────────────────────────────────────────┐
 │                   Pipeline Agent Cluster                     │
 │  ┌───────────────────────────────────────────────────┐      │
-│  │  Agent (Actor System + Bento Connectors)          │      │
+│  │  Agent (Parallel Processing + Bento Connectors)   │      │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐           │      │
-│  │  │ Source  │→ │Transform│→ │  Sink   │           │      │
-│  │  │ (Kafka) │  │(Bloblang│  │  (ES)   │           │      │
+│  │  │  Input  │→ │  Stage  │→ │ Output  │           │      │
+│  │  │ (Kafka) │  │ (remap) │  │  (ES)   │           │      │
 │  │  └─────────┘  └─────────┘  └─────────┘           │      │
 │  └───────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────┘
@@ -66,9 +66,9 @@ Conduix uses a **Unix Pipe-inspired linear pipeline** design with **DataType-bas
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                               │
 │  1. Single Pipeline = Unix Pipe (Linear Chain)                               │
-│     ┌────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌──────┐    │
-│     │ Source │───→│ Stage 1 │───→│ Stage 2 │───→│ Stage 3 │───→│ Sink │    │
-│     └────────┘    └─────────┘    └─────────┘    └─────────┘    └──────┘    │
+│     ┌────────┐    ┌─────────┐    ┌─────────┐    ┌──────────┐    ┌────────┐│
+│     │ Input  │───→│ Stage 1 │───→│ Stage 2 │───→│PreStages │───→│ Output ││
+│     └────────┘    └─────────┘    └─────────┘    └──────────┘    └────────┘│
 │                                                                               │
 │  2. Multiple Pipelines = DataType Dependency DAG                             │
 │     ┌──────────────┐                                                         │
@@ -88,19 +88,74 @@ Conduix uses a **Unix Pipe-inspired linear pipeline** design with **DataType-bas
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Stage: The Abstraction Unit
+### Input, Stage, and Output Types
 
-**Stage** is the core abstraction unit following `input → output` interface. The implementation determines its role:
+**Input** handles data ingestion, **Stage** handles common transformation/processing, **Output** handles data storage/delivery. Each Output can have its own **PreStages** for Output-specific transformations.
 
-| Stage Type | Description | Example Use |
-|------------|-------------|-------------|
-| **FilterStage** | Filter records by condition | Remove invalid data |
-| **RemapStage** | Transform/rename fields | JSON field mapping |
-| **AggregateStage** | Aggregate over windows | Count, sum, average |
-| **EnrichStage** | Add external data | Lookup table join |
-| **ElasticsearchStage** | Write to Elasticsearch | Index documents |
-| **KafkaStage** | Produce to Kafka | Cross-pipeline boundary |
-| **TriggerStage** | Trigger other pipelines | Parent-child coordination |
+#### Input Types (Data Ingestion)
+
+| Type | Description | Example Use |
+|------|-------------|-------------|
+| **kafka** | Kafka consumer | Event streaming |
+| **rest_api** | REST API polling | External API |
+| **sql** | SQL database | MySQL, PostgreSQL |
+| **cdc** | Change Data Capture | DB replication |
+| **file** | File source | CSV, JSON files |
+| **k8s_logs** | Kubernetes logs | Container logs |
+
+#### Stage Types (Transformation/Processing)
+
+| Type | Description | Example Use |
+|------|-------------|-------------|
+| **filter** | Filter records by condition | Remove invalid data |
+| **remap** | Transform/rename fields | JSON field mapping |
+| **drop** | Drop specific fields | Remove sensitive data |
+| **merge** | Merge multiple fields | Combine name fields |
+| **split** | Split field by regex | Parse log lines |
+| **encrypt** | Encrypt fields | PII protection |
+| **dedupe** | Remove duplicates | Deduplication |
+| **default** | Set default values | Fill nulls |
+| **cast** | Type conversion | String to int |
+| **timestamp** | Timestamp handling | Add/convert timestamps |
+| **throttle** | Rate limiting | API rate limit |
+| **validate** | Schema validation | Data quality |
+
+#### Output Types (Storage/Delivery)
+
+| Type | Description | Example Use |
+|------|-------------|-------------|
+| **sql** | SQL database | MySQL, PostgreSQL |
+| **elasticsearch** | Elasticsearch | Log indexing |
+| **kafka** | Kafka topic | Event streaming |
+| **mongodb** | MongoDB | Document storage |
+| **s3** | S3 storage | Data lake |
+| **rest_api** | REST API | External API call |
+| **file** | File output | Local/remote file |
+
+#### PreStages (Output-specific Transformation)
+
+Each Output can define `pre_stages` for Output-specific transformations. This allows different transformations before each destination.
+
+```yaml
+outputs:
+  - name: "elasticsearch"
+    type: elasticsearch
+    pre_stages:              # ES-specific transformations
+      - type: remap
+        config:
+          mappings:
+            "@timestamp": ".created_at"
+    config:
+      endpoints: ["http://es:9200"]
+  - name: "s3-backup"
+    type: s3
+    pre_stages:              # S3-specific transformations
+      - type: drop
+        config:
+          fields: ["sensitive_data"]
+    config:
+      bucket: "backup"
+```
 
 ### DataType Dependency Patterns
 
@@ -153,36 +208,54 @@ Pipeline 3: Order Analytics (Consumer B)
 └──────────────┘     └──────────────┘
 ```
 
-### Router Stage (Optional In-Pipeline Branching)
+### Batch Processing
 
-For simple fan-out within a single pipeline (without Kafka):
+Batch processing optimizes data pipeline performance:
+- **Stage**: Always parallel processing (concurrent workers)
+- **Output**: Selectable bulk or individual mode
 
 ```yaml
-stages:
-  - id: router-1
-    type: router
-    config:
-      mode: fan_out          # fan_out | condition | filter
-      routes:
-        - name: es-path
-          next: stage-es
-        - name: agg-path
-          next: stage-agg
-
-  - id: stage-es
-    type: elasticsearch
-    config: {...}
-
-  - id: stage-agg
-    type: aggregate
-    config: {...}
+pipelines:
+  - id: batch-pipeline
+    name: "Batch Processing Example"
+    input:                   # Data source (source also supported)
+      type: rest_api
+      config:
+        url: "https://api.example.com/users"
+    batch:
+      enabled: true
+      output_mode: bulk      # bulk | individual
+      size: 100              # Records per batch
+      workers: 10            # Parallel workers for Stage
+      flush_interval: "5s"   # Time-based flush
+    stages:                  # Common transformations
+      - name: "filter"
+        type: filter
+        config:
+          condition: ".status == 'active'"
+      - name: "transform"
+        type: remap
+        config:
+          mappings:
+            user_id: ".id"
+            user_name: ".name"
+    outputs:
+      - name: "elasticsearch"
+        type: elasticsearch
+        pre_stages:          # ES-specific transformations
+          - type: remap
+            config:
+              mappings:
+                "@timestamp": ".created_at"
+        config:
+          endpoints: ["http://es:9200"]
+          index: "users"
 ```
 
-| Router Mode | Description | Use Case |
+| Output Mode | Description | Use Case |
 |-------------|-------------|----------|
-| **fan_out** | Copy to all routes | Same data to ES + DB |
-| **condition** | First matching route | Error/success branching |
-| **filter** | All matching routes | Tag-based routing |
+| **bulk** | Batch delivery | SQL bulk INSERT, ES bulk API |
+| **individual** | One-by-one delivery | APIs without bulk support |
 
 ### When to Use Each Approach
 
@@ -199,7 +272,7 @@ stages:
 
 ```
 conduix/
-├── pipeline-core/     # Pipeline core (Actor system, Bento integration)
+├── pipeline-core/     # Pipeline core (Parallel processing, Bento integration)
 ├── pipeline-agent/    # Pipeline execution agent
 ├── control-plane/     # Operations tool backend API
 ├── web-ui/            # Operations tool frontend
@@ -252,53 +325,61 @@ helm install conduix ./deploy/helm/conduix
 
 ## Pipeline Configuration Examples
 
-### Flat Structure (Bento Compatible)
+### Workflow Pipeline Configuration
 
 ```yaml
-version: "1.0"
-name: "log-pipeline"
+# Workflow containing multiple pipelines
+id: "wf-001"
+name: "Log Processing Workflow"
+type: "batch"
+execution_mode: "dag"
 
-sources:
-  kafka_input:
-    type: kafka
-    brokers: ["kafka:9092"]
-    topics: ["logs"]
-
-transforms:
-  parse:
-    type: remap
-    inputs: ["kafka_input"]
-    source: '. = parse_json!(.message)'
-
-sinks:
-  elasticsearch:
-    type: elasticsearch
-    inputs: ["parse"]
-    endpoints: ["http://es:9200"]
-```
-
-### Hierarchical Actor Structure
-
-```yaml
-version: "1.0"
-name: "analytics-pipeline"
-type: actor
-
-pipeline:
-  name: "RootSupervisor"
-  supervision:
-    strategy: one_for_one
-    max_restarts: 3
-
-  children:
-    - name: "SourceSupervisor"
-      type: supervisor
-      children:
-        - name: "KafkaSource"
-          type: source
-          config:
-            source_type: kafka
-            brokers: ["kafka:9092"]
+pipelines:
+  - id: "pipeline-1"
+    name: "Log Ingestion"
+    priority: 1
+    input:                   # Data source (source also supported)
+      type: rest_api
+      name: "log-api"
+      config:
+        url: "https://api.example.com/logs"
+        method: "GET"
+    stages:                  # Common transformations
+      - name: "parse"
+        type: remap
+        config:
+          mappings:
+            timestamp: ".created_at"
+            message: ".log_message"
+      - name: "filter"
+        type: filter
+        config:
+          condition: ".level != 'debug'"
+    outputs:
+      - name: "elasticsearch"
+        type: elasticsearch
+        pre_stages:          # ES-specific transformations
+          - type: remap
+            config:
+              mappings:
+                "@timestamp": ".timestamp"
+        config:
+          endpoints: ["http://es:9200"]
+          index: "logs"
+      - name: "s3-backup"
+        type: s3
+        pre_stages:          # S3: remove sensitive fields
+          - type: drop
+            config:
+              fields: ["user_ip", "session_id"]
+        config:
+          bucket: "logs-backup"
+          region: "ap-northeast-2"
+    batch:
+      enabled: true
+      output_mode: bulk
+      size: 100
+      workers: 10
 ```
 
 ## Fault Tolerance
@@ -407,48 +488,48 @@ local_cache_max_size: 1000
 
 ### Kafka Fault Scenarios
 
-Kafka is used in Source (data collection) and Sink (data transmission).
+Kafka is used in Input (data collection) and Output (data transmission).
 
 #### Response by Fault Type
 
-| Scenario | Source Actor Behavior | Sink Actor Behavior | Data Guarantee |
-|----------|----------------------|---------------------|----------------|
+| Scenario | Input Behavior | Output Behavior | Data Guarantee |
+|----------|-----------------|-----------------|----------------|
 | **Temporary Broker Disconnection** | Auto-reconnect, restart Consumer | Buffer then resend | At-least-once |
-| **Broker Down** | Supervisor restarts Actor | Store in local buffer | At-least-once |
+| **Broker Down** | Restart with backoff | Store in local buffer | At-least-once |
 | **Partition Rebalance** | Offset adjustment, checkpoint recovery | Complete in-progress batch then reconnect | Exactly-once (with checkpoint) |
 | **Leader Change** | Auto-detect new Leader | Auto-switch to new Leader | At-least-once |
-| **Topic Deletion/Permission Error** | Error logging, report to Supervisor | Error logging, stop retries | Manual intervention required |
+| **Topic Deletion/Permission Error** | Error logging | Error logging, stop retries | Manual intervention required |
 
-#### Kafka Source Actor Recovery Flow
+#### Kafka Input Recovery Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Kafka Source Actor Fault Recovery Flow                    │
+│                       Kafka Input Fault Recovery Flow                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────┐     │
-│  │                    SourceSupervisor                                 │     │
+│  │                    Pipeline Executor                                │     │
 │  │                                                                     │     │
-│  │   Strategy: one_for_one (restart only failed Actor)                │     │
-│  │   max_restarts: 5 (max 5 times within 5 minutes)                   │     │
+│  │   Restart policy: max 5 retries within 5 minutes                   │     │
+│  │   Backoff: 1s → 2s → 4s → 8s → 16s                                 │     │
 │  │                                                                     │     │
 │  └────────────────────────────────────────────────────────────────────┘     │
 │         │                    │                    │                          │
 │         ▼                    ▼                    ▼                          │
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                    │
-│  │ KafkaSource │     │ KafkaSource │     │ KafkaSource │                    │
+│  │ KafkaInput  │     │ KafkaInput  │     │ KafkaInput  │                    │
 │  │ Partition-0 │     │ Partition-1 │     │ Partition-2 │                    │
 │  └──────┬──────┘     └─────────────┘     └─────────────┘                    │
 │         │                                                                    │
 │         │ Broker Connection Failed                                           │
 │         ▼                                                                    │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │ 1. Actor Crash → Notify Supervisor                                  │    │
-│  │ 2. Supervisor checks restart policy                                 │    │
+│  │ 1. Input error detected                                             │    │
+│  │ 2. Check restart policy                                             │    │
 │  │ 3. Query last offset from checkpoint                                │    │
-│  │ 4. Create new Actor → restart from offset                           │    │
-│  │ 5. Backoff on restart failure (1s → 2s → 4s → 8s → 16s)            │    │
-│  │ 6. Escalate to Supervisor when max_restarts exceeded                │    │
+│  │ 4. Reconnect and restart from offset                                │    │
+│  │ 5. Exponential backoff on repeated failure                          │    │
+│  │ 6. Mark pipeline as error when max_restarts exceeded                │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -463,7 +544,7 @@ Kafka is used in Source (data collection) and Sink (data transmission).
 │                                                                              │
 │  [Normal Operation]                                                          │
 │                                                                              │
-│  Kafka ──▶ Source Actor ──▶ Transform ──▶ Sink                             │
+│  Kafka ──▶ Input ──▶ Stage ──▶ Output                                      │
 │    │              │                          │                               │
 │    │              │ Periodic checkpoint (10s) │                               │
 │    │              ▼                          ▼                               │
@@ -499,37 +580,32 @@ Kafka is used in Source (data collection) and Sink (data transmission).
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Supervision Strategy
+#### Failure Policy Configuration
 
 ```yaml
-# Pipeline configuration example
-pipeline:
-  name: "KafkaPipeline"
-  supervision:
-    strategy: one_for_one    # Restart only failed Actor
-    max_restarts: 5          # Max restarts within window
-    within_seconds: 300      # Restart count window
+# Workflow failure policy
+failure_policy:
+  action: retry            # stop_all | continue | retry | skip
+  max_retries: 5           # Max retries
+  retry_delay: "1m"        # Retry delay
+  notify_on_failure: true
+  notify_channels:
+    - slack
+    - email
 
-  children:
-    - name: "SourceSupervisor"
-      type: supervisor
-      supervision:
-        strategy: one_for_one
-        max_restarts: 10     # Allow more retries for Source
-      children:
-        - name: "KafkaSource"
-          type: source
-          config:
-            source_type: kafka
-            brokers: ["kafka1:9092", "kafka2:9092", "kafka3:9092"]
-            topics: ["events"]
-            group_id: "pipeline-consumer"
-            # Kafka Consumer settings
-            auto_offset_reset: earliest
-            enable_auto_commit: false  # Manual commit (checkpoint integration)
-            session_timeout_ms: 30000
-            heartbeat_interval_ms: 10000
-            max_poll_interval_ms: 300000
+# Pipeline-level Kafka settings
+pipelines:
+  - id: "kafka-pipeline"
+    input:                   # Data source (source also supported)
+      type: kafka
+      config:
+        brokers: ["kafka1:9092", "kafka2:9092", "kafka3:9092"]
+        topics: ["events"]
+        group_id: "pipeline-consumer"
+        auto_offset_reset: earliest
+        enable_auto_commit: false  # Manual commit (checkpoint integration)
+        session_timeout_ms: 30000
+        heartbeat_interval_ms: 10000
 ```
 
 ---
@@ -552,8 +628,8 @@ pipeline:
 
 ```
 1. Redis failure occurs → Agent switches to REST fallback mode
-2. Kafka failure occurs → Source Actor restart attempts
-3. Source Actor reaches max_restarts → Escalate to Supervisor
+2. Kafka failure occurs → Source restart attempts
+3. Source reaches max_restarts → Pipeline error state
 4. Pipeline transitions to paused state
 5. Preserve unsent data in local buffer
 6. Redis recovery → Checkpoint query available
@@ -597,7 +673,7 @@ type Metrics struct {
 | Redis Connection Status | Disconnected > 30s | Disconnected > 5min | Redis disconnection |
 | Circuit Breaker | Enter Open state | Open > 5min | Persistent Redis failure |
 | Kafka Consumer Lag | > 10,000 | > 100,000 | Processing delay |
-| Actor Restart Count | > 3/5min | > 5/5min | Repeated failures |
+| Pipeline Restart Count | > 3/5min | > 5/5min | Repeated failures |
 | Checkpoint Failure | > 3 consecutive | > 10 consecutive | State save failure |
 
 ## License

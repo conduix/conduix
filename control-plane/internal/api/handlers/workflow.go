@@ -942,8 +942,8 @@ func (h *WorkflowHandler) managePipelineKafkaTopics(
 			// 부모 파이프라인에 Kafka sink 추가
 			h.addKafkaStageToParent(parentPipeline, p.Name, topicName)
 
-			// 자식 파이프라인에 Kafka source 설정
-			h.setKafkaSourceToChild(p, topicName)
+			// 자식 파이프라인에 Kafka Input 설정
+			h.setKafkaInputToChild(p, topicName)
 
 			h.logger.Info("Created Kafka topic for parent-child pipeline",
 				"topic", topicName,
@@ -1037,9 +1037,9 @@ func (h *WorkflowHandler) removeKafkaStageFromParent(parent *types.GroupedPipeli
 	parent.Stages = newStages
 }
 
-// setKafkaSourceToChild 자식 파이프라인에 Kafka source 설정
-func (h *WorkflowHandler) setKafkaSourceToChild(child *types.GroupedPipeline, topicName string) {
-	child.Source = types.WorkflowSource{
+// setKafkaInputToChild 자식 파이프라인에 Kafka Input 설정
+func (h *WorkflowHandler) setKafkaInputToChild(child *types.GroupedPipeline, topicName string) {
+	kafkaInput := types.WorkflowInput{
 		Type: "kafka",
 		Name: fmt.Sprintf("from_parent_%s", topicName),
 		Config: map[string]any{
@@ -1048,6 +1048,7 @@ func (h *WorkflowHandler) setKafkaSourceToChild(child *types.GroupedPipeline, to
 			"consumer_group": fmt.Sprintf("%s_consumer", child.Name),
 		},
 	}
+	child.SetInput(kafkaInput)
 }
 
 // ReceiveExecutionResult POST /api/v1/workflows/:id/executions/:executionId/result

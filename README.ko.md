@@ -6,23 +6,23 @@
 
 데이터를 연결하고, 흐름을 제어하고, 파이프라인을 조직하는 플랫폼 서비스
 
-Actor Model 기반의 대용량 데이터 파이프라인 플랫폼
+병렬 처리 기반의 대용량 데이터 파이프라인 플랫폼
 
 [English](README.md)
 
 ## 개요
 
-Conduix는 [Bento](https://github.com/warpstreamlabs/bento)(MIT 라이선스)의 검증된 커넥터와 Apache Flink 스타일의 Actor Model을 결합한 확장 가능한 데이터 파이프라인 시스템입니다.
+Conduix는 [Bento](https://github.com/warpstreamlabs/bento)(MIT 라이선스)의 검증된 커넥터와 병렬 처리 아키텍처를 결합한 확장 가능한 데이터 파이프라인 시스템입니다.
 
 **하이브리드 아키텍처**:
-- **Actor System**: Supervisor 패턴, Mailbox, Backpressure 등 Flink 스타일 제어
+- **병렬 처리**: Stage 단위 병렬 처리, 배치 최적화
 - **Bento Connectors**: Kafka, Elasticsearch, S3 등 검증된 커넥터 재사용
 - **순수 Go**: 단일 바이너리, 외부 의존성 없음
 
 ## 주요 기능
 
-- **Actor Model 기반 파이프라인**: 계층적 Supervisor 패턴으로 자동 장애 복구
-- **Flat/계층적 구조 지원**: 간단한 flat 구조와 고급 계층적 Actor 구조 모두 지원
+- **병렬 배치 처리**: Stage는 항상 병렬 처리, Output은 bulk/individual 모드 선택
+- **Input/Stage/Output 분리**: 입력(Input), 변환(Stage), 출력(Output) 명확한 분리
 - **Bento 커넥터 통합**: Kafka, ES, S3, HTTP, NATS, AMQP 등 풍부한 커넥터
 - **고가용성**: Redis 기반 체크포인트, 자동 장애 대응
 - **운영툴**: 웹 기반 파이프라인 설정, 모니터링, 스케줄링
@@ -45,10 +45,10 @@ Conduix는 [Bento](https://github.com/warpstreamlabs/bento)(MIT 라이선스)의
 ┌─────────────────────────────────────────────────────────────┐
 │                   Pipeline Agent Cluster                     │
 │  ┌───────────────────────────────────────────────────┐      │
-│  │  Agent (Actor System + Bento Connectors)          │      │
+│  │  Agent (Bento Connectors + 병렬 처리)              │      │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐           │      │
-│  │  │ Source  │→ │Transform│→ │  Sink   │           │      │
-│  │  │ (Kafka) │  │(Bloblang│  │  (ES)   │           │      │
+│  │  │ Source  │→ │  Stage  │→ │ Output  │           │      │
+│  │  │ (Kafka) │  │ (병렬)  │  │  (ES)   │           │      │
 │  │  └─────────┘  └─────────┘  └─────────┘           │      │
 │  └───────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────┘
@@ -65,10 +65,11 @@ Conduix는 **Unix Pipe 스타일의 선형 파이프라인**과 **DataType 기�
 │                           파이프라인 설계 철학                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                               │
-│  1. 단일 파이프라인 = Unix Pipe (선형 체이닝)                                │
-│     ┌────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌──────┐    │
-│     │ Source │───→│ Stage 1 │───→│ Stage 2 │───→│ Stage 3 │───→│ Sink │    │
-│     └────────┘    └─────────┘    └─────────┘    └─────────┘    └──────┘    │
+│  1. 단일 파이프라인 = Input → Stage → Output                                │
+│     ┌────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌────────┐ │
+│     │ Input  │───→│ Stage 1 │───→│ Stage 2 │───→│ Stage N │───→│ Output │ │
+│     └────────┘    └─────────┘    └─────────┘    └─────────┘    └────────┘ │
+│     (데이터 입력)  (공통 변환, 병렬 처리)                        (저장/전송)  │
 │                                                                               │
 │  2. 다중 파이프라인 = DataType 종속성 DAG                                    │
 │     ┌──────────────┐                                                         │
@@ -88,19 +89,112 @@ Conduix는 **Unix Pipe 스타일의 선형 파이프라인**과 **DataType 기�
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Stage: 추상화 단위
+### Stage와 Output: 핵심 추상화
 
-**Stage**는 `input → output` 인터페이스를 따르는 핵심 추상화 단위입니다. 구현에 따라 역할이 결정됩니다:
+파이프라인은 **Stage**(데이터 변환/처리)와 **Output**(데이터 출력)으로 구성됩니다.
+
+#### Stage (데이터 변환/처리)
+
+Stage는 병렬로 처리되며, 데이터를 변환/필터링합니다:
 
 | Stage 타입 | 설명 | 사용 예시 |
 |------------|------|----------|
-| **FilterStage** | 조건에 따라 레코드 필터링 | 유효하지 않은 데이터 제거 |
-| **RemapStage** | 필드 변환/이름 변경 | JSON 필드 매핑 |
-| **AggregateStage** | 윈도우 기반 집계 | count, sum, average |
-| **EnrichStage** | 외부 데이터 추가 | 룩업 테이블 조인 |
-| **ElasticsearchStage** | Elasticsearch에 저장 | 문서 인덱싱 |
-| **KafkaStage** | Kafka로 전송 | 파이프라인 간 경계 |
-| **TriggerStage** | 다른 파이프라인 트리거 | 부모-자식 파이프라인 연동 |
+| **filter** | 조건에 따라 레코드 필터링 | 유효하지 않은 데이터 제거 |
+| **remap** | 필드 변환/이름 변경 | JSON 필드 매핑 |
+| **drop** | 필드 삭제 | 불필요한 필드 제거 |
+| **merge** | 여러 필드를 하나로 합치기 | 이름 필드 병합 |
+| **split** | 정규식으로 필드 분리 | 로그 파싱 |
+| **encrypt** | 필드 암호화 | 개인정보 마스킹 |
+| **dedupe** | 중복 제거 | 중복 이벤트 필터링 |
+| **cast** | 타입 변환 | 문자열→숫자 변환 |
+| **validate** | 스키마 검증 | 데이터 품질 검사 |
+| **route** | 이벤트 라우팅 | CDC 이벤트 분기 |
+
+#### Output (데이터 출력/저장)
+
+Output은 처리된 데이터를 외부 시스템으로 전송합니다:
+
+| Output 타입 | 설명 | 전송 모드 |
+|-------------|------|----------|
+| **sql** | SQL 데이터베이스 | bulk INSERT 지원 |
+| **elasticsearch** | Elasticsearch | bulk API 지원 |
+| **kafka** | Kafka | 배치 전송 지원 |
+| **mongodb** | MongoDB | bulk write 지원 |
+| **s3** | S3 | 파일 배치 업로드 |
+| **rest_api** | REST API | JSON array POST |
+| **file** | 파일 | 배치 쓰기 |
+
+#### 배치 처리 모드
+
+Stage는 항상 병렬 처리되며, Output만 전송 방식을 선택합니다:
+
+```yaml
+batch:
+  enabled: true
+  output_mode: bulk      # bulk (N개 한번에) 또는 individual (1건씩)
+  size: 100              # 배치 크기
+  workers: 20            # Stage 병렬 워커 수
+  flush_interval: 5s     # 시간 기반 플러시
+```
+
+처리 흐름:
+```
+Input → [N개 수집] → [병렬 Stage] → [결과 모음] → [Output bulk/individual]
+```
+
+#### Output별 전용 변환 (pre_stages)
+
+각 Output에 전용 변환 단계를 적용할 수 있습니다:
+
+```yaml
+pipelines:
+  - id: multi-output-pipeline
+    name: "다중 Output 예시"
+    input:
+      type: rest_api
+      name: "api-source"
+      config:
+        url: "https://api.example.com/data"
+    stages:                        # 공통 Stage (모든 Output에 적용)
+      - name: "공통 필터"
+        type: filter
+        config:
+          condition: ".status == 'active'"
+    outputs:
+      - name: "elasticsearch"
+        type: elasticsearch
+        pre_stages:                # ES 전용 변환
+          - name: "ES용 필드 매핑"
+            type: remap
+            config:
+              mappings:
+                "@timestamp": ".created_at"
+                "message": ".log_message"
+        config:
+          endpoints: ["http://es:9200"]
+          index: "logs"
+      - name: "database"
+        type: sql
+        pre_stages:                # DB 전용 변환
+          - name: "DB용 타입 변환"
+            type: cast
+            config:
+              casts: { "user_id": "int" }
+        config:
+          connection_string: "mysql://..."
+          table: "logs"
+```
+
+데이터 흐름:
+```
+Input
+  ↓
+[공통 Stage: filter]
+  ↓
+  ├──→ [pre_stages: remap] → Elasticsearch
+  │
+  └──→ [pre_stages: cast] → SQL Database
+```
 
 ### DataType 종속 관계 패턴
 
@@ -110,11 +204,11 @@ Conduix는 **Unix Pipe 스타일의 선형 파이프라인**과 **DataType 기�
 사용 사례: 게시판 수집 → 각 게시판의 게시글 수집
 
 파이프라인 A: 게시판 수집
-  API(/boards) → Transform → Elasticsearch
+  API(/boards) → Stage → Elasticsearch
   Target DataType: Board
 
 파이프라인 B: 게시글 수집
-  API(/boards/{board_id}/posts) → Transform → Elasticsearch
+  API(/boards/{board_id}/posts) → Stage → Elasticsearch
   Target DataType: Post
   Parent DataType: Board  ← 다름!
 
@@ -252,32 +346,39 @@ helm install conduix ./deploy/helm/conduix
 
 ## 파이프라인 설정 예시
 
-### Flat 구조 (Bento 호환)
+### 워크플로우 파이프라인 구조
 
 ```yaml
-version: "1.0"
-name: "log-pipeline"
-
-sources:
-  kafka_input:
-    type: kafka
-    brokers: ["kafka:9092"]
-    topics: ["logs"]
-
-transforms:
-  parse:
-    type: remap
-    inputs: ["kafka_input"]
-    source: '. = parse_json!(.message)'
-
-sinks:
-  elasticsearch:
-    type: elasticsearch
-    inputs: ["parse"]
-    endpoints: ["http://es:9200"]
+# 워크플로우 내 파이프라인 정의
+pipelines:
+  - id: "log-pipeline"
+    name: "로그 수집 파이프라인"
+    source:
+      type: kafka
+      config:
+        brokers: ["kafka:9092"]
+        topics: ["logs"]
+    stages:
+      - id: "parse"
+        type: remap
+        config:
+          mappings:
+            message: ".raw_message"
+            timestamp: ".@timestamp"
+    outputs:
+      - id: "es-output"
+        type: elasticsearch
+        config:
+          addresses: ["http://es:9200"]
+          index: "logs"
+    batch:
+      enabled: true
+      output_mode: bulk
+      size: 100
+      workers: 20
 ```
 
-### 계층적 Actor 구조
+### Flat 구조 (Bento 호환, 레거시)
 
 ```yaml
 version: "1.0"
@@ -433,11 +534,11 @@ local_cache_max_size: 1000
 
 ### Kafka 장애 시나리오
 
-Kafka는 Source(데이터 수집)와 Sink(데이터 전송)에서 사용됩니다.
+Kafka는 Source(데이터 수집)와 Output(데이터 전송)에서 사용됩니다.
 
 #### 장애 유형별 대응
 
-| 시나리오 | Source Actor 동작 | Sink Actor 동작 | 데이터 보장 |
+| 시나리오 | Source Actor 동작 | Output Actor 동작 | 데이터 보장 |
 |---------|------------------|-----------------|------------|
 | **Broker 일시 단절** | 자동 재연결, Consumer 재시작 | 버퍼링 후 재전송 | At-least-once |
 | **Broker 다운** | Supervisor가 Actor 재시작 | 로컬 버퍼에 저장 | At-least-once |
@@ -489,7 +590,7 @@ Kafka는 Source(데이터 수집)와 Sink(데이터 전송)에서 사용됩니�
 │                                                                              │
 │  [정상 운영 시]                                                              │
 │                                                                              │
-│  Kafka ──▶ Source Actor ──▶ Transform ──▶ Sink                             │
+│  Kafka ──▶ Source Actor ──▶ Stage ──▶ Output                             │
 │    │              │                          │                               │
 │    │              │ 주기적 체크포인트 (10초)   │                               │
 │    │              ▼                          ▼                               │
@@ -525,14 +626,14 @@ Kafka는 Source(데이터 수집)와 Sink(데이터 전송)에서 사용됩니�
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Kafka Sink 버퍼링 전략
+#### Kafka Output 버퍼링 전략
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Kafka Sink 버퍼링 및 재시도                              │
+│                      Kafka Output 버퍼링 및 재시도                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  Transform ──▶ Sink Actor ──▶ Buffer ──▶ Kafka Producer                    │
+│  Stage ──▶ Output Actor ──▶ Buffer ──▶ Kafka Producer                    │
 │                    │            │              │                             │
 │                    │            │              │ 전송 실패                    │
 │                    │            │              ▼                             │

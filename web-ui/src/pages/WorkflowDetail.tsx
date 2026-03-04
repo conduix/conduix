@@ -558,12 +558,16 @@ export default function WorkflowDetailPage() {
         targetDataTypeId = pipelineForm.target_data_type_id || null
       }
 
+      // input/source 설정 (하위 호환성 유지)
+      const inputSource = editingPipeline?.input || editingPipeline?.source || { type: 'rest_api', name: pipelineForm.name, config: {} }
+
       const pipelineData: WorkflowPipeline = {
         id: editingPipeline?.id || crypto.randomUUID(),
         name: pipelineForm.name,
         description: pipelineForm.description,
         priority: pipelineForm.priority,
-        source: editingPipeline?.source || { type: 'rest_api', name: pipelineForm.name, config: {} },
+        input: inputSource,    // 권장 필드
+        source: inputSource,   // 하위 호환성
         parent_pipeline_id: pipelineForm.parent_pipeline_id || null,
         target_data_type_id: targetDataTypeId,
         expansion_mode: pipelineForm.expansion_mode || 'none',

@@ -4,13 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Conduix is an Actor Model-based scalable data pipeline platform that combines Bento's verified connectors with Apache Flink-style Actor Model. The project consists of five main modules:
+Conduix is a scalable data pipeline platform that combines Bento's verified connectors with parallel processing. The project consists of five main modules:
 
 - **control-plane**: Operations backend (Go + Gin + GORM + MySQL)
-- **pipeline-core**: Pipeline execution engine (Go + Actor Model + Bento)
+- **pipeline-core**: Pipeline execution engine (Go + Bento connectors + parallel processing)
 - **pipeline-agent**: Pipeline execution agent (Go + Gin)
-- **web-ui**: Frontend (React 18 + TypeScript + Vite + Ant Design)
+- **web-ui**: Frontend (React 18 + TypeScript + Vite + MUI)
 - **shared**: Shared types and utilities
+
+### Pipeline Architecture
+```
+Input → [공통 Stage] → [Output별 PreStages] → Output
+         (병렬 처리)    (Output 전용 변환)     (bulk/individual)
+```
+
+- **Input**: 데이터 소스 (Kafka, REST API, SQL 등)
+- **Stage**: 공통 데이터 변환/처리 (filter, remap 등)
+- **PreStages**: Output별 전용 변환 (각 Output마다 다른 변환 적용 가능)
+- **Output**: 데이터 출력 대상 (Elasticsearch, S3, Kafka 등)
 
 ### Prerequisites
 
@@ -118,9 +129,9 @@ control-plane/          # Depends on: shared, pipeline-core
 ### Key Packages
 
 **pipeline-core/pkg/**
-- `actor/`: Actor system with Supervisor pattern (one_for_one, one_for_all strategies)
-- `source/`: Data sources (Kafka, HTTP, file, CDC, Kubernetes logs)
-- `sink/`: Data sinks (Elasticsearch, S3, Kafka)
+- `source/`: Data inputs (Kafka, REST API, SQL, CDC, file, Kubernetes logs)
+- `sink/`: Data outputs (Elasticsearch, S3, Kafka, SQL, MongoDB, REST API)
+- `executor/`: Pipeline executor with parallel Stage processing and PreStages support
 - `stream/`: Stream processing with Bento integration
 - `config/`: YAML pipeline config parsing
 - `checkpoint/`: State checkpoint management
@@ -136,34 +147,49 @@ control-plane/          # Depends on: shared, pipeline-core
 - `store/`: Zustand state management
 - `i18n/`: Internationalization (en, ko)
 
-### Pipeline Configuration Types
+### Pipeline Configuration
 
-**Flat structure** (Bento compatible):
+**Workflow Pipeline structure**:
 ```yaml
-version: "1.0"
-sources:
-  kafka_input:
-    type: kafka
-transforms:
-  parse:
-    type: remap
-sinks:
-  elasticsearch:
-    type: elasticsearch
+pipelines:
+  - id: "my-pipeline"
+    name: "My Pipeline"
+    input:                     # 데이터 소스 (source도 호환)
+      type: kafka
+      config:
+        brokers: ["localhost:9092"]
+        topics: ["events"]
+    stages:                    # 공통 데이터 변환/처리 (병렬)
+      - type: filter
+        config: { condition: ".status == 'active'" }
+      - type: remap
+        config: { mappings: { "name": ".full_name" } }
+    outputs:                   # 데이터 출력 (bulk/individual)
+      - name: "elasticsearch"
+        type: elasticsearch
+        pre_stages:            # Output별 전용 변환
+          - type: remap
+            config: { mappings: { "@timestamp": ".created_at" } }
+        config: { addresses: ["http://es:9200"], index: "events" }
+      - name: "s3-backup"
+        type: s3
+        config: { bucket: "backup", path: "events/" }
+    batch:                     # 배치 처리 설정
+      enabled: true
+      output_mode: bulk        # bulk 또는 individual
+      size: 100
+      workers: 20
 ```
 
-**Hierarchical structure** (Actor model):
-```yaml
-version: "1.0"
-type: actor
-pipeline:
-  name: "RootSupervisor"
-  supervision:
-    strategy: one_for_one
-  children:
-    - name: "SourceSupervisor"
-      type: supervisor
-```
+**하위 호환성**: `source` 필드도 `input`과 동일하게 동작합니다.
+
+**Input Types** (데이터 소스): kafka, rest_api, sql, cdc, file, k8s_logs
+
+**Stage Types** (데이터 변환): filter, remap, drop, merge, split, encrypt, dedupe, default, cast, timestamp, throttle, validate, contract, route, delete
+
+**Output Types** (데이터 출력): sql, elasticsearch, kafka, mongodb, s3, rest_api, file
+
+**PreStages**: Output의 `pre_stages` 필드에 Stage 배열을 지정하여 Output별로 다른 변환을 적용할 수 있습니다.
 
 ## Environment Variables
 

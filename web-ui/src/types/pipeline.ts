@@ -62,13 +62,18 @@ export type PaginationConfig =
   | NextOffsetConfig
   | PageWithCountConfig
 
-// 소스 설정
-export interface WorkflowSource {
+// Input 설정 (데이터 입력 소스)
+// Input 타입: kafka, cdc, rest_api, sql, file, sql_event
+export interface WorkflowInput {
   type: string // kafka, cdc, rest_api, sql, file, sql_event
   name: string
   config: Record<string, unknown>
-  rate_limit?: RateLimitConfig  // 소스 레벨 rate limiting
+  rate_limit?: RateLimitConfig  // 입력 레벨 rate limiting
 }
+
+// WorkflowSource는 WorkflowInput의 별칭 (하위 호환성)
+// @deprecated WorkflowInput을 사용하세요
+export type WorkflowSource = WorkflowInput
 
 // 변환 단계 (레거시, Stage로 대체)
 export interface TransformStep {
@@ -86,10 +91,8 @@ export interface TargetModelMapping {
   discriminator_value?: string  // discriminator_field 값 (라우팅용)
 }
 
-// Stage 타입 정의
-// 변환 Stage와 출력 Stage 모두 포함 (통합 추상화)
+// Stage 타입 정의 (데이터 변환/처리)
 export type StageType =
-  // 변환 Stage
   | 'filter'    // 조건 필터링
   | 'remap'     // 필드 이름 변경
   | 'drop'      // 필드 삭제
@@ -102,22 +105,35 @@ export type StageType =
   | 'timestamp' // 타임스탬프 처리
   | 'throttle'  // 처리량 제한
   | 'validate'  // 스키마 검증
+  | 'contract'  // Data Contract 검증 (비즈니스 규칙)
   | 'route'     // 이벤트 라우팅 (CDC용)
   | 'delete'    // 삭제 처리 (CDC용)
-  // Output Stage (출력)
-  | 'sql'           // SQL 데이터베이스 출력
-  | 'elasticsearch' // Elasticsearch 출력
-  | 'kafka'         // Kafka 출력
-  | 'mongodb'       // MongoDB 출력
-  | 's3'            // S3 출력
-  | 'rest_api'      // REST API 출력
-  | 'file'          // 파일 출력
 
-// Stage 인터페이스
+// Output 타입 정의 (데이터 출력/저장)
+export type OutputType =
+  | 'sql'           // SQL 데이터베이스
+  | 'elasticsearch' // Elasticsearch
+  | 'kafka'         // Kafka
+  | 'mongodb'       // MongoDB
+  | 's3'            // S3
+  | 'rest_api'      // REST API
+  | 'file'          // 파일
+
+// Stage 인터페이스 (레거시 호환: Output도 stages 배열에 포함될 수 있음)
 export interface Stage {
   id: string           // 프론트엔드용 고유 ID
   name: string
-  type: StageType
+  type: StageType | OutputType  // 레거시 호환: Output 타입도 허용
+  config: Record<string, unknown>
+}
+
+// Output 인터페이스
+// Output 전용 변환 단계(pre_stages)를 포함할 수 있음
+export interface Output {
+  id: string                     // 프론트엔드용 고유 ID
+  name: string
+  type: OutputType
+  pre_stages?: Stage[]           // Output 전용 변환 단계 (공통 Stage 이후 적용)
   config: Record<string, unknown>
 }
 
@@ -223,16 +239,31 @@ export interface DeleteStageConfig {
   }
 }
 
+// Output 처리 모드
+export type OutputMode = 'bulk' | 'individual'
+
+// 배치 처리 설정
+// Stage는 항상 병렬 처리, Output만 bulk/individual 선택
+export interface PipelineBatchConfig {
+  enabled: boolean
+  output_mode?: OutputMode      // Output 처리 모드: bulk (배치 전송) 또는 individual (개별 전송)
+  size?: number                 // 배치 크기 - 한 번에 처리할 레코드 수 (기본: 100)
+  workers?: number              // Stage 병렬 워커 수 (기본: size와 동일, 최대 100)
+  flush_interval?: string       // 시간 기반 플러시 주기 (기본: 5s)
+}
+
 // 워크플로우 내 파이프라인 정의
+// 데이터 흐름: Input → [공통 Stage] → [Output별 PreStages] → Output
 export interface WorkflowPipeline {
   id: string
   name: string
   description?: string
   priority: number
   depends_on?: string[]
-  source: WorkflowSource
-  transforms?: TransformStep[]  // 레거시
-  stages?: Stage[]              // Stage 배열 (변환 + 출력 모두 포함)
+  input?: WorkflowInput           // 데이터 입력 소스 (권장)
+  transforms?: TransformStep[]    // 레거시
+  stages?: Stage[]                // 공통 데이터 변환/처리 단계
+  outputs?: Output[]              // 데이터 출력 대상 (각각 pre_stages 포함 가능)
   weight?: number
 
   // 실시간 파이프라인 모드 (realtime workflow에서만 사용)
@@ -247,6 +278,32 @@ export interface WorkflowPipeline {
   // 실시간 파이프라인 Target Model 필드
   target_models?: TargetModelMapping[]   // 다중 Target Model (Realtime용)
   discriminator_field?: string           // 모델 구분 필드 (예: "_table")
+
+  // 배치 처리 설정 (Batch 워크플로우에서만 사용)
+  batch?: PipelineBatchConfig
+
+  // @deprecated source는 input으로 대체됨 (하위 호환성)
+  source?: WorkflowSource
+}
+
+// 헬퍼 함수: Input 또는 Source 반환 (하위 호환성)
+export function getInput(pipeline: WorkflowPipeline): WorkflowInput {
+  // input이 있으면 우선 사용
+  if (pipeline.input && pipeline.input.type) {
+    return pipeline.input
+  }
+  // source가 있으면 source 반환 (하위 호환성)
+  if (pipeline.source && pipeline.source.type) {
+    return pipeline.source
+  }
+  // 둘 다 없으면 빈 Input 반환
+  return { type: '', name: '', config: {} }
+}
+
+// 헬퍼 함수: Input 설정 (source도 함께 설정하여 하위 호환성 유지)
+export function setInput(pipeline: WorkflowPipeline, input: WorkflowInput): void {
+  pipeline.input = input
+  pipeline.source = input  // 하위 호환성
 }
 
 // 워크플로우

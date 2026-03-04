@@ -19,6 +19,73 @@ export interface JobConfig {
   image_pull_policy?: string
 }
 
+// ClusterAgentConfig 클러스터별 Agent 배포 설정
+export interface ClusterAgentConfig {
+  node_selector?: Record<string, string>
+  tolerations?: Toleration[]
+  affinity?: Affinity
+  resources?: ResourceRequirements
+  labels?: Record<string, string>
+  env?: Record<string, string>
+}
+
+export interface Toleration {
+  key?: string
+  operator?: 'Exists' | 'Equal'
+  value?: string
+  effect?: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute'
+  toleration_seconds?: number
+}
+
+export interface Affinity {
+  node_affinity?: NodeAffinity
+  pod_anti_affinity?: PodAntiAffinity
+}
+
+export interface NodeAffinity {
+  required?: NodeSelector
+  preferred?: WeightedNodeSelector[]
+}
+
+export interface NodeSelector {
+  terms?: NodeSelectorTerm[]
+}
+
+export interface NodeSelectorTerm {
+  match_expressions?: NodeSelectorRequirement[]
+}
+
+export interface NodeSelectorRequirement {
+  key: string
+  operator: 'In' | 'NotIn' | 'Exists' | 'DoesNotExist'
+  values?: string[]
+}
+
+export interface WeightedNodeSelector {
+  weight: number
+  preference: NodeSelectorTerm
+}
+
+export interface PodAntiAffinity {
+  preferred?: WeightedPodAffinityTerm[]
+}
+
+export interface WeightedPodAffinityTerm {
+  weight: number
+  topology_key: string
+  label_selector?: string
+}
+
+export interface ResourceRequirements {
+  requests?: ResourceList
+  limits?: ResourceList
+}
+
+export interface ResourceList {
+  cpu?: string
+  memory?: string
+}
+
 class ApiService {
   private client: AxiosInstance
 
@@ -230,6 +297,24 @@ class ApiService {
     return response.data
   }
 
+  async scaleClusterAgents(id: string, desiredAgents: number) {
+    const response = await this.client.post(`/clusters/${id}/scale`, { desired_agents: desiredAgents })
+    return response.data
+  }
+
+  async getClusterAgentConfig(id: string) {
+    const response = await this.client.get(`/clusters/${id}/agent-config`)
+    return response.data
+  }
+
+  async updateClusterAgentConfig(id: string, data: {
+    desired_agents?: number
+    agent_config?: ClusterAgentConfig
+  }) {
+    const response = await this.client.put(`/clusters/${id}/agent-config`, data)
+    return response.data
+  }
+
   // 데이터 유형
   async getDataTypes(params?: { project_id?: string; category?: string }) {
     const response = await this.client.get('/data-types', { params })
@@ -421,7 +506,19 @@ class ApiService {
       description?: string
       priority: number
       depends_on?: string[]
-      source: {
+      input?: {
+        type: string
+        name: string
+        config: Record<string, unknown>
+        rate_limit?: {
+          enabled: boolean
+          rate: number
+          interval: string
+          burst?: number
+          strategy?: string
+        }
+      }
+      source?: {  // 하위 호환성
         type: string
         name: string
         config: Record<string, unknown>
@@ -435,6 +532,7 @@ class ApiService {
       }
       transforms?: Array<{ name: string; type: string; config: Record<string, unknown> }>
       stages?: Array<{ id: string; name: string; type: string; config: Record<string, unknown> }>
+      outputs?: Array<{ id: string; name: string; type: string; pre_stages?: Array<{ id: string; name: string; type: string; config: Record<string, unknown> }>; config: Record<string, unknown> }>
       weight?: number
       parent_pipeline_id?: string | null
       target_data_type_id?: string | null
@@ -605,6 +703,32 @@ class ApiService {
       ? `/pipelines/${pipelineId}/checkpoints?partition_key=${encodeURIComponent(partitionKey)}`
       : `/pipelines/${pipelineId}/checkpoints`
     const response = await this.client.delete(url)
+    return response.data
+  }
+
+  // Stage Schema (GUI 자동 생성용)
+  async getStageSchemas() {
+    const response = await this.client.get('/stages/schemas')
+    return response.data
+  }
+
+  async getStageSchema(type: string) {
+    const response = await this.client.get(`/stages/schemas/${type}`)
+    return response.data
+  }
+
+  async getStageCategories() {
+    const response = await this.client.get('/stages/categories')
+    return response.data
+  }
+
+  async getStageSchemasByCategory(category: string) {
+    const response = await this.client.get(`/stages/categories/${category}/schemas`)
+    return response.data
+  }
+
+  async getStageFieldTypes() {
+    const response = await this.client.get('/stages/field-types')
     return response.data
   }
 }

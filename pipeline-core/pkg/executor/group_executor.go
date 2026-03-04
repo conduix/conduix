@@ -392,8 +392,8 @@ func (e *GroupExecutor) runDAG(ctx context.Context) error {
 	return nil
 }
 
-// isSinkStageType sink 역할을 하는 Stage 타입인지 확인
-func isSinkStageType(stageType string) bool {
+// isOutputType Output 타입인지 확인
+func isOutputType(stageType string) bool {
 	switch stageType {
 	case "sql", "elasticsearch", "kafka", "mongodb", "s3", "rest_api", "file":
 		return true
@@ -447,33 +447,71 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	// 링크 기반 동적 Kafka Sink 주입 (부모 파이프라인인 경우)
 	injectedKafkaSinks := e.injectKafkaSinksForParent(ctx, &pipeline)
 
-	// Stages에서 sink 타입 찾아서 미리 생성 및 열기
-	sinkStages := make(map[string]sink.Sink) // stage name -> sink
+	// Output Sink 및 PreStages 매핑
+	outputSinks := make(map[string]sink.Sink)       // output name -> sink
+	outputsWithSinks := make([]OutputWithSink, 0)   // Output + Sink + PreStages
+
+	// 1. Outputs 배열에서 Sink 생성 (권장 방식)
+	for _, output := range pipeline.Outputs {
+		fmt.Printf("[runPipeline] Creating output: %s (type: %s), pre_stages: %d\n",
+			output.Name, output.Type, len(output.PreStages))
+		s, err := e.createSinkFromOutput(output)
+		if err != nil {
+			result.Status = "failed"
+			result.ErrorMessage = fmt.Sprintf("failed to create output %s: %v", output.Name, err)
+			return result, err
+		}
+		if err := s.Open(ctx); err != nil {
+			result.Status = "failed"
+			result.ErrorMessage = fmt.Sprintf("failed to open output %s: %v", output.Name, err)
+			return result, err
+		}
+		outputSinks[output.Name] = s
+		outputsWithSinks = append(outputsWithSinks, OutputWithSink{
+			Output:    output,
+			Sink:      s,
+			PreStages: output.PreStages,
+		})
+		fmt.Printf("[runPipeline] Output opened: %s (type: %s)\n", output.Name, output.Type)
+	}
+
+	// 2. Stages 배열에서 Output 타입 찾기 (레거시 호환)
 	for _, stage := range pipeline.Stages {
-		if isSinkStageType(stage.Type) {
-			fmt.Printf("[runPipeline] Creating sink stage: %s (type: %s), config: %+v\n", stage.Name, stage.Type, stage.Config)
+		if isOutputType(stage.Type) {
+			fmt.Printf("[runPipeline] Creating output from stages (legacy): %s (type: %s)\n", stage.Name, stage.Type)
 			s, err := e.createSinkFromStage(stage)
 			if err != nil {
 				result.Status = "failed"
-				result.ErrorMessage = fmt.Sprintf("failed to create sink stage %s: %v", stage.Name, err)
+				result.ErrorMessage = fmt.Sprintf("failed to create output %s: %v", stage.Name, err)
 				return result, err
 			}
 			if err := s.Open(ctx); err != nil {
 				result.Status = "failed"
-				result.ErrorMessage = fmt.Sprintf("failed to open sink stage %s: %v", stage.Name, err)
+				result.ErrorMessage = fmt.Sprintf("failed to open output %s: %v", stage.Name, err)
 				return result, err
 			}
-			sinkStages[stage.Name] = s
-			fmt.Printf("[runPipeline] Sink stage opened: %s (type: %s)\n", stage.Name, stage.Type)
+			outputSinks[stage.Name] = s
+			// Stage 기반 Output은 PreStages 없음
+			outputsWithSinks = append(outputsWithSinks, OutputWithSink{
+				Output: types.Output{
+					ID:     stage.ID,
+					Name:   stage.Name,
+					Type:   stage.Type,
+					Config: stage.Config,
+				},
+				Sink:      s,
+				PreStages: nil,
+			})
+			fmt.Printf("[runPipeline] Output opened (legacy): %s (type: %s)\n", stage.Name, stage.Type)
 		}
 	}
 
-	// 주입된 Kafka Sink도 sinkStages에 추가
-	maps.Copy(sinkStages, injectedKafkaSinks)
+	// 주입된 Kafka Sink도 outputSinks에 추가
+	maps.Copy(outputSinks, injectedKafkaSinks)
 
 	// 싱크 정리 defer
 	defer func() {
-		for name, s := range sinkStages {
+		for name, s := range outputSinks {
 			if err := s.Flush(ctx); err != nil {
 				fmt.Printf("[runPipeline] Flush error for %s: %v\n", name, err)
 			}
@@ -483,12 +521,15 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}()
 
-	// 링크 기반 동적 Kafka Source 주입 (자식 파이프라인인 경우)
-	sourceConfig := e.injectKafkaSourceForChild(&pipeline)
+	// outputsWithSinks를 사용하여 PreStages 처리
+	_ = outputsWithSinks // TODO: 레코드 처리 시 PreStages 적용
 
-	// 소스 생성 및 실행
-	fmt.Printf("[runPipeline] Creating source: %s (type: %s)\n", sourceConfig.Name, sourceConfig.Type)
-	records, errs, src, err := e.createAndRunSource(ctx, pipeline.ID, sourceConfig)
+	// 링크 기반 동적 Kafka Input 주입 (자식 파이프라인인 경우)
+	inputConfig := e.injectKafkaInputForChild(&pipeline)
+
+	// Input 소스 생성 및 실행
+	fmt.Printf("[runPipeline] Creating input source: %s (type: %s)\n", inputConfig.Name, inputConfig.Type)
+	records, errs, src, err := e.createAndRunSource(ctx, pipeline.ID, inputConfig)
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = err.Error()
@@ -539,10 +580,11 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}
 
-	// 소스 스키마 검증기 생성 (JSONSchema가 있는 경우)
+	// 입력 스키마 검증기 생성 (JSONSchema가 있는 경우)
 	var sourceValidator *validator.SchemaValidator
-	if pipeline.Source.JSONSchema != "" {
-		sourceValidator, err = validator.NewSchemaValidator(pipeline.Source.JSONSchema)
+	input := pipeline.GetInput()
+	if input.JSONSchema != "" {
+		sourceValidator, err = validator.NewSchemaValidator(input.JSONSchema)
 		if err != nil {
 			fmt.Printf("[runPipeline] Source schema validator creation failed: %v\n", err)
 			// 스키마 파싱 실패는 경고로만 처리, 검증 없이 계속 진행
@@ -552,7 +594,19 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}
 
-	// 레코드 처리
+	// 배치 처리 모드: Stage 병렬 처리 + Output bulk/individual 선택
+	if pipeline.Batch != nil && pipeline.Batch.Enabled {
+		outputMode := pipeline.Batch.OutputMode
+		if outputMode == "" {
+			outputMode = types.OutputModeBulk // 기본값: bulk 모드
+		}
+		fmt.Printf("[runPipeline] Using batch mode for pipeline %s (output_mode=%s, size=%d, workers=%d)\n",
+			pipeline.Name, outputMode, pipeline.Batch.Size, pipeline.Batch.Workers)
+		return e.runPipelineBatch(ctx, pipeline, records, errs, outputSinks,
+			statsCollector, sampleBuffer, sourceValidator, saveCheckpoints)
+	}
+
+	// 기존 레코드 단위 처리 모드
 	for {
 		select {
 		case <-ctx.Done():
@@ -607,28 +661,16 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				}
 			}
 
-			// Stage 적용 (필터별 처리량 추적)
+			// 1. 공통 Stage 적용 (Output 타입 제외)
 			data := record.Data
 			var filtered bool
 			for _, stage := range pipeline.Stages {
-				statsCollector.RecordTransformInput(stage.Name, stage.Type)
-
-				// Sink stage인 경우: 데이터를 sink로 전송하고 통과
-				if isSinkStageType(stage.Type) {
-					if s, ok := sinkStages[stage.Name]; ok {
-						if err := e.sendToSink(ctx, data, s); err != nil {
-							statsCollector.RecordProcessingError()
-							errMsg := fmt.Sprintf("[%s] %v", stage.Name, err)
-							fmt.Printf("[runPipeline] Sink stage %s write error: %v\n", stage.Name, err)
-							addSinkError(errMsg)
-						} else {
-							statsCollector.RecordProcessed()
-						}
-					}
-					statsCollector.RecordTransformOutput(stage.Name)
-					sampleBuffer.AddSample(stage.Name, data) // 샘플 저장
-					continue                                 // sink stage는 데이터를 변환하지 않음, 다음 stage로
+				// Output 타입은 공통 Stage에서 제외 (레거시 호환: Outputs 배열로 이동)
+				if isOutputType(stage.Type) {
+					continue
 				}
+
+				statsCollector.RecordTransformInput(stage.Name, stage.Type)
 
 				// 일반 stage: 데이터 변환
 				transformed, err := e.applyStage(data, stage)
@@ -652,6 +694,49 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			// 필터링된 레코드는 처리 완료
 			if filtered {
 				continue
+			}
+
+			// 2. 각 Output에 대해 PreStages 적용 후 전송
+			for _, ows := range outputsWithSinks {
+				outputData := data // 각 Output은 공통 Stage 결과를 복사하여 시작
+
+				// PreStages 적용
+				preFiltered := false
+				for _, preStage := range ows.PreStages {
+					statsCollector.RecordTransformInput(fmt.Sprintf("%s.%s", ows.Output.Name, preStage.Name), preStage.Type)
+
+					transformed, err := e.applyStage(outputData, preStage)
+					if err != nil {
+						statsCollector.RecordTransformError(fmt.Sprintf("%s.%s", ows.Output.Name, preStage.Name))
+						preFiltered = true
+						break
+					}
+
+					if transformed == nil {
+						preFiltered = true
+						break
+					}
+
+					statsCollector.RecordTransformOutput(fmt.Sprintf("%s.%s", ows.Output.Name, preStage.Name))
+					sampleBuffer.AddSample(fmt.Sprintf("%s.%s", ows.Output.Name, preStage.Name), transformed)
+					outputData = transformed
+				}
+
+				// PreStages에서 필터링된 경우 이 Output 건너뛰기
+				if preFiltered {
+					continue
+				}
+
+				// Output으로 전송
+				if err := e.sendToSink(ctx, outputData, ows.Sink); err != nil {
+					statsCollector.RecordProcessingError()
+					errMsg := fmt.Sprintf("[%s] %v", ows.Output.Name, err)
+					fmt.Printf("[runPipeline] Output %s write error: %v\n", ows.Output.Name, err)
+					addSinkError(errMsg)
+				} else {
+					statsCollector.RecordProcessed()
+				}
+				sampleBuffer.AddSample(ows.Output.Name, outputData)
 			}
 
 		case err := <-errs:
@@ -1093,9 +1178,74 @@ func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (sink.Sink, error
 				}
 			}
 		}
+
+		// 배치 설정
+		if batchEnabled, ok := stage.Config["batch_enabled"].(bool); ok {
+			cfg.BatchEnabled = batchEnabled
+		}
+		if batchSizeHTTP, ok := stage.Config["batch_size_http"].(float64); ok {
+			cfg.BatchSizeHTTP = int(batchSizeHTTP)
+		}
+		if batchDelimiter, ok := stage.Config["batch_delimiter"].(string); ok {
+			cfg.BatchDelimiter = batchDelimiter
+		}
+		// flush_interval은 BatchingWrapper에서 사용
+		var flushInterval time.Duration
+		if flushIntervalStr, ok := stage.Config["flush_interval"].(string); ok {
+			if parsed, err := time.ParseDuration(flushIntervalStr); err == nil {
+				flushInterval = parsed
+			}
+		}
+
+		// Sink 생성
+		s, err := sink.NewSink(cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		// 배치가 활성화된 경우 BatchingWrapper로 감싸기
+		if cfg.BatchEnabled {
+			batchConfig := sink.BatchConfig{
+				Enabled:       true,
+				Size:          cfg.BatchSizeHTTP,
+				FlushInterval: flushInterval,
+				Format:        "ndjson",
+			}
+			if cfg.BatchDelimiter != "\n" && cfg.BatchDelimiter != "" {
+				batchConfig.Format = "array"
+			}
+			if batchConfig.Size <= 0 {
+				batchConfig.Size = 100
+			}
+			if batchConfig.FlushInterval <= 0 {
+				batchConfig.FlushInterval = 5 * time.Second
+			}
+			return sink.WrapWithBatching(s, batchConfig), nil
+		}
+
+		return s, nil
 	}
 
 	return sink.NewSink(cfg)
+}
+
+// createSinkFromOutput Output에서 Sink 생성
+func (e *GroupExecutor) createSinkFromOutput(output types.Output) (sink.Sink, error) {
+	// Output을 Stage로 변환하여 기존 로직 재사용
+	stage := types.Stage{
+		ID:     output.ID,
+		Name:   output.Name,
+		Type:   output.Type,
+		Config: output.Config,
+	}
+	return e.createSinkFromStage(stage)
+}
+
+// OutputWithSink Output과 해당 Sink, PreStages를 묶는 구조체
+type OutputWithSink struct {
+	Output    types.Output
+	Sink      sink.Sink
+	PreStages []types.Stage
 }
 
 // Stop 그룹 실행 중지
@@ -1354,12 +1504,12 @@ func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline 
 	return injectedSinks
 }
 
-// injectKafkaSourceForChild 자식 파이프라인에 Kafka Source 주입
-// 부모가 있는 경우 원래 소스를 Kafka Source로 교체
-func (e *GroupExecutor) injectKafkaSourceForChild(pipeline *types.GroupedPipeline) types.GroupedSource {
-	// 링크가 없으면 원래 소스 반환
+// injectKafkaInputForChild 자식 파이프라인에 Kafka Input 주입
+// 부모가 있는 경우 원래 Input을 Kafka Input으로 교체
+func (e *GroupExecutor) injectKafkaInputForChild(pipeline *types.GroupedPipeline) types.WorkflowInput {
+	// 링크가 없으면 원래 Input 반환
 	if e.linkClient == nil || len(e.pipelineLinks) == 0 {
-		return pipeline.Source
+		return pipeline.GetInput()
 	}
 
 	// 이 파이프라인이 자식인지 확인
@@ -1368,23 +1518,23 @@ func (e *GroupExecutor) injectKafkaSourceForChild(pipeline *types.GroupedPipelin
 	e.linkMu.RUnlock()
 
 	if !hasParents || len(parentLinks) == 0 {
-		// 부모가 없으면 원래 소스 반환
-		return pipeline.Source
+		// 부모가 없으면 원래 Input 반환
+		return pipeline.GetInput()
 	}
 
 	// 첫 번째 부모 링크 사용 (여러 부모가 있을 경우 첫 번째 사용)
 	l := parentLinks[0]
 
-	fmt.Printf("[injectKafkaSourceForChild] Pipeline %s is a child, replacing source with Kafka source (topic: %s)\n",
+	fmt.Printf("[injectKafkaInputForChild] Pipeline %s is a child, replacing input with Kafka input (topic: %s)\n",
 		pipeline.ID, l.KafkaTopic)
 
 	// Kafka brokers 환경변수에서 동적으로 가져오기
 	brokers := link.GetKafkaBrokers()
 
-	// Kafka Source 설정 생성
-	kafkaSourceConfig := types.GroupedSource{
+	// Kafka Input 설정 생성
+	kafkaInputConfig := types.WorkflowInput{
 		Type: "kafka",
-		Name: fmt.Sprintf("kafka_link_source_%s", l.ParentPipelineID[:8]),
+		Name: fmt.Sprintf("kafka_link_input_%s", l.ParentPipelineID[:8]),
 		Config: map[string]any{
 			"brokers":        brokers,
 			"topics":         []string{l.KafkaTopic},
@@ -1393,5 +1543,274 @@ func (e *GroupExecutor) injectKafkaSourceForChild(pipeline *types.GroupedPipelin
 		},
 	}
 
-	return kafkaSourceConfig
+	return kafkaInputConfig
+}
+
+// runPipelineBatch 배치 처리 모드로 파이프라인 실행
+// Stage는 항상 병렬 처리, Output은 output_mode에 따라 bulk 또는 individual 처리
+// 구조: 소스 → [N개 수집] → [병렬 Stage] → [결과 모음] → [Output bulk/individual]
+func (e *GroupExecutor) runPipelineBatch(
+	ctx context.Context,
+	pipeline types.GroupedPipeline,
+	records <-chan source.Record,
+	errs <-chan error,
+	outputSinks map[string]sink.Sink,
+	statsCollector *StatsCollector,
+	sampleBuffer *SampleBuffer,
+	sourceValidator *validator.SchemaValidator,
+	saveCheckpoints func(),
+) (*types.PipelineExecutionResult, error) {
+	result := &types.PipelineExecutionResult{
+		PipelineID:   pipeline.ID,
+		PipelineName: pipeline.Name,
+		Status:       "running",
+		StartedAt:    time.Now(),
+	}
+
+	// 배치 설정
+	batchSize := 100
+	workers := 100
+	flushInterval := 5 * time.Second
+	outputMode := types.OutputModeBulk // 기본값: bulk
+
+	if pipeline.Batch != nil {
+		if pipeline.Batch.Size > 0 {
+			batchSize = pipeline.Batch.Size
+		}
+		if pipeline.Batch.Workers > 0 {
+			workers = pipeline.Batch.Workers
+		} else {
+			workers = batchSize // Workers 미설정 시 Size와 동일
+		}
+		if pipeline.Batch.FlushInterval != "" {
+			if parsed, err := time.ParseDuration(pipeline.Batch.FlushInterval); err == nil {
+				flushInterval = parsed
+			}
+		}
+		if pipeline.Batch.OutputMode != "" {
+			outputMode = pipeline.Batch.OutputMode
+		}
+	}
+
+	// 워커 수 제한 (최대 100)
+	if workers > 100 {
+		workers = 100
+	}
+
+	fmt.Printf("[runPipelineBatch] Starting (size=%d, workers=%d, output_mode=%s, flush=%v)\n",
+		batchSize, workers, outputMode, flushInterval)
+
+	// 에러 메시지 수집용
+	var sinkErrors []string
+	var sinkErrorsMu sync.Mutex
+	maxSinkErrors := 10
+
+	addSinkError := func(errMsg string) {
+		sinkErrorsMu.Lock()
+		defer sinkErrorsMu.Unlock()
+		if len(sinkErrors) < maxSinkErrors {
+			sinkErrors = append(sinkErrors, errMsg)
+		}
+	}
+
+	// 배치 처리 함수 - Stage 병렬 처리 후 Sink에 전송
+	processBatch := func(batch []source.Record) {
+		if len(batch) == 0 {
+			return
+		}
+
+		fmt.Printf("[runPipelineBatch] Processing %d records (parallel stage → %s output)\n", len(batch), outputMode)
+
+		// 병렬 Stage 처리를 위한 채널
+		type stageResult struct {
+			idx  int
+			data map[string]any
+			err  error
+		}
+		resultCh := make(chan stageResult, len(batch))
+
+		// 워커 풀로 Stage 병렬 처리
+		var wg sync.WaitGroup
+		semaphore := make(chan struct{}, workers) // 동시 실행 제한
+
+		for i, record := range batch {
+			wg.Add(1)
+			go func(idx int, rec source.Record) {
+				defer wg.Done()
+				semaphore <- struct{}{}        // 슬롯 확보
+				defer func() { <-semaphore }() // 슬롯 반환
+
+				// 소스 스키마 검증
+				if sourceValidator != nil {
+					validationResult := sourceValidator.Validate(rec.Data)
+					if !validationResult.Valid {
+						statsCollector.RecordProcessingError()
+						resultCh <- stageResult{idx: idx, data: nil, err: fmt.Errorf("validation failed")}
+						return
+					}
+				}
+
+				// Stage 적용 (Sink 제외)
+				data := rec.Data
+				for _, stage := range pipeline.Stages {
+					if isOutputType(stage.Type) {
+						continue // Output는 나중에 처리
+					}
+
+					statsCollector.RecordTransformInput(stage.Name, stage.Type)
+					transformedData, err := e.applyStage(data, stage)
+					if err != nil {
+						statsCollector.RecordTransformError(stage.Name)
+						resultCh <- stageResult{idx: idx, data: nil, err: err}
+						return
+					}
+					if transformedData == nil {
+						// 필터링됨
+						resultCh <- stageResult{idx: idx, data: nil, err: nil}
+						return
+					}
+					statsCollector.RecordTransformOutput(stage.Name)
+					sampleBuffer.AddSample(stage.Name, transformedData)
+					data = transformedData
+				}
+
+				resultCh <- stageResult{idx: idx, data: data, err: nil}
+			}(i, record)
+		}
+
+		// 결과 수집 고루틴
+		go func() {
+			wg.Wait()
+			close(resultCh)
+		}()
+
+		// Transform 결과 수집 (필터링되지 않은 것만)
+		transformed := make([]map[string]any, 0, len(batch))
+		for res := range resultCh {
+			if res.err == nil && res.data != nil {
+				transformed = append(transformed, res.data)
+			}
+		}
+
+		if len(transformed) == 0 {
+			fmt.Printf("[runPipelineBatch] All records filtered out\n")
+			return
+		}
+
+		fmt.Printf("[runPipelineBatch] %d records passed transform, sending to outputs (%s mode)\n", len(transformed), outputMode)
+
+		// 각 Sink에 전송
+		for stageName, s := range outputSinks {
+			if outputMode == types.OutputModeBulk {
+				// Bulk 모드: BatchSink 인터페이스 사용
+				if batchSink, ok := s.(sink.BatchSink); ok && batchSink.SupportsBatch() {
+					batchRecords := make([]source.Record, len(transformed))
+					for i, data := range transformed {
+						batchRecords[i] = source.Record{Data: data}
+					}
+					if err := batchSink.WriteBatch(ctx, batchRecords); err != nil {
+						statsCollector.RecordProcessingError()
+						addSinkError(fmt.Sprintf("[%s] batch write error: %v", stageName, err))
+					} else {
+						for range transformed {
+							statsCollector.RecordProcessed()
+						}
+					}
+				} else {
+					// Bulk 미지원 Sink는 개별 처리로 fallback
+					for _, data := range transformed {
+						if err := e.sendToSink(ctx, data, s); err != nil {
+							statsCollector.RecordProcessingError()
+							addSinkError(fmt.Sprintf("[%s] %v", stageName, err))
+						} else {
+							statsCollector.RecordProcessed()
+						}
+					}
+				}
+			} else {
+				// Individual 모드: 1건씩 개별 전송
+				for _, data := range transformed {
+					if err := e.sendToSink(ctx, data, s); err != nil {
+						statsCollector.RecordProcessingError()
+						addSinkError(fmt.Sprintf("[%s] %v", stageName, err))
+					} else {
+						statsCollector.RecordProcessed()
+					}
+				}
+			}
+			sampleBuffer.AddSample(stageName, nil)
+		}
+	}
+
+	// 배치 버퍼
+	batch := make([]source.Record, 0, batchSize)
+	flushTicker := time.NewTicker(flushInterval)
+	defer flushTicker.Stop()
+
+	// 메인 처리 루프
+	for {
+		select {
+		case <-ctx.Done():
+			processBatch(batch) // 남은 배치 처리
+
+			result.Status = "canceled"
+			result.ErrorMessage = ctx.Err().Error()
+			stats := statsCollector.GetStatistics()
+			result.RecordsRead = stats.RecordsCollected
+			result.RecordsWritten = stats.RecordsProcessed
+			result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
+			result.Statistics = stats
+			saveCheckpoints()
+			return result, ctx.Err()
+
+		case <-flushTicker.C:
+			// 시간 기반 flush
+			if len(batch) > 0 {
+				processBatch(batch)
+				batch = batch[:0]
+			}
+
+		case record, ok := <-records:
+			if !ok {
+				// 소스 종료 - 남은 배치 처리
+				processBatch(batch)
+
+				now := time.Now()
+				result.CompletedAt = now
+				result.Status = "completed"
+				stats := statsCollector.GetStatistics()
+				result.RecordsRead = stats.RecordsCollected
+				result.RecordsWritten = stats.RecordsProcessed
+				result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
+				result.Statistics = stats
+
+				sinkErrorsMu.Lock()
+				if len(sinkErrors) > 0 {
+					result.ErrorMessage = strings.Join(sinkErrors, "; ")
+				}
+				sinkErrorsMu.Unlock()
+
+				fmt.Printf("[runPipelineBatch] Completed: read=%d, written=%d, errors=%d\n",
+					result.RecordsRead, result.RecordsWritten, result.ErrorCount)
+				saveCheckpoints()
+				return result, nil
+			}
+
+			statsCollector.RecordCollected()
+			batch = append(batch, record)
+
+			// 배치가 가득 차면 처리
+			if len(batch) >= batchSize {
+				processBatch(batch)
+				batch = batch[:0]
+			}
+
+		case err := <-errs:
+			if err != nil {
+				statsCollector.RecordCollectionError()
+				result.ErrorMessage = err.Error()
+				fmt.Printf("[runPipelineBatch] Source error: %v\n", err)
+			}
+		}
+	}
 }

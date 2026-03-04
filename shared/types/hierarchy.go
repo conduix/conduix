@@ -69,21 +69,64 @@ type ParameterBinding struct {
 
 // WorkflowPipeline 워크플로우 내 파이프라인 정의
 // 개별 파이프라인은 실행 제어 불가 - 워크플로우 단위로만 제어됨
+// 데이터 흐름: Input → [공통 Stage] → [Output별 PreStages] → Output
 type WorkflowPipeline struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Priority    int            `json:"priority"`             // 실행 우선순위 (낮을수록 먼저)
-	DependsOn   []string       `json:"depends_on,omitempty"` // 의존하는 파이프라인 ID들
-	Source      WorkflowSource `json:"source"`
-	Stages      []Stage        `json:"stages,omitempty"` // 파이프라인 단계 (추상화 단위) - sink도 Stage로 처리
-	Weight      int            `json:"weight,omitempty"` // 로드밸런싱 가중치
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description,omitempty"`
+	Priority    int           `json:"priority"`             // 실행 우선순위 (낮을수록 먼저)
+	DependsOn   []string      `json:"depends_on,omitempty"` // 의존하는 파이프라인 ID들
+	Input       WorkflowInput `json:"input"`                // 데이터 입력 소스
+	Stages      []Stage       `json:"stages,omitempty"`     // 공통 데이터 변환/처리 단계
+	Outputs     []Output      `json:"outputs,omitempty"`    // 데이터 출력 대상 (각각 pre_stages 포함 가능)
+	Weight      int           `json:"weight,omitempty"`     // 로드밸런싱 가중치
+
+	// 배치 처리 설정 (파이프라인 레벨)
+	Batch *PipelineBatchConfig `json:"batch,omitempty"`
 
 	// 계층형 파이프라인 필드
 	ParentPipelineID  *string            `json:"parent_pipeline_id,omitempty"`  // 부모 파이프라인 ID
 	TargetDataTypeID  *string            `json:"target_data_type_id,omitempty"` // 확장용 DataType ID (부모 출력 조회)
 	ExpansionMode     ExpansionMode      `json:"expansion_mode,omitempty"`      // 자식 파이프라인 확장 모드
 	ParameterBindings []ParameterBinding `json:"parameter_bindings,omitempty"`  // 부모→자식 파라미터 매핑
+
+	// Deprecated: Source는 Input으로 대체됨 (하위 호환성)
+	Source *WorkflowInput `json:"source,omitempty"`
+}
+
+// GetInput Input을 반환 (하위 호환성: Source가 설정된 경우 Source 반환)
+func (p *WorkflowPipeline) GetInput() WorkflowInput {
+	// Source가 설정되어 있으면 (하위 호환성) Source 반환
+	if p.Source != nil && p.Source.Type != "" {
+		return *p.Source
+	}
+	return p.Input
+}
+
+// SetInput Input 설정 (Source도 함께 설정하여 하위 호환성 유지)
+func (p *WorkflowPipeline) SetInput(input WorkflowInput) {
+	p.Input = input
+	p.Source = &input // 하위 호환성
+}
+
+// OutputMode Output 처리 모드
+type OutputMode string
+
+const (
+	// OutputModeBulk Bulk 처리 모드 - 배치 단위로 한 번에 전송 (SQL bulk INSERT, JSON array POST)
+	OutputModeBulk OutputMode = "bulk"
+	// OutputModeIndividual 개별 처리 모드 - 1건씩 전송 (bulk 미지원 Output용)
+	OutputModeIndividual OutputMode = "individual"
+)
+
+// PipelineBatchConfig 파이프라인 레벨 배치 처리 설정
+// Stage는 항상 병렬 처리, Output만 bulk/individual 선택
+type PipelineBatchConfig struct {
+	Enabled       bool       `json:"enabled"`                    // 배치 모드 활성화
+	OutputMode    OutputMode `json:"output_mode,omitempty"`      // Output 처리 모드: bulk (배치 전송) 또는 individual (개별 전송)
+	Size          int        `json:"size,omitempty"`             // 배치 크기 - 한 번에 처리할 레코드 수 (기본: 100)
+	Workers       int        `json:"workers,omitempty"`          // Stage 병렬 워커 수 (기본: Size와 동일, 최대 100)
+	FlushInterval string     `json:"flush_interval,omitempty"`   // 시간 기반 플러시 주기 (기본: 5s)
 }
 
 // RateLimitConfig 레이트 리밋 설정
@@ -95,16 +138,6 @@ type RateLimitConfig struct {
 	Strategy string `json:"strategy,omitempty"`  // token_bucket, sliding_window, fixed_window
 }
 
-// WorkflowSource 워크플로우 내 소스 설정
-type WorkflowSource struct {
-	Type       string            `json:"type"`                  // kafka, cdc, rest_api, sql, file, sql_event
-	Name       string            `json:"name"`                  // 소스 식별자
-	Config     map[string]any    `json:"config"`                // 소스별 설정
-	Partitions []PartitionConfig `json:"partitions,omitempty"`  // 파티션 설정 (병렬 처리용)
-	JSONSchema string            `json:"json_schema,omitempty"` // JSON Schema for source data validation
-	RateLimit  *RateLimitConfig  `json:"rate_limit,omitempty"`  // 소스 레벨 rate limiting
-}
-
 // PartitionConfig 파티션 설정
 type PartitionConfig struct {
 	ID      string         `json:"id"`
@@ -113,14 +146,39 @@ type PartitionConfig struct {
 	Enabled bool           `json:"enabled"`
 }
 
-// Stage 파이프라인 단계 (추상화 단위)
-// Stage는 input → output 인터페이스를 가지며, 구현에 따라 역할이 결정됨
-// (filter, remap, aggregate, elasticsearch, kafka, trigger 등)
+// WorkflowInput 워크플로우 내 입력 소스 설정
+// Input 타입: kafka, cdc, rest_api, sql, file, sql_event
+type WorkflowInput struct {
+	Type       string            `json:"type"`                  // kafka, cdc, rest_api, sql, file, sql_event
+	Name       string            `json:"name"`                  // 입력 소스 식별자
+	Config     map[string]any    `json:"config"`                // 소스별 설정
+	Partitions []PartitionConfig `json:"partitions,omitempty"`  // 파티션 설정 (병렬 처리용)
+	JSONSchema string            `json:"json_schema,omitempty"` // JSON Schema for input data validation
+	RateLimit  *RateLimitConfig  `json:"rate_limit,omitempty"`  // 입력 레벨 rate limiting
+}
+
+// WorkflowSource는 WorkflowInput의 별칭 (하위 호환성)
+// Deprecated: WorkflowInput을 사용하세요
+type WorkflowSource = WorkflowInput
+
+// Stage 파이프라인 단계 (데이터 변환/처리)
+// filter, remap, drop, merge, split, encrypt, dedupe, default, cast, timestamp, throttle, validate, contract, route, delete
 type Stage struct {
 	ID     string         `json:"id,omitempty"` // 프론트엔드용 고유 ID
 	Name   string         `json:"name"`
-	Type   string         `json:"type"` // filter, remap, sample, aggregate, elasticsearch, kafka, trigger, etc.
+	Type   string         `json:"type"` // filter, remap, drop, merge, split, encrypt, dedupe, default, cast, timestamp, throttle, validate, contract, route, delete
 	Config map[string]any `json:"config"`
+}
+
+// Output 데이터 출력/저장 대상
+// Output 타입: sql, elasticsearch, kafka, mongodb, s3, rest_api, file
+// PreStages: Output 전용 변환 단계 (공통 Stage 이후, Output 전송 전에 실행)
+type Output struct {
+	ID        string         `json:"id,omitempty"`         // 프론트엔드용 고유 ID
+	Name      string         `json:"name"`                 // Output 식별자
+	Type      string         `json:"type"`                 // sql, elasticsearch, kafka, mongodb, s3, rest_api, file
+	PreStages []Stage        `json:"pre_stages,omitempty"` // Output 전용 변환 단계
+	Config    map[string]any `json:"config"`               // Output별 설정
 }
 
 
@@ -236,7 +294,8 @@ type PipelineGroupType = WorkflowType
 type PipelineGroupStatus = WorkflowStatus
 type PipelineGroupExecution = WorkflowExecution
 type GroupedPipeline = WorkflowPipeline
-type GroupedSource = WorkflowSource
+type GroupedSource = WorkflowInput
+type GroupedInput = WorkflowInput
 
 // Backward compatibility constants
 const (

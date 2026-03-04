@@ -194,11 +194,13 @@ stages:
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/stream/router_stage.go` 확장
-- [ ] VRL 조건식 파서 통합
-- [ ] 다중 Output 선택 지원
-- [ ] Default route 지원
-- [ ] Route 메트릭 수집
+- [x] `pipeline-core/pkg/stream/router_stage.go` 생성 ✅ (2026-03-05)
+- [x] VRL 스타일 조건식 파서 (==, !=, >, <, >=, <=, exists, =~) ✅
+- [x] 다중 Output 선택 지원 ✅
+- [x] Default route 지원 ✅
+- [x] Route 메트릭 수집 ✅
+- [x] AND/OR 조건 조합 지원 ✅
+- [x] 중첩 필드 접근 지원 ✅
 
 ### 2.2 Dynamic Output Selection
 **우선순위: 중** | **예상 작업량: 중**
@@ -217,10 +219,12 @@ outputs:
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/sink/dynamic.go` 생성
-- [ ] 런타임 Output 선택
-- [ ] Output 매핑 테이블
-- [ ] Fallback 처리
+- [x] `pipeline-core/pkg/output/dynamic.go` 생성 ✅ (2026-03-05)
+- [x] 런타임 Output 선택 ✅
+- [x] Output 매핑 테이블 ✅
+- [x] Fallback 처리 ✅
+- [x] 조건 기반 라우팅 지원 ✅
+- [x] Router Stage 연동 (_target_outputs 필드) ✅
 
 ### 2.3 Fan-out / Fan-in Pattern
 **우선순위: 중** | **예상 작업량: 높음**
@@ -247,10 +251,12 @@ stages:
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/stream/fanout_stage.go` 생성
-- [ ] 병렬 브랜치 실행
-- [ ] 결과 병합 전략
-- [ ] 브랜치별 타임아웃
+- [x] `pipeline-core/pkg/stream/fanout_stage.go` 생성 ✅ (2026-03-05)
+- [x] 병렬 브랜치 실행 ✅
+- [x] 결과 병합 전략 (deep_merge, shallow_merge, array, first) ✅
+- [x] 브랜치별/전역 타임아웃 ✅
+- [x] 브랜치 메트릭 수집 ✅
+- [x] 실패 시 계속/중단 옵션 ✅
 
 ---
 

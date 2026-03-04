@@ -379,6 +379,12 @@ func NewStage(cfg StageConfig) (Stage, error) {
 		return NewAggregateStage(cfg.Name, cfg.Config), nil
 	case "validate":
 		return NewValidationStage(cfg.Name, cfg.Config)
+	case "contract":
+		return NewContractStageFromConfig(cfg.Name, cfg.Config)
+	case "router":
+		return NewRouterStageFromConfig(cfg.Name, cfg.Config)
+	case "fan_out":
+		return NewFanOutStageFromConfig(cfg.Name, cfg.Config)
 	default:
 		return nil, fmt.Errorf("unknown stage type: %s", cfg.Type)
 	}

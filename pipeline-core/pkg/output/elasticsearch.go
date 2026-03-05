@@ -43,6 +43,15 @@ type ElasticsearchOutput struct {
 	batchSize     int
 	flushInterval time.Duration
 
+	// Retry 설정
+	maxRetries     int
+	retryBaseDelay time.Duration
+	retryMaxDelay  time.Duration
+
+	// Index Template 설정
+	indexTemplateDef     *IndexTemplateDefinition
+	indexTemplateCreated bool
+
 	// HTTP 클라이언트
 	client *http.Client
 
@@ -59,14 +68,16 @@ type ElasticsearchOutput struct {
 
 // ElasticsearchConfig Elasticsearch 설정
 type ElasticsearchConfig struct {
-	Addresses     []string           `yaml:"addresses" json:"addresses"`
-	Index         string             `yaml:"index" json:"index"` // 정적 또는 템플릿 (예: "events-{{ .date }}")
-	IDField       string             `yaml:"id_field" json:"id_field"`
-	Pipeline      string             `yaml:"pipeline,omitempty" json:"pipeline,omitempty"`
-	BulkSize      int                `yaml:"bulk_size,omitempty" json:"bulk_size,omitempty"`
-	FlushInterval string             `yaml:"flush_interval,omitempty" json:"flush_interval,omitempty"`
-	Auth          *ElasticsearchAuth `yaml:"auth,omitempty" json:"auth,omitempty"`
-	TLS           *ElasticsearchTLS  `yaml:"tls,omitempty" json:"tls,omitempty"`
+	Addresses     []string                 `yaml:"addresses" json:"addresses"`
+	Index         string                   `yaml:"index" json:"index"` // 정적 또는 템플릿 (예: "events-{{ .date }}")
+	IDField       string                   `yaml:"id_field" json:"id_field"`
+	Pipeline      string                   `yaml:"pipeline,omitempty" json:"pipeline,omitempty"`
+	BulkSize      int                      `yaml:"bulk_size,omitempty" json:"bulk_size,omitempty"`
+	FlushInterval string                   `yaml:"flush_interval,omitempty" json:"flush_interval,omitempty"`
+	Auth          *ElasticsearchAuth       `yaml:"auth,omitempty" json:"auth,omitempty"`
+	TLS           *ElasticsearchTLS        `yaml:"tls,omitempty" json:"tls,omitempty"`
+	Retry         *ElasticsearchRetry      `yaml:"retry,omitempty" json:"retry,omitempty"`
+	IndexTemplate *IndexTemplateDefinition `yaml:"index_template,omitempty" json:"index_template,omitempty"`
 }
 
 // ElasticsearchAuth 인증 설정
@@ -83,6 +94,25 @@ type ElasticsearchTLS struct {
 	Enabled            bool   `yaml:"enabled" json:"enabled"`
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 	CACert             string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+}
+
+// ElasticsearchRetry Retry 설정
+type ElasticsearchRetry struct {
+	MaxRetries int    `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`       // 최대 재시도 횟수 (기본값: 3)
+	BaseDelay  string `yaml:"base_delay,omitempty" json:"base_delay,omitempty"`         // 초기 대기 시간 (기본값: 1s)
+	MaxDelay   string `yaml:"max_delay,omitempty" json:"max_delay,omitempty"`           // 최대 대기 시간 (기본값: 30s)
+	RetryOn    []int  `yaml:"retry_on,omitempty" json:"retry_on,omitempty"`             // 재시도할 HTTP 상태 코드
+}
+
+// IndexTemplateDefinition Index Template 정의
+type IndexTemplateDefinition struct {
+	Name           string                 `yaml:"name" json:"name"`                                         // 템플릿 이름
+	IndexPatterns  []string               `yaml:"index_patterns" json:"index_patterns"`                     // 인덱스 패턴 (예: ["events-*"])
+	Priority       int                    `yaml:"priority,omitempty" json:"priority,omitempty"`             // 우선순위
+	NumberOfShards int                    `yaml:"number_of_shards,omitempty" json:"number_of_shards,omitempty"`
+	NumberOfReplicas int                  `yaml:"number_of_replicas,omitempty" json:"number_of_replicas,omitempty"`
+	Mappings       map[string]interface{} `yaml:"mappings,omitempty" json:"mappings,omitempty"`             // 필드 매핑
+	Settings       map[string]interface{} `yaml:"settings,omitempty" json:"settings,omitempty"`             // 추가 설정
 }
 
 // NewElasticsearchOutput Elasticsearch 출력 생성
@@ -113,13 +143,37 @@ func NewElasticsearchOutput(cfg config.OutputConfig) (*ElasticsearchOutput, erro
 		}
 	}
 
+	// Retry 설정 기본값
+	maxRetries := 3
+	retryBaseDelay := 1 * time.Second
+	retryMaxDelay := 30 * time.Second
+	if esCfg.Retry != nil {
+		if esCfg.Retry.MaxRetries > 0 {
+			maxRetries = esCfg.Retry.MaxRetries
+		}
+		if esCfg.Retry.BaseDelay != "" {
+			if d, err := time.ParseDuration(esCfg.Retry.BaseDelay); err == nil {
+				retryBaseDelay = d
+			}
+		}
+		if esCfg.Retry.MaxDelay != "" {
+			if d, err := time.ParseDuration(esCfg.Retry.MaxDelay); err == nil {
+				retryMaxDelay = d
+			}
+		}
+	}
+
 	output := &ElasticsearchOutput{
-		addresses:     esCfg.Addresses,
-		idField:       esCfg.IDField,
-		pipeline:      esCfg.Pipeline,
-		batchSize:     batchSize,
-		flushInterval: flushInterval,
-		buffer:        make([]source.Record, 0, batchSize),
+		addresses:        esCfg.Addresses,
+		idField:          esCfg.IDField,
+		pipeline:         esCfg.Pipeline,
+		batchSize:        batchSize,
+		flushInterval:    flushInterval,
+		maxRetries:       maxRetries,
+		retryBaseDelay:   retryBaseDelay,
+		retryMaxDelay:    retryMaxDelay,
+		indexTemplateDef: esCfg.IndexTemplate,
+		buffer:           make([]source.Record, 0, batchSize),
 	}
 
 	// 인덱스 템플릿 파싱
@@ -216,6 +270,62 @@ func parseElasticsearchConfig(cfg config.OutputConfig) (*ElasticsearchConfig, er
 		}
 	}
 
+	// Retry 파싱
+	if retryMap, ok := cfg.Config["retry"].(map[string]interface{}); ok {
+		esCfg.Retry = &ElasticsearchRetry{}
+		if m, ok := retryMap["max_retries"].(int); ok {
+			esCfg.Retry.MaxRetries = m
+		}
+		if m, ok := retryMap["max_retries"].(float64); ok {
+			esCfg.Retry.MaxRetries = int(m)
+		}
+		if b, ok := retryMap["base_delay"].(string); ok {
+			esCfg.Retry.BaseDelay = b
+		}
+		if m, ok := retryMap["max_delay"].(string); ok {
+			esCfg.Retry.MaxDelay = m
+		}
+	}
+
+	// Index Template 파싱
+	if tmplMap, ok := cfg.Config["index_template"].(map[string]interface{}); ok {
+		esCfg.IndexTemplate = &IndexTemplateDefinition{}
+		if n, ok := tmplMap["name"].(string); ok {
+			esCfg.IndexTemplate.Name = n
+		}
+		if patterns, ok := tmplMap["index_patterns"].([]interface{}); ok {
+			for _, p := range patterns {
+				if s, ok := p.(string); ok {
+					esCfg.IndexTemplate.IndexPatterns = append(esCfg.IndexTemplate.IndexPatterns, s)
+				}
+			}
+		}
+		if p, ok := tmplMap["priority"].(int); ok {
+			esCfg.IndexTemplate.Priority = p
+		}
+		if p, ok := tmplMap["priority"].(float64); ok {
+			esCfg.IndexTemplate.Priority = int(p)
+		}
+		if n, ok := tmplMap["number_of_shards"].(int); ok {
+			esCfg.IndexTemplate.NumberOfShards = n
+		}
+		if n, ok := tmplMap["number_of_shards"].(float64); ok {
+			esCfg.IndexTemplate.NumberOfShards = int(n)
+		}
+		if n, ok := tmplMap["number_of_replicas"].(int); ok {
+			esCfg.IndexTemplate.NumberOfReplicas = n
+		}
+		if n, ok := tmplMap["number_of_replicas"].(float64); ok {
+			esCfg.IndexTemplate.NumberOfReplicas = int(n)
+		}
+		if m, ok := tmplMap["mappings"].(map[string]interface{}); ok {
+			esCfg.IndexTemplate.Mappings = m
+		}
+		if s, ok := tmplMap["settings"].(map[string]interface{}); ok {
+			esCfg.IndexTemplate.Settings = s
+		}
+	}
+
 	return esCfg, nil
 }
 
@@ -245,6 +355,15 @@ func (o *ElasticsearchOutput) Open(ctx context.Context) error {
 	// 연결 테스트
 	if err := o.ping(ctx); err != nil {
 		return fmt.Errorf("failed to connect to elasticsearch: %w", err)
+	}
+
+	// Index Template 자동 생성
+	if o.indexTemplateDef != nil && !o.indexTemplateCreated {
+		if err := o.ensureIndexTemplate(ctx); err != nil {
+			log.Printf("[elasticsearch] Warning: failed to create index template: %v", err)
+		} else {
+			o.indexTemplateCreated = true
+		}
 	}
 
 	// 백그라운드 플러시 시작
@@ -432,6 +551,57 @@ func (o *ElasticsearchOutput) getIndexName(record source.Record) string {
 }
 
 func (o *ElasticsearchOutput) doBulkRequest(ctx context.Context, body []byte) error {
+	var lastErr error
+	delay := o.retryBaseDelay
+
+	for attempt := 0; attempt <= o.maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("[elasticsearch] Retry attempt %d/%d after %v", attempt, o.maxRetries, delay)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+			// Exponential backoff with jitter
+			delay = time.Duration(float64(delay) * 2)
+			if delay > o.retryMaxDelay {
+				delay = o.retryMaxDelay
+			}
+		}
+
+		err := o.doSingleBulkRequest(ctx, body)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+
+		// 재시도 가능한 에러인지 확인
+		if !o.isRetryableError(err) {
+			return err
+		}
+	}
+
+	return fmt.Errorf("bulk request failed after %d retries: %w", o.maxRetries, lastErr)
+}
+
+// isRetryableError 재시도 가능한 에러인지 확인
+func (o *ElasticsearchOutput) isRetryableError(err error) bool {
+	errStr := err.Error()
+	// 네트워크 에러, 타임아웃, 5xx 에러는 재시도
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "status 429") || // Too Many Requests
+		strings.Contains(errStr, "status 500") ||
+		strings.Contains(errStr, "status 502") ||
+		strings.Contains(errStr, "status 503") ||
+		strings.Contains(errStr, "status 504") {
+		return true
+	}
+	return false
+}
+
+func (o *ElasticsearchOutput) doSingleBulkRequest(ctx context.Context, body []byte) error {
 	// 랜덤 주소 선택 (간단한 로드밸런싱)
 	addr := o.addresses[0]
 	if len(o.addresses) > 1 {
@@ -498,6 +668,103 @@ func (o *ElasticsearchOutput) doBulkRequest(ctx context.Context, body []byte) er
 	}
 
 	return nil
+}
+
+// ensureIndexTemplate Index Template 생성 (존재하지 않는 경우)
+func (o *ElasticsearchOutput) ensureIndexTemplate(ctx context.Context) error {
+	if o.indexTemplateDef == nil || o.indexTemplateDef.Name == "" {
+		return nil
+	}
+
+	addr := o.addresses[0]
+	templateURL := strings.TrimSuffix(addr, "/") + "/_index_template/" + o.indexTemplateDef.Name
+
+	// 템플릿 존재 여부 확인
+	checkReq, err := http.NewRequestWithContext(ctx, "HEAD", templateURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create check request: %w", err)
+	}
+	o.setAuth(checkReq)
+
+	checkResp, err := o.client.Do(checkReq)
+	if err != nil {
+		return fmt.Errorf("failed to check template: %w", err)
+	}
+	checkResp.Body.Close()
+
+	// 이미 존재하면 스킵
+	if checkResp.StatusCode == 200 {
+		log.Printf("[elasticsearch] Index template '%s' already exists", o.indexTemplateDef.Name)
+		return nil
+	}
+
+	// 템플릿 생성
+	templateBody := o.buildIndexTemplateBody()
+	bodyJSON, err := json.Marshal(templateBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal template body: %w", err)
+	}
+
+	createReq, err := http.NewRequestWithContext(ctx, "PUT", templateURL, bytes.NewReader(bodyJSON))
+	if err != nil {
+		return fmt.Errorf("failed to create put request: %w", err)
+	}
+	createReq.Header.Set("Content-Type", "application/json")
+	o.setAuth(createReq)
+
+	createResp, err := o.client.Do(createReq)
+	if err != nil {
+		return fmt.Errorf("failed to create template: %w", err)
+	}
+	defer createResp.Body.Close()
+
+	if createResp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(createResp.Body)
+		return fmt.Errorf("failed to create template with status %d: %s", createResp.StatusCode, string(respBody))
+	}
+
+	log.Printf("[elasticsearch] Index template '%s' created successfully", o.indexTemplateDef.Name)
+	return nil
+}
+
+// buildIndexTemplateBody Index Template 본문 생성
+func (o *ElasticsearchOutput) buildIndexTemplateBody() map[string]interface{} {
+	def := o.indexTemplateDef
+
+	template := map[string]interface{}{
+		"index_patterns": def.IndexPatterns,
+	}
+
+	if def.Priority > 0 {
+		template["priority"] = def.Priority
+	}
+
+	// Settings
+	settings := make(map[string]interface{})
+	if def.NumberOfShards > 0 {
+		settings["number_of_shards"] = def.NumberOfShards
+	}
+	if def.NumberOfReplicas >= 0 {
+		settings["number_of_replicas"] = def.NumberOfReplicas
+	}
+	// 사용자 정의 설정 추가
+	for k, v := range def.Settings {
+		settings[k] = v
+	}
+
+	templateSettings := map[string]interface{}{}
+	if len(settings) > 0 {
+		templateSettings["settings"] = settings
+	}
+	if len(def.Mappings) > 0 {
+		templateSettings["mappings"] = def.Mappings
+	}
+
+	if len(templateSettings) > 0 {
+		template["template"] = templateSettings
+	}
+
+	return template
 }
 
 func (o *ElasticsearchOutput) backgroundFlush() {

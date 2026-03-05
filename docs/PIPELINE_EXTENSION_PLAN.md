@@ -86,8 +86,8 @@ outputs:
 - [x] 동적 인덱스 템플릿 (날짜, 필드값 기반) ✅
 - [x] 인증 (Basic, API Key, Bearer Token) ✅
 - [x] TLS/SSL 지원 ✅
-- [ ] Retry with exponential backoff
-- [ ] Index template 자동 생성 옵션
+- [x] Retry with exponential backoff ✅ (2026-03-05)
+- [x] Index template 자동 생성 옵션 ✅ (2026-03-05)
 
 ### 1.2 MongoDB Output
 **우선순위: 높음** | **예상 작업량: 중**
@@ -134,7 +134,7 @@ outputs:
 
 **구현 사항:**
 - [x] `pipeline-core/pkg/output/s3.go` 생성 ✅ (2026-03-04)
-- [ ] `pipeline-core/pkg/output/gcs.go` 생성
+- [x] `pipeline-core/pkg/output/gcs.go` 생성 ✅ (2026-03-05)
 - [x] 다중 파일 포맷 (JSON, NDJSON, CSV) ✅
 - [x] 압축 지원 (gzip) ✅
 - [x] Hive 스타일 파티셔닝 ✅
@@ -449,14 +449,14 @@ input:
 **구현 사항:**
 - [x] `pipeline-core/pkg/source/rabbitmq.go` 생성 ✅ (2026-03-05)
 - [x] `pipeline-core/pkg/source/sqs.go` 생성 ✅ (2026-03-05)
-- [ ] `pipeline-core/pkg/source/pubsub.go` 생성
+- [x] `pipeline-core/pkg/source/pubsub.go` 생성 ✅ (2026-03-05)
 - [x] RabbitMQ Exchange/Queue 자동 선언 ✅
 - [x] RabbitMQ TLS 지원 ✅
 - [x] RabbitMQ 재연결 로직 ✅
 - [x] SQS Long polling 지원 ✅
 - [x] SQS Visibility timeout 지원 ✅
 - [x] SQS LocalStack 호환 (custom endpoint) ✅
-- [ ] Dead letter queue 연동
+- [x] Dead letter queue 연동 (RabbitMQ/SQS DLQ Output) ✅ (2026-03-05)
 - [ ] Checkpoint 지원
 
 ### 3.2 실시간 스트리밍
@@ -827,7 +827,7 @@ stages:
 | SQS Input | 2일 | ✅ 완료 (2026-03-05) |
 | WebSocket Input | 2일 | ✅ 완료 (2026-03-05) |
 | Windowed Aggregation | 5일 | ✅ 완료 (2026-03-05) |
-| Google Pub/Sub Input | 2일 | ⬜ 대기 |
+| Google Pub/Sub Input | 2일 | ✅ 완료 (2026-03-05) |
 | MQTT Input | 2일 | ✅ 완료 (2026-03-05) |
 | SSE Input | 1일 | ✅ 완료 (2026-03-05) |
 
@@ -909,4 +909,11 @@ require (
 | 2026-03-05 | 2.3 | MQTT Input 구현 완료 (QoS 0-2, Clean Session, TLS, 재연결) |
 | 2026-03-05 | 2.4 | SSE Input 구현 완료 (Event 파싱, Last-Event-ID 복구) |
 | 2026-03-05 | 2.5 | Stream Join Stage 구현 완료 (Inner/Left/Right/Outer, 윈도우 조인, 버퍼 관리) |
+| 2026-03-05 | 2.6 | GCS Output 구현 완료 (JSON/NDJSON/CSV, gzip, Hive 파티셔닝) |
+| 2026-03-05 | 2.7 | Google Pub/Sub Input 구현 완료 (구독, 스냅샷, Seek) |
+| 2026-03-05 | 2.8 | Elasticsearch Retry/Index Template 구현 완료 (Exponential backoff, 템플릿 자동생성) |
+| 2026-03-05 | 2.9 | RabbitMQ/SQS DLQ Output 구현 완료 (Dead Letter Queue 연동) |
+| 2026-03-05 | 3.0 | S3 Multipart Upload 구현 완료 (5MB 이상 자동 분할, 동시 업로드) |
+| 2026-03-05 | 3.1 | Windowed Aggregation Redis 상태 저장 구현 완료 (재시작 시 상태 복원) |
+| 2026-03-05 | 3.2 | Stream Join Watermark 처리 구현 완료 (Late data 처리, 워터마크 기반 윈도우 클로즈) |
 

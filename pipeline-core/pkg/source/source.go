@@ -98,6 +98,12 @@ func NewSource(cfg config.SourceV2) (Source, error) {
 		return NewMQTTSource(cfg)
 	case "sse":
 		return NewSSESource(cfg)
+	case "sqs":
+		return NewSQSSource(cfg)
+	case "rabbitmq", "amqp":
+		return NewRabbitMQSource(cfg)
+	case "pubsub", "gcp_pubsub":
+		return NewPubSubSource(cfg)
 	default:
 		return nil, &UnsupportedSourceError{Type: cfg.Type}
 	}

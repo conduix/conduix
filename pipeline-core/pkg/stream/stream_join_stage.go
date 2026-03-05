@@ -48,7 +48,26 @@ type StreamJoinStage struct {
 	// Cleanup
 	cleanupTicker *time.Ticker
 	closeCh       chan struct{}
+
+	// Watermark processing
+	leftWatermark     time.Time     // Left stream watermark
+	rightWatermark    time.Time     // Right stream watermark
+	allowedLateness   time.Duration // Grace period for late data
+	watermarkInterval time.Duration // Watermark update interval
+	emitOnWatermark   bool          // Emit unmatched records when watermark advances
+	lateDataHandler   LateDataHandler
+	watermarkMu       sync.RWMutex
 }
+
+// LateDataHandler defines how to handle late data
+type LateDataHandler string
+
+const (
+	LateDataDrop   LateDataHandler = "drop"   // Drop late data silently
+	LateDataLog    LateDataHandler = "log"    // Log warning and drop
+	LateDataEmit   LateDataHandler = "emit"   // Emit with _late flag
+	LateDataBuffer LateDataHandler = "buffer" // Buffer for later processing (default)
+)
 
 // joinBuffer holds records within a time window
 type joinBuffer struct {
@@ -68,10 +87,14 @@ type timedRecord struct {
 // NewStreamJoinStage creates a new stream join stage
 func NewStreamJoinStage(name string, config map[string]any) (*StreamJoinStage, error) {
 	s := &StreamJoinStage{
-		BaseStage: BaseStage{name: name, typ: "stream_join"},
-		joinType:  JoinInner,
-		outputCh:  make(chan *Record, 100),
-		closeCh:   make(chan struct{}),
+		BaseStage:         BaseStage{name: name, typ: "stream_join"},
+		joinType:          JoinInner,
+		outputCh:          make(chan *Record, 100),
+		closeCh:           make(chan struct{}),
+		allowedLateness:   10 * time.Second,          // Default 10 seconds grace period
+		watermarkInterval: 5 * time.Second,           // Default 5 seconds
+		emitOnWatermark:   false,                     // Default: don't emit on watermark
+		lateDataHandler:   LateDataBuffer,            // Default: buffer late data
 	}
 
 	// Parse join type
@@ -152,6 +175,35 @@ func NewStreamJoinStage(name string, config map[string]any) (*StreamJoinStage, e
 	s.timestampField = "_timestamp"
 	if ts, ok := config["timestamp_field"].(string); ok {
 		s.timestampField = ts
+	}
+
+	// Parse watermark config
+	if wmConfig, ok := config["watermark"].(map[string]any); ok {
+		if lateness, ok := wmConfig["allowed_lateness"].(string); ok {
+			if d, err := time.ParseDuration(lateness); err == nil {
+				s.allowedLateness = d
+			}
+		}
+		if interval, ok := wmConfig["interval"].(string); ok {
+			if d, err := time.ParseDuration(interval); err == nil {
+				s.watermarkInterval = d
+			}
+		}
+		if emit, ok := wmConfig["emit_on_advance"].(bool); ok {
+			s.emitOnWatermark = emit
+		}
+		if handler, ok := wmConfig["late_data"].(string); ok {
+			switch handler {
+			case "drop":
+				s.lateDataHandler = LateDataDrop
+			case "log":
+				s.lateDataHandler = LateDataLog
+			case "emit":
+				s.lateDataHandler = LateDataEmit
+			case "buffer":
+				s.lateDataHandler = LateDataBuffer
+			}
+		}
 	}
 
 	// Initialize buffers
@@ -268,6 +320,20 @@ func (s *StreamJoinStage) Process(ctx context.Context, record *Record) (*Record,
 	} else if ts, ok := record.Data[s.timestampField].(time.Time); ok {
 		timestamp = ts
 	}
+
+	// Check for late data based on watermark
+	if isLate := s.checkAndHandleLateData(record, timestamp, isLeft); isLate {
+		if s.lateDataHandler == LateDataDrop || s.lateDataHandler == LateDataLog {
+			return nil, nil // Drop late data
+		}
+		// For LateDataEmit, continue processing but mark as late
+		if s.lateDataHandler == LateDataEmit {
+			record.Data["_late"] = true
+		}
+	}
+
+	// Update watermark
+	s.updateWatermark(timestamp, isLeft)
 
 	// Get join key
 	var key any
@@ -478,9 +544,11 @@ func (s *StreamJoinStage) FlushPending() []*Record {
 // JoinInfo returns information about the join configuration
 func (s *StreamJoinStage) JoinInfo() map[string]any {
 	s.bufferMu.RLock()
+	s.watermarkMu.RLock()
 	defer s.bufferMu.RUnlock()
+	defer s.watermarkMu.RUnlock()
 
-	return map[string]any{
+	info := map[string]any{
 		"join_type":         string(s.joinType),
 		"left_key":          s.leftKey,
 		"right_key":         s.rightKey,
@@ -488,7 +556,153 @@ func (s *StreamJoinStage) JoinInfo() map[string]any {
 		"window_after":      s.window.After.String(),
 		"left_buffer_size":  len(s.leftBuffer.records),
 		"right_buffer_size": len(s.rightBuffer.records),
+		"allowed_lateness":  s.allowedLateness.String(),
+		"late_data_handler": string(s.lateDataHandler),
+		"emit_on_watermark": s.emitOnWatermark,
 	}
+
+	// Add watermark info
+	if !s.leftWatermark.IsZero() {
+		info["left_watermark"] = s.leftWatermark.Format(time.RFC3339)
+	}
+	if !s.rightWatermark.IsZero() {
+		info["right_watermark"] = s.rightWatermark.Format(time.RFC3339)
+	}
+
+	return info
+}
+
+// checkAndHandleLateData checks if a record is late based on watermark
+func (s *StreamJoinStage) checkAndHandleLateData(record *Record, timestamp time.Time, isLeft bool) bool {
+	s.watermarkMu.RLock()
+	defer s.watermarkMu.RUnlock()
+
+	var watermark time.Time
+	if isLeft {
+		watermark = s.leftWatermark
+	} else {
+		watermark = s.rightWatermark
+	}
+
+	// If watermark is not set yet, no data is late
+	if watermark.IsZero() {
+		return false
+	}
+
+	// Check if record is late (timestamp + allowed lateness < watermark)
+	latenessBoundary := watermark.Add(-s.allowedLateness)
+	isLate := timestamp.Before(latenessBoundary)
+
+	if isLate && s.lateDataHandler == LateDataLog {
+		streamName := "left"
+		if !isLeft {
+			streamName = "right"
+		}
+		fmt.Printf("[stream_join] Late data detected from %s stream: timestamp=%s, watermark=%s, allowed_lateness=%s\n",
+			streamName, timestamp.Format(time.RFC3339), watermark.Format(time.RFC3339), s.allowedLateness)
+	}
+
+	return isLate
+}
+
+// updateWatermark updates the watermark for a stream
+func (s *StreamJoinStage) updateWatermark(timestamp time.Time, isLeft bool) {
+	s.watermarkMu.Lock()
+	defer s.watermarkMu.Unlock()
+
+	var currentWatermark *time.Time
+	if isLeft {
+		currentWatermark = &s.leftWatermark
+	} else {
+		currentWatermark = &s.rightWatermark
+	}
+
+	// Update watermark if timestamp is newer
+	// Use timestamp minus allowed lateness as watermark (conservative)
+	newWatermark := timestamp.Add(-s.allowedLateness)
+	if currentWatermark.IsZero() || newWatermark.After(*currentWatermark) {
+		oldWatermark := *currentWatermark
+		*currentWatermark = newWatermark
+
+		// Emit unmatched records if configured
+		if s.emitOnWatermark && !oldWatermark.IsZero() {
+			go s.emitOnWatermarkAdvance(oldWatermark, newWatermark, isLeft)
+		}
+	}
+}
+
+// emitOnWatermarkAdvance emits unmatched records when watermark advances
+func (s *StreamJoinStage) emitOnWatermarkAdvance(oldWatermark, newWatermark time.Time, isLeftAdvance bool) {
+	s.bufferMu.Lock()
+	defer s.bufferMu.Unlock()
+
+	// Find records that are now definitely unmatched (their window has closed)
+	// based on the advanced watermark
+
+	if isLeftAdvance {
+		// Check left buffer for records that can't be matched anymore
+		for _, tr := range s.leftBuffer.records {
+			windowEnd := tr.timestamp.Add(s.window.After)
+			if windowEnd.Before(newWatermark) && !windowEnd.Before(oldWatermark) {
+				// This record's window just closed
+				matches := s.rightBuffer.FindMatches(tr.key, tr.timestamp.Add(-s.window.Before), windowEnd)
+				if len(matches) == 0 {
+					// No match found, emit for left/outer joins
+					if s.joinType == JoinLeft || s.joinType == JoinOuter {
+						output := s.createOutputRecord(tr.record, nil, tr.timestamp)
+						output.Data["_watermark_emit"] = true
+						select {
+						case s.outputCh <- output:
+						default:
+							// Channel full
+						}
+					}
+				}
+			}
+		}
+	} else {
+		// Check right buffer
+		for _, tr := range s.rightBuffer.records {
+			windowEnd := tr.timestamp.Add(s.window.After)
+			if windowEnd.Before(newWatermark) && !windowEnd.Before(oldWatermark) {
+				matches := s.leftBuffer.FindMatches(tr.key, tr.timestamp.Add(-s.window.Before), windowEnd)
+				if len(matches) == 0 {
+					if s.joinType == JoinRight || s.joinType == JoinOuter {
+						output := s.createOutputRecord(nil, tr.record, tr.timestamp)
+						output.Data["_watermark_emit"] = true
+						select {
+						case s.outputCh <- output:
+						default:
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// GetWatermarks returns current watermarks for both streams
+func (s *StreamJoinStage) GetWatermarks() (left, right time.Time) {
+	s.watermarkMu.RLock()
+	defer s.watermarkMu.RUnlock()
+	return s.leftWatermark, s.rightWatermark
+}
+
+// GetMinWatermark returns the minimum of both watermarks
+func (s *StreamJoinStage) GetMinWatermark() time.Time {
+	s.watermarkMu.RLock()
+	defer s.watermarkMu.RUnlock()
+
+	if s.leftWatermark.IsZero() {
+		return s.rightWatermark
+	}
+	if s.rightWatermark.IsZero() {
+		return s.leftWatermark
+	}
+	if s.leftWatermark.Before(s.rightWatermark) {
+		return s.leftWatermark
+	}
+	return s.rightWatermark
 }
 
 func (s *StreamJoinStage) Close() error {
@@ -496,6 +710,12 @@ func (s *StreamJoinStage) Close() error {
 	if s.cleanupTicker != nil {
 		s.cleanupTicker.Stop()
 	}
+
+	// Log watermark info
+	s.watermarkMu.RLock()
+	fmt.Printf("[stream_join] Final watermarks - Left: %s, Right: %s\n",
+		s.leftWatermark.Format(time.RFC3339), s.rightWatermark.Format(time.RFC3339))
+	s.watermarkMu.RUnlock()
 
 	input, output, _ := s.Stats()
 	fmt.Printf("[stream_join] Closed. Input: %d, Output: %d\n", input, output)

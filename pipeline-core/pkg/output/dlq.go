@@ -12,6 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	amqp "github.com/rabbitmq/amqp091-go"
+
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
 	"github.com/conduix/conduix/shared/types"
 )
@@ -339,7 +345,359 @@ func NewDLQOutput(cfg types.DLQConfig) (DLQOutput, error) {
 	switch cfg.Type {
 	case "file", "":
 		return NewFileDLQOutput(cfg)
+	case "rabbitmq", "amqp":
+		return NewRabbitMQDLQOutput(cfg)
+	case "sqs":
+		return NewSQSDLQOutput(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported DLQ type: %s", cfg.Type)
 	}
+}
+
+// ============================================================================
+// RabbitMQ DLQ Output
+// ============================================================================
+
+// RabbitMQDLQOutput RabbitMQ 기반 DLQ
+type RabbitMQDLQOutput struct {
+	url        string
+	queue      string
+	exchange   string
+	routingKey string
+
+	conn    *amqp.Connection
+	channel *amqp.Channel
+	mu      sync.Mutex
+	stats   OutputStats
+}
+
+// NewRabbitMQDLQOutput RabbitMQ DLQ 생성
+func NewRabbitMQDLQOutput(cfg types.DLQConfig) (*RabbitMQDLQOutput, error) {
+	if cfg.RabbitMQURL == "" {
+		return nil, fmt.Errorf("rabbitmq_url is required for RabbitMQ DLQ")
+	}
+
+	queue := cfg.RabbitMQQueue
+	if queue == "" {
+		queue = "dlq"
+	}
+
+	return &RabbitMQDLQOutput{
+		url:        expandEnvVarsForDLQ(cfg.RabbitMQURL),
+		queue:      queue,
+		exchange:   cfg.RabbitMQExchange,
+		routingKey: cfg.RabbitMQRouting,
+	}, nil
+}
+
+func (o *RabbitMQDLQOutput) Name() string { return "rabbitmq_dlq" }
+
+func (o *RabbitMQDLQOutput) Open(ctx context.Context) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	conn, err := amqp.Dial(o.url)
+	if err != nil {
+		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+	}
+	o.conn = conn
+
+	ch, err := conn.Channel()
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("failed to open channel: %w", err)
+	}
+	o.channel = ch
+
+	// DLQ 큐 선언 (durable=true)
+	_, err = ch.QueueDeclare(
+		o.queue,
+		true,  // durable
+		false, // delete when unused
+		false, // exclusive
+		false, // no-wait
+		amqp.Table{
+			"x-message-ttl": int32(7 * 24 * 60 * 60 * 1000), // 7일 TTL (ms)
+		},
+	)
+	if err != nil {
+		_ = ch.Close()
+		_ = conn.Close()
+		return fmt.Errorf("failed to declare DLQ queue: %w", err)
+	}
+
+	// Exchange가 지정된 경우 바인딩
+	if o.exchange != "" {
+		routingKey := o.routingKey
+		if routingKey == "" {
+			routingKey = o.queue
+		}
+
+		if err := ch.QueueBind(o.queue, routingKey, o.exchange, false, nil); err != nil {
+			log.Printf("[rabbitmq_dlq] Warning: failed to bind queue to exchange: %v", err)
+		}
+	}
+
+	log.Printf("[rabbitmq_dlq] Connected to %s, queue=%s", maskRabbitMQURL(o.url), o.queue)
+	return nil
+}
+
+func (o *RabbitMQDLQOutput) Write(ctx context.Context, record source.Record) error {
+	return o.writeRecord(ctx, record, nil)
+}
+
+func (o *RabbitMQDLQOutput) WriteViolation(ctx context.Context, record source.Record, violations []types.ContractViolation) error {
+	return o.writeRecord(ctx, record, violations)
+}
+
+func (o *RabbitMQDLQOutput) writeRecord(ctx context.Context, record source.Record, violations []types.ContractViolation) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.channel == nil {
+		return fmt.Errorf("RabbitMQ channel not initialized")
+	}
+
+	atomic.AddInt64(&o.stats.TotalRecords, 1)
+
+	dlqEntry := types.DLQRecord{
+		ID:           fmt.Sprintf("%d", time.Now().UnixNano()),
+		Timestamp:    time.Now(),
+		Source:       record.Metadata.Source,
+		Violations:   violations,
+		OriginalData: record.Data,
+		Metadata: map[string]string{
+			"origin": record.Metadata.Origin,
+			"offset": record.Metadata.Offset,
+		},
+	}
+
+	data, err := json.Marshal(dlqEntry)
+	if err != nil {
+		atomic.AddInt64(&o.stats.ErrorRecords, 1)
+		return fmt.Errorf("failed to marshal DLQ entry: %w", err)
+	}
+
+	routingKey := o.queue
+	if o.exchange != "" && o.routingKey != "" {
+		routingKey = o.routingKey
+	}
+
+	err = o.channel.PublishWithContext(ctx,
+		o.exchange,
+		routingKey,
+		false, // mandatory
+		false, // immediate
+		amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			Timestamp:    time.Now(),
+			Body:         data,
+		},
+	)
+	if err != nil {
+		atomic.AddInt64(&o.stats.ErrorRecords, 1)
+		return fmt.Errorf("failed to publish to DLQ: %w", err)
+	}
+
+	atomic.AddInt64(&o.stats.SuccessRecords, 1)
+	o.stats.LastWriteTime = time.Now()
+	return nil
+}
+
+func (o *RabbitMQDLQOutput) Flush(ctx context.Context) error {
+	// RabbitMQ는 publish 즉시 전송되므로 별도 flush 불필요
+	return nil
+}
+
+func (o *RabbitMQDLQOutput) Close() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	var errs []error
+	if o.channel != nil {
+		if err := o.channel.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		o.channel = nil
+	}
+	if o.conn != nil {
+		if err := o.conn.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		o.conn = nil
+	}
+
+	log.Printf("[rabbitmq_dlq] Closed. Total: %d, Success: %d, Errors: %d",
+		o.stats.TotalRecords, o.stats.SuccessRecords, o.stats.ErrorRecords)
+
+	if len(errs) > 0 {
+		return fmt.Errorf("errors closing: %v", errs)
+	}
+	return nil
+}
+
+func (o *RabbitMQDLQOutput) Stats() OutputStats { return o.stats }
+
+// ============================================================================
+// SQS DLQ Output
+// ============================================================================
+
+// SQSDLQOutput AWS SQS 기반 DLQ
+type SQSDLQOutput struct {
+	queueURL        string
+	region          string
+	accessKeyID     string
+	secretAccessKey string
+
+	client *sqs.Client
+	mu     sync.Mutex
+	stats  OutputStats
+}
+
+// NewSQSDLQOutput SQS DLQ 생성
+func NewSQSDLQOutput(cfg types.DLQConfig) (*SQSDLQOutput, error) {
+	if cfg.SQSQueueURL == "" {
+		return nil, fmt.Errorf("sqs_queue_url is required for SQS DLQ")
+	}
+
+	return &SQSDLQOutput{
+		queueURL:        expandEnvVarsForDLQ(cfg.SQSQueueURL),
+		region:          expandEnvVarsForDLQ(cfg.SQSRegion),
+		accessKeyID:     expandEnvVarsForDLQ(cfg.SQSAccessKeyID),
+		secretAccessKey: expandEnvVarsForDLQ(cfg.SQSSecretAccessKey),
+	}, nil
+}
+
+func (o *SQSDLQOutput) Name() string { return "sqs_dlq" }
+
+func (o *SQSDLQOutput) Open(ctx context.Context) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	var opts []func(*awsconfig.LoadOptions) error
+
+	if o.region != "" {
+		opts = append(opts, awsconfig.WithRegion(o.region))
+	}
+
+	if o.accessKeyID != "" && o.secretAccessKey != "" {
+		creds := credentials.NewStaticCredentialsProvider(o.accessKeyID, o.secretAccessKey, "")
+		opts = append(opts, awsconfig.WithCredentialsProvider(creds))
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	o.client = sqs.NewFromConfig(cfg)
+
+	log.Printf("[sqs_dlq] Connected to queue: %s, region: %s", o.queueURL, o.region)
+	return nil
+}
+
+func (o *SQSDLQOutput) Write(ctx context.Context, record source.Record) error {
+	return o.writeRecord(ctx, record, nil)
+}
+
+func (o *SQSDLQOutput) WriteViolation(ctx context.Context, record source.Record, violations []types.ContractViolation) error {
+	return o.writeRecord(ctx, record, violations)
+}
+
+func (o *SQSDLQOutput) writeRecord(ctx context.Context, record source.Record, violations []types.ContractViolation) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.client == nil {
+		return fmt.Errorf("SQS client not initialized")
+	}
+
+	atomic.AddInt64(&o.stats.TotalRecords, 1)
+
+	dlqEntry := types.DLQRecord{
+		ID:           fmt.Sprintf("%d", time.Now().UnixNano()),
+		Timestamp:    time.Now(),
+		Source:       record.Metadata.Source,
+		Violations:   violations,
+		OriginalData: record.Data,
+		Metadata: map[string]string{
+			"origin": record.Metadata.Origin,
+			"offset": record.Metadata.Offset,
+		},
+	}
+
+	data, err := json.Marshal(dlqEntry)
+	if err != nil {
+		atomic.AddInt64(&o.stats.ErrorRecords, 1)
+		return fmt.Errorf("failed to marshal DLQ entry: %w", err)
+	}
+
+	_, err = o.client.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(o.queueURL),
+		MessageBody: aws.String(string(data)),
+	})
+	if err != nil {
+		atomic.AddInt64(&o.stats.ErrorRecords, 1)
+		return fmt.Errorf("failed to send to SQS DLQ: %w", err)
+	}
+
+	atomic.AddInt64(&o.stats.SuccessRecords, 1)
+	o.stats.LastWriteTime = time.Now()
+	return nil
+}
+
+func (o *SQSDLQOutput) Flush(ctx context.Context) error {
+	// SQS는 send 즉시 전송되므로 별도 flush 불필요
+	return nil
+}
+
+func (o *SQSDLQOutput) Close() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.client = nil
+
+	log.Printf("[sqs_dlq] Closed. Total: %d, Success: %d, Errors: %d",
+		o.stats.TotalRecords, o.stats.SuccessRecords, o.stats.ErrorRecords)
+	return nil
+}
+
+func (o *SQSDLQOutput) Stats() OutputStats { return o.stats }
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// expandEnvVarsForDLQ 환경 변수 확장 (DLQ용)
+func expandEnvVarsForDLQ(s string) string {
+	return os.ExpandEnv(s)
+}
+
+// maskRabbitMQURL RabbitMQ URL에서 비밀번호 마스킹
+func maskRabbitMQURL(rawURL string) string {
+	if len(rawURL) > 7 && rawURL[:7] == "amqp://" {
+		rest := rawURL[7:]
+		atIdx := -1
+		for i, c := range rest {
+			if c == '@' {
+				atIdx = i
+				break
+			}
+		}
+		if atIdx > 0 {
+			userPass := rest[:atIdx]
+			colonIdx := -1
+			for i, c := range userPass {
+				if c == ':' {
+					colonIdx = i
+					break
+				}
+			}
+			if colonIdx > 0 {
+				return "amqp://" + userPass[:colonIdx+1] + "****@" + rest[atIdx+1:]
+			}
+		}
+	}
+	return rawURL
 }

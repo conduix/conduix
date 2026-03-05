@@ -192,6 +192,8 @@ func NewOutput(cfg config.OutputConfig) (Output, error) {
 		return NewMongoDBOutput(cfg)
 	case "s3":
 		return NewS3Output(cfg)
+	case "gcs":
+		return NewGCSOutput(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported output type: %s", cfg.Type)
 	}

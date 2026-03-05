@@ -19,9 +19,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	pipelineConfig "github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
+)
+
+// Multipart Upload 임계값 (5MB 이상일 때 multipart 사용)
+const (
+	multipartThreshold = 5 * 1024 * 1024 // 5MB
+	multipartPartSize  = 5 * 1024 * 1024 // 5MB (최소 파트 크기)
+	maxMultipartParts  = 10000           // S3 최대 파트 수
 )
 
 // S3Output S3 데이터 출력
@@ -46,6 +54,10 @@ type S3Output struct {
 	accessKeyID     string
 	secretAccessKey string
 	endpoint        string // MinIO 등 커스텀 엔드포인트
+
+	// Multipart Upload 설정
+	multipartPartSize   int64 // 파트 크기 (기본 5MB)
+	multipartConcurrent int   // 동시 업로드 수
 
 	// S3 클라이언트
 	client *s3.Client
@@ -79,6 +91,10 @@ type S3Config struct {
 	AccessKeyID     string   `yaml:"access_key_id" json:"access_key_id"`
 	SecretAccessKey string   `yaml:"secret_access_key" json:"secret_access_key"`
 	Endpoint        string   `yaml:"endpoint" json:"endpoint"`
+
+	// Multipart Upload 설정
+	MultipartPartSize   string `yaml:"multipart_part_size" json:"multipart_part_size"`   // 파트 크기 (예: "10MB")
+	MultipartConcurrent int    `yaml:"multipart_concurrent" json:"multipart_concurrent"` // 동시 업로드 수
 }
 
 // NewS3Output S3 출력 생성
@@ -106,17 +122,32 @@ func NewS3Output(cfg pipelineConfig.OutputConfig) (*S3Output, error) {
 		s3Cfg.BatchSize = 1000
 	}
 
+	// Multipart 설정 기본값
+	multipartPartSizeVal := int64(multipartPartSize)
+	if s3Cfg.MultipartPartSize != "" {
+		if size, err := parseSize(s3Cfg.MultipartPartSize); err == nil && size >= multipartPartSize {
+			multipartPartSizeVal = size
+		}
+	}
+
+	multipartConcurrent := 5 // 기본 동시 업로드 수
+	if s3Cfg.MultipartConcurrent > 0 {
+		multipartConcurrent = s3Cfg.MultipartConcurrent
+	}
+
 	output := &S3Output{
-		bucket:          s3Cfg.Bucket,
-		region:          s3Cfg.Region,
-		fileFormat:      s3Cfg.FileFormat,
-		compression:     s3Cfg.Compression,
-		partitionBy:     s3Cfg.PartitionBy,
-		accessKeyID:     s3Cfg.AccessKeyID,
-		secretAccessKey: s3Cfg.SecretAccessKey,
-		endpoint:        s3Cfg.Endpoint,
-		batchSize:       s3Cfg.BatchSize,
-		buffer:          make([]source.Record, 0, s3Cfg.BatchSize),
+		bucket:              s3Cfg.Bucket,
+		region:              s3Cfg.Region,
+		fileFormat:          s3Cfg.FileFormat,
+		compression:         s3Cfg.Compression,
+		partitionBy:         s3Cfg.PartitionBy,
+		accessKeyID:         s3Cfg.AccessKeyID,
+		secretAccessKey:     s3Cfg.SecretAccessKey,
+		endpoint:            s3Cfg.Endpoint,
+		batchSize:           s3Cfg.BatchSize,
+		buffer:              make([]source.Record, 0, s3Cfg.BatchSize),
+		multipartPartSize:   multipartPartSizeVal,
+		multipartConcurrent: multipartConcurrent,
 	}
 
 	// Path 템플릿 파싱
@@ -201,6 +232,15 @@ func parseS3Config(cfg pipelineConfig.OutputConfig) (*S3Config, error) {
 	}
 	if endpoint, ok := cfg.Config["endpoint"].(string); ok {
 		s3Cfg.Endpoint = endpoint
+	}
+	if multipartPartSize, ok := cfg.Config["multipart_part_size"].(string); ok {
+		s3Cfg.MultipartPartSize = multipartPartSize
+	}
+	if multipartConcurrent, ok := cfg.Config["multipart_concurrent"].(int); ok {
+		s3Cfg.MultipartConcurrent = multipartConcurrent
+	}
+	if multipartConcurrentF, ok := cfg.Config["multipart_concurrent"].(float64); ok {
+		s3Cfg.MultipartConcurrent = int(multipartConcurrentF)
 	}
 
 	return s3Cfg, nil
@@ -402,21 +442,30 @@ func (o *S3Output) uploadRecords(ctx context.Context, records []source.Record) e
 			key += ".gz"
 		}
 
-		// S3 업로드
-		_, err = o.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:      aws.String(o.bucket),
-			Key:         aws.String(key),
-			Body:        bytes.NewReader(data),
-			ContentType: aws.String(o.getContentType()),
-		})
-		if err != nil {
-			log.Printf("[s3] Upload error for %s: %v", key, err)
+		// S3 업로드 (크기에 따라 single/multipart 선택)
+		var uploadErr error
+		if int64(len(data)) >= multipartThreshold {
+			uploadErr = o.multipartUpload(ctx, key, data)
+		} else {
+			_, uploadErr = o.client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:      aws.String(o.bucket),
+				Key:         aws.String(key),
+				Body:        bytes.NewReader(data),
+				ContentType: aws.String(o.getContentType()),
+			})
+		}
+		if uploadErr != nil {
+			log.Printf("[s3] Upload error for %s: %v", key, uploadErr)
 			totalErrors += int64(len(partitionRecords))
 			continue
 		}
 
-		log.Printf("[s3] Uploaded %d records to s3://%s/%s (%d bytes)",
-			len(partitionRecords), o.bucket, key, len(data))
+		uploadType := "single"
+		if int64(len(data)) >= multipartThreshold {
+			uploadType = "multipart"
+		}
+		log.Printf("[s3] Uploaded %d records to s3://%s/%s (%d bytes, %s)",
+			len(partitionRecords), o.bucket, key, len(data), uploadType)
 	}
 
 	successCount := int64(len(records)) - totalErrors
@@ -613,6 +662,129 @@ func (o *S3Output) getContentType() string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// multipartUpload S3 Multipart Upload 수행
+func (o *S3Output) multipartUpload(ctx context.Context, key string, data []byte) error {
+	// Multipart Upload 시작
+	createResp, err := o.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(o.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(o.getContentType()),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create multipart upload: %w", err)
+	}
+
+	uploadID := *createResp.UploadId
+	defer func() {
+		// 에러 시 abort (성공 시에는 이미 complete됨)
+		if err != nil {
+			_, abortErr := o.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+				Bucket:   aws.String(o.bucket),
+				Key:      aws.String(key),
+				UploadId: aws.String(uploadID),
+			})
+			if abortErr != nil {
+				log.Printf("[s3] Warning: failed to abort multipart upload %s: %v", uploadID, abortErr)
+			}
+		}
+	}()
+
+	// 파트 분할 및 업로드
+	var completedParts []types.CompletedPart
+	partNumber := int32(1)
+	offset := 0
+	dataLen := len(data)
+
+	// 동시 업로드를 위한 채널과 에러 추적
+	type partResult struct {
+		partNumber int32
+		etag       string
+		err        error
+	}
+
+	partChan := make(chan partResult, o.multipartConcurrent)
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, o.multipartConcurrent)
+
+	// 파트 업로드
+	for offset < dataLen {
+		end := offset + int(o.multipartPartSize)
+		if end > dataLen {
+			end = dataLen
+		}
+
+		partData := data[offset:end]
+		currentPartNumber := partNumber
+
+		wg.Add(1)
+		go func(pn int32, pd []byte) {
+			defer wg.Done()
+
+			semaphore <- struct{}{}        // acquire
+			defer func() { <-semaphore }() // release
+
+			resp, uploadErr := o.client.UploadPart(ctx, &s3.UploadPartInput{
+				Bucket:     aws.String(o.bucket),
+				Key:        aws.String(key),
+				UploadId:   aws.String(uploadID),
+				PartNumber: aws.Int32(pn),
+				Body:       bytes.NewReader(pd),
+			})
+
+			result := partResult{partNumber: pn}
+			if uploadErr != nil {
+				result.err = uploadErr
+			} else {
+				result.etag = *resp.ETag
+			}
+			partChan <- result
+		}(currentPartNumber, partData)
+
+		offset = end
+		partNumber++
+	}
+
+	// 결과 수집을 위한 고루틴
+	go func() {
+		wg.Wait()
+		close(partChan)
+	}()
+
+	// 결과 수집
+	partsMap := make(map[int32]string)
+	for result := range partChan {
+		if result.err != nil {
+			return fmt.Errorf("failed to upload part %d: %w", result.partNumber, result.err)
+		}
+		partsMap[result.partNumber] = result.etag
+	}
+
+	// 파트 순서대로 정렬
+	for i := int32(1); i < partNumber; i++ {
+		etag := partsMap[i]
+		completedParts = append(completedParts, types.CompletedPart{
+			PartNumber: aws.Int32(i),
+			ETag:       aws.String(etag),
+		})
+	}
+
+	// Multipart Upload 완료
+	_, err = o.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(o.bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to complete multipart upload: %w", err)
+	}
+
+	log.Printf("[s3] Multipart upload completed: %s (%d parts)", key, len(completedParts))
+	return nil
 }
 
 func (o *S3Output) backgroundFlush() {

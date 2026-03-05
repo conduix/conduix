@@ -139,6 +139,18 @@ type DLQConfig struct {
 	// HTTP DLQ (webhook)
 	URL     string            `json:"url,omitempty" yaml:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
+
+	// RabbitMQ DLQ
+	RabbitMQURL      string `json:"rabbitmq_url,omitempty" yaml:"rabbitmq_url,omitempty"`
+	RabbitMQQueue    string `json:"rabbitmq_queue,omitempty" yaml:"rabbitmq_queue,omitempty"`
+	RabbitMQExchange string `json:"rabbitmq_exchange,omitempty" yaml:"rabbitmq_exchange,omitempty"`
+	RabbitMQRouting  string `json:"rabbitmq_routing_key,omitempty" yaml:"rabbitmq_routing_key,omitempty"`
+
+	// SQS DLQ
+	SQSQueueURL        string `json:"sqs_queue_url,omitempty" yaml:"sqs_queue_url,omitempty"`
+	SQSRegion          string `json:"sqs_region,omitempty" yaml:"sqs_region,omitempty"`
+	SQSAccessKeyID     string `json:"sqs_access_key_id,omitempty" yaml:"sqs_access_key_id,omitempty"`
+	SQSSecretAccessKey string `json:"sqs_secret_access_key,omitempty" yaml:"sqs_secret_access_key,omitempty"`
 }
 
 // ContractMetrics 계약 검증 메트릭

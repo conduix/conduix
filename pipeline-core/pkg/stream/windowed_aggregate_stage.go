@@ -2,11 +2,14 @@ package stream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/go-redis/redis/v8"
 )
 
 // WindowType defines the type of window
@@ -76,6 +79,12 @@ type WindowedAggregateStage struct {
 	// Cleanup ticker
 	cleanupTicker *time.Ticker
 	closeCh       chan struct{}
+
+	// Redis state store (optional)
+	redisClient        *redis.Client
+	redisKeyPrefix     string
+	statePersistPeriod time.Duration
+	persistTicker      *time.Ticker
 }
 
 // windowState holds the state for a window
@@ -184,16 +193,17 @@ func (a *aggregator) Result() any {
 // NewWindowedAggregateStage creates a new windowed aggregation stage
 func NewWindowedAggregateStage(name string, config map[string]any) (*WindowedAggregateStage, error) {
 	s := &WindowedAggregateStage{
-		BaseStage:         BaseStage{name: name, typ: "windowed_aggregate", config: config},
-		windowType:        WindowTumbling,
-		windowSize:        time.Minute,
-		gracePeriod:       10 * time.Second,
-		emitMode:          EmitOnClose,
-		includeWindowInfo: true,
-		timestampField:    "_timestamp",
-		windows:           make(map[string]*windowState),
-		outputCh:          make(chan *Record, 1000),
-		closeCh:           make(chan struct{}),
+		BaseStage:          BaseStage{name: name, typ: "windowed_aggregate", config: config},
+		windowType:         WindowTumbling,
+		windowSize:         time.Minute,
+		gracePeriod:        10 * time.Second,
+		emitMode:           EmitOnClose,
+		includeWindowInfo:  true,
+		timestampField:     "_timestamp",
+		windows:            make(map[string]*windowState),
+		outputCh:           make(chan *Record, 1000),
+		closeCh:            make(chan struct{}),
+		statePersistPeriod: 30 * time.Second, // 기본 30초마다 상태 저장
 	}
 
 	// Parse window config
@@ -271,6 +281,64 @@ func NewWindowedAggregateStage(name string, config map[string]any) (*WindowedAgg
 	// Parse timestamp field
 	if tf, ok := config["timestamp_field"].(string); ok {
 		s.timestampField = tf
+	}
+
+	// Parse Redis state store config
+	if stateStore, ok := config["state_store"].(map[string]any); ok {
+		if storeType, ok := stateStore["type"].(string); ok && storeType == "redis" {
+			if addr, ok := stateStore["address"].(string); ok {
+				password := ""
+				if p, ok := stateStore["password"].(string); ok {
+					password = p
+				}
+				db := 0
+				if d, ok := stateStore["db"].(int); ok {
+					db = d
+				}
+				if df, ok := stateStore["db"].(float64); ok {
+					db = int(df)
+				}
+
+				s.redisClient = redis.NewClient(&redis.Options{
+					Addr:     addr,
+					Password: password,
+					DB:       db,
+				})
+
+				// Key prefix
+				s.redisKeyPrefix = fmt.Sprintf("conduix:window:%s:", name)
+				if prefix, ok := stateStore["key_prefix"].(string); ok {
+					s.redisKeyPrefix = prefix
+				}
+
+				// Persist period
+				if period, ok := stateStore["persist_period"].(string); ok {
+					if d, err := time.ParseDuration(period); err == nil {
+						s.statePersistPeriod = d
+					}
+				}
+
+				// Test connection
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if _, err := s.redisClient.Ping(ctx).Result(); err != nil {
+					cancel()
+					return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+				}
+				cancel()
+
+				// Restore state from Redis
+				if err := s.restoreStateFromRedis(); err != nil {
+					fmt.Printf("[windowed_aggregate] Warning: failed to restore state from Redis: %v\n", err)
+				}
+
+				// Start persist goroutine
+				s.persistTicker = time.NewTicker(s.statePersistPeriod)
+				go s.persistLoop()
+
+				fmt.Printf("[windowed_aggregate] Redis state store enabled: %s (prefix=%s, persist_period=%s)\n",
+					addr, s.redisKeyPrefix, s.statePersistPeriod)
+			}
+		}
 	}
 
 	// Start cleanup goroutine
@@ -544,10 +612,198 @@ func (s *WindowedAggregateStage) FlushWindows() []*Record {
 	}
 }
 
+// persistLoop 주기적으로 상태를 Redis에 저장
+func (s *WindowedAggregateStage) persistLoop() {
+	for {
+		select {
+		case <-s.closeCh:
+			return
+		case <-s.persistTicker.C:
+			if err := s.persistStateToRedis(); err != nil {
+				fmt.Printf("[windowed_aggregate] Error persisting state to Redis: %v\n", err)
+			}
+		}
+	}
+}
+
+// persistStateToRedis 현재 윈도우 상태를 Redis에 저장
+func (s *WindowedAggregateStage) persistStateToRedis() error {
+	if s.redisClient == nil {
+		return nil
+	}
+
+	s.windowsMu.RLock()
+	defer s.windowsMu.RUnlock()
+
+	ctx := context.Background()
+	pipe := s.redisClient.Pipeline()
+
+	for key, ws := range s.windows {
+		// Serialize window state
+		stateData := serializableWindowState{
+			StartTime:    ws.startTime.UnixMilli(),
+			EndTime:      ws.endTime.UnixMilli(),
+			GroupKey:     ws.groupKey,
+			GroupValues:  ws.groupValues,
+			LastActivity: ws.lastActivity.UnixMilli(),
+			Aggregators:  make(map[string]serializableAggregator),
+		}
+
+		for field, agg := range ws.aggregators {
+			stateData.Aggregators[field] = serializableAggregator{
+				Function:    string(agg.function),
+				Count:       agg.count,
+				Sum:         agg.sum,
+				Min:         agg.min,
+				Max:         agg.max,
+				First:       agg.first,
+				Last:        agg.last,
+				DistinctSet: agg.distinctSet,
+				Initialized: agg.initialized,
+			}
+		}
+
+		data, err := json.Marshal(stateData)
+		if err != nil {
+			continue
+		}
+
+		redisKey := s.redisKeyPrefix + key
+		pipe.Set(ctx, redisKey, data, s.windowSize+s.gracePeriod+time.Hour) // TTL
+	}
+
+	// Store watermark
+	pipe.Set(ctx, s.redisKeyPrefix+"__watermark__", s.watermark.UnixMilli(), 24*time.Hour)
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to persist state: %w", err)
+	}
+
+	fmt.Printf("[windowed_aggregate] Persisted %d windows to Redis\n", len(s.windows))
+	return nil
+}
+
+// restoreStateFromRedis Redis에서 윈도우 상태 복원
+func (s *WindowedAggregateStage) restoreStateFromRedis() error {
+	if s.redisClient == nil {
+		return nil
+	}
+
+	ctx := context.Background()
+
+	// Get all keys with prefix
+	keys, err := s.redisClient.Keys(ctx, s.redisKeyPrefix+"*").Result()
+	if err != nil {
+		return fmt.Errorf("failed to get keys: %w", err)
+	}
+
+	s.windowsMu.Lock()
+	defer s.windowsMu.Unlock()
+
+	restoredCount := 0
+	for _, key := range keys {
+		// Skip watermark key
+		if key == s.redisKeyPrefix+"__watermark__" {
+			wmData, err := s.redisClient.Get(ctx, key).Result()
+			if err == nil {
+				var wmMs int64
+				if json.Unmarshal([]byte(wmData), &wmMs) == nil {
+					s.watermark = time.UnixMilli(wmMs)
+				}
+			}
+			continue
+		}
+
+		data, err := s.redisClient.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+
+		var stateData serializableWindowState
+		if err := json.Unmarshal([]byte(data), &stateData); err != nil {
+			continue
+		}
+
+		// Reconstruct window state
+		ws := &windowState{
+			startTime:    time.UnixMilli(stateData.StartTime),
+			endTime:      time.UnixMilli(stateData.EndTime),
+			groupKey:     stateData.GroupKey,
+			groupValues:  stateData.GroupValues,
+			lastActivity: time.UnixMilli(stateData.LastActivity),
+			aggregators:  make(map[string]*aggregator),
+		}
+
+		for field, aggData := range stateData.Aggregators {
+			agg := &aggregator{
+				function:    AggregationFunction(aggData.Function),
+				count:       aggData.Count,
+				sum:         aggData.Sum,
+				min:         aggData.Min,
+				max:         aggData.Max,
+				first:       aggData.First,
+				last:        aggData.Last,
+				distinctSet: aggData.DistinctSet,
+				initialized: aggData.Initialized,
+			}
+			if agg.distinctSet == nil {
+				agg.distinctSet = make(map[uint64]struct{})
+			}
+			ws.aggregators[field] = agg
+		}
+
+		windowKey := key[len(s.redisKeyPrefix):]
+		s.windows[windowKey] = ws
+		restoredCount++
+	}
+
+	if restoredCount > 0 {
+		fmt.Printf("[windowed_aggregate] Restored %d windows from Redis (watermark: %s)\n",
+			restoredCount, s.watermark.Format(time.RFC3339))
+	}
+
+	return nil
+}
+
+// serializableWindowState Redis 저장용 직렬화 가능한 윈도우 상태
+type serializableWindowState struct {
+	StartTime    int64                            `json:"start_time"`
+	EndTime      int64                            `json:"end_time"`
+	GroupKey     string                           `json:"group_key"`
+	GroupValues  map[string]any                   `json:"group_values"`
+	LastActivity int64                            `json:"last_activity"`
+	Aggregators  map[string]serializableAggregator `json:"aggregators"`
+}
+
+// serializableAggregator Redis 저장용 직렬화 가능한 집계자
+type serializableAggregator struct {
+	Function    string               `json:"function"`
+	Count       int64                `json:"count"`
+	Sum         float64              `json:"sum"`
+	Min         float64              `json:"min"`
+	Max         float64              `json:"max"`
+	First       any                  `json:"first,omitempty"`
+	Last        any                  `json:"last,omitempty"`
+	DistinctSet map[uint64]struct{} `json:"distinct_set,omitempty"`
+	Initialized bool                 `json:"initialized"`
+}
+
 func (s *WindowedAggregateStage) Close() error {
 	close(s.closeCh)
 	if s.cleanupTicker != nil {
 		s.cleanupTicker.Stop()
+	}
+	if s.persistTicker != nil {
+		s.persistTicker.Stop()
+	}
+
+	// Persist final state to Redis before closing
+	if s.redisClient != nil {
+		if err := s.persistStateToRedis(); err != nil {
+			fmt.Printf("[windowed_aggregate] Warning: failed to persist final state: %v\n", err)
+		}
+		_ = s.redisClient.Close()
 	}
 
 	// Flush remaining windows

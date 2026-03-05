@@ -77,11 +77,23 @@ spec:
           value: "${NAVER_CLIENT_ID}"
 
         # ===========================================
+        # Image Tags
+        # ===========================================
+        - name: controlPlane.image.tag
+          value: "main"
+        - name: agent.image.tag
+          value: "main"
+        - name: webUI.image.tag
+          value: "main"
+
+        # ===========================================
         # Image Pull Policy (Always for local dev)
         # ===========================================
         - name: controlPlane.image.pullPolicy
           value: "Always"
         - name: agent.image.pullPolicy
+          value: "Always"
+        - name: webUI.image.pullPolicy
           value: "Always"
 
         # ===========================================

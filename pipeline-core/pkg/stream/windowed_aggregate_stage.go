@@ -768,25 +768,25 @@ func (s *WindowedAggregateStage) restoreStateFromRedis() error {
 
 // serializableWindowState Redis 저장용 직렬화 가능한 윈도우 상태
 type serializableWindowState struct {
-	StartTime    int64                            `json:"start_time"`
-	EndTime      int64                            `json:"end_time"`
-	GroupKey     string                           `json:"group_key"`
-	GroupValues  map[string]any                   `json:"group_values"`
-	LastActivity int64                            `json:"last_activity"`
+	StartTime    int64                             `json:"start_time"`
+	EndTime      int64                             `json:"end_time"`
+	GroupKey     string                            `json:"group_key"`
+	GroupValues  map[string]any                    `json:"group_values"`
+	LastActivity int64                             `json:"last_activity"`
 	Aggregators  map[string]serializableAggregator `json:"aggregators"`
 }
 
 // serializableAggregator Redis 저장용 직렬화 가능한 집계자
 type serializableAggregator struct {
-	Function    string               `json:"function"`
-	Count       int64                `json:"count"`
-	Sum         float64              `json:"sum"`
-	Min         float64              `json:"min"`
-	Max         float64              `json:"max"`
-	First       any                  `json:"first,omitempty"`
-	Last        any                  `json:"last,omitempty"`
+	Function    string              `json:"function"`
+	Count       int64               `json:"count"`
+	Sum         float64             `json:"sum"`
+	Min         float64             `json:"min"`
+	Max         float64             `json:"max"`
+	First       any                 `json:"first,omitempty"`
+	Last        any                 `json:"last,omitempty"`
 	DistinctSet map[uint64]struct{} `json:"distinct_set,omitempty"`
-	Initialized bool                 `json:"initialized"`
+	Initialized bool                `json:"initialized"`
 }
 
 func (s *WindowedAggregateStage) Close() error {

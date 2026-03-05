@@ -182,14 +182,14 @@ type InputV2 struct {
 	SSELastEventID   string `yaml:"sse_last_event_id,omitempty" json:"sse_last_event_id,omitempty"`   // 마지막 이벤트 ID (재시작 시 복원용)
 
 	// Google Cloud Pub/Sub
-	PubSubProjectID              string `yaml:"pubsub_project_id,omitempty" json:"pubsub_project_id,omitempty"`                               // GCP 프로젝트 ID
-	PubSubSubscription           string `yaml:"pubsub_subscription,omitempty" json:"pubsub_subscription,omitempty"`                           // 구독 이름
-	PubSubCredentialsFile        string `yaml:"pubsub_credentials_file,omitempty" json:"pubsub_credentials_file,omitempty"`                   // 서비스 계정 JSON 파일 경로
-	PubSubMaxOutstandingMessages int    `yaml:"pubsub_max_outstanding_messages,omitempty" json:"pubsub_max_outstanding_messages,omitempty"`   // 최대 동시 처리 메시지 수 (default: 1000)
-	PubSubMaxOutstandingBytes    int    `yaml:"pubsub_max_outstanding_bytes,omitempty" json:"pubsub_max_outstanding_bytes,omitempty"`         // 최대 동시 처리 바이트 (default: 100MB)
-	PubSubMaxExtension           string `yaml:"pubsub_max_extension,omitempty" json:"pubsub_max_extension,omitempty"`                         // ack deadline 최대 연장 시간 (default: "10m")
-	PubSubNumGoroutines          int    `yaml:"pubsub_num_goroutines,omitempty" json:"pubsub_num_goroutines,omitempty"`                       // 메시지 처리 고루틴 수 (default: 10)
-	PubSubSynchronous            bool   `yaml:"pubsub_synchronous,omitempty" json:"pubsub_synchronous,omitempty"`                             // 동기 처리 모드 (default: false)
+	PubSubProjectID              string `yaml:"pubsub_project_id,omitempty" json:"pubsub_project_id,omitempty"`                             // GCP 프로젝트 ID
+	PubSubSubscription           string `yaml:"pubsub_subscription,omitempty" json:"pubsub_subscription,omitempty"`                         // 구독 이름
+	PubSubCredentialsFile        string `yaml:"pubsub_credentials_file,omitempty" json:"pubsub_credentials_file,omitempty"`                 // 서비스 계정 JSON 파일 경로
+	PubSubMaxOutstandingMessages int    `yaml:"pubsub_max_outstanding_messages,omitempty" json:"pubsub_max_outstanding_messages,omitempty"` // 최대 동시 처리 메시지 수 (default: 1000)
+	PubSubMaxOutstandingBytes    int    `yaml:"pubsub_max_outstanding_bytes,omitempty" json:"pubsub_max_outstanding_bytes,omitempty"`       // 최대 동시 처리 바이트 (default: 100MB)
+	PubSubMaxExtension           string `yaml:"pubsub_max_extension,omitempty" json:"pubsub_max_extension,omitempty"`                       // ack deadline 최대 연장 시간 (default: "10m")
+	PubSubNumGoroutines          int    `yaml:"pubsub_num_goroutines,omitempty" json:"pubsub_num_goroutines,omitempty"`                     // 메시지 처리 고루틴 수 (default: 10)
+	PubSubSynchronous            bool   `yaml:"pubsub_synchronous,omitempty" json:"pubsub_synchronous,omitempty"`                           // 동기 처리 모드 (default: false)
 }
 
 // SourceV2는 InputV2의 별칭 (하위 호환성)

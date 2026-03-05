@@ -235,8 +235,8 @@ func (h *CheckpointHandler) UpdateCheckpoint(c *gin.Context) {
 	var req struct {
 		WorkflowID   string `json:"workflow_id" binding:"required"`
 		PipelineName string `json:"pipeline_name"`
-		InputType    string `json:"input_type"`                      // 새 필드명
-		SourceType   string `json:"source_type"`                     // 하위호환성
+		InputType    string `json:"input_type"`  // 새 필드명
+		SourceType   string `json:"source_type"` // 하위호환성
 		PartitionKey string `json:"partition_key" binding:"required"`
 		OffsetValue  string `json:"offset_value" binding:"required"`
 		OffsetType   string `json:"offset_type" binding:"required"`

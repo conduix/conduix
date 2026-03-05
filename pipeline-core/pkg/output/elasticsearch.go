@@ -98,21 +98,21 @@ type ElasticsearchTLS struct {
 
 // ElasticsearchRetry Retry 설정
 type ElasticsearchRetry struct {
-	MaxRetries int    `yaml:"max_retries,omitempty" json:"max_retries,omitempty"`       // 최대 재시도 횟수 (기본값: 3)
-	BaseDelay  string `yaml:"base_delay,omitempty" json:"base_delay,omitempty"`         // 초기 대기 시간 (기본값: 1s)
-	MaxDelay   string `yaml:"max_delay,omitempty" json:"max_delay,omitempty"`           // 최대 대기 시간 (기본값: 30s)
-	RetryOn    []int  `yaml:"retry_on,omitempty" json:"retry_on,omitempty"`             // 재시도할 HTTP 상태 코드
+	MaxRetries int    `yaml:"max_retries,omitempty" json:"max_retries,omitempty"` // 최대 재시도 횟수 (기본값: 3)
+	BaseDelay  string `yaml:"base_delay,omitempty" json:"base_delay,omitempty"`   // 초기 대기 시간 (기본값: 1s)
+	MaxDelay   string `yaml:"max_delay,omitempty" json:"max_delay,omitempty"`     // 최대 대기 시간 (기본값: 30s)
+	RetryOn    []int  `yaml:"retry_on,omitempty" json:"retry_on,omitempty"`       // 재시도할 HTTP 상태 코드
 }
 
 // IndexTemplateDefinition Index Template 정의
 type IndexTemplateDefinition struct {
-	Name           string                 `yaml:"name" json:"name"`                                         // 템플릿 이름
-	IndexPatterns  []string               `yaml:"index_patterns" json:"index_patterns"`                     // 인덱스 패턴 (예: ["events-*"])
-	Priority       int                    `yaml:"priority,omitempty" json:"priority,omitempty"`             // 우선순위
-	NumberOfShards int                    `yaml:"number_of_shards,omitempty" json:"number_of_shards,omitempty"`
-	NumberOfReplicas int                  `yaml:"number_of_replicas,omitempty" json:"number_of_replicas,omitempty"`
-	Mappings       map[string]interface{} `yaml:"mappings,omitempty" json:"mappings,omitempty"`             // 필드 매핑
-	Settings       map[string]interface{} `yaml:"settings,omitempty" json:"settings,omitempty"`             // 추가 설정
+	Name             string                 `yaml:"name" json:"name"`                             // 템플릿 이름
+	IndexPatterns    []string               `yaml:"index_patterns" json:"index_patterns"`         // 인덱스 패턴 (예: ["events-*"])
+	Priority         int                    `yaml:"priority,omitempty" json:"priority,omitempty"` // 우선순위
+	NumberOfShards   int                    `yaml:"number_of_shards,omitempty" json:"number_of_shards,omitempty"`
+	NumberOfReplicas int                    `yaml:"number_of_replicas,omitempty" json:"number_of_replicas,omitempty"`
+	Mappings         map[string]interface{} `yaml:"mappings,omitempty" json:"mappings,omitempty"` // 필드 매핑
+	Settings         map[string]interface{} `yaml:"settings,omitempty" json:"settings,omitempty"` // 추가 설정
 }
 
 // NewElasticsearchOutput Elasticsearch 출력 생성

@@ -91,10 +91,10 @@ func NewStreamJoinStage(name string, config map[string]any) (*StreamJoinStage, e
 		joinType:          JoinInner,
 		outputCh:          make(chan *Record, 100),
 		closeCh:           make(chan struct{}),
-		allowedLateness:   10 * time.Second,          // Default 10 seconds grace period
-		watermarkInterval: 5 * time.Second,           // Default 5 seconds
-		emitOnWatermark:   false,                     // Default: don't emit on watermark
-		lateDataHandler:   LateDataBuffer,            // Default: buffer late data
+		allowedLateness:   10 * time.Second, // Default 10 seconds grace period
+		watermarkInterval: 5 * time.Second,  // Default 5 seconds
+		emitOnWatermark:   false,            // Default: don't emit on watermark
+		lateDataHandler:   LateDataBuffer,   // Default: buffer late data
 	}
 
 	// Parse join type

@@ -29,7 +29,8 @@ type CheckpointResponse struct {
 	WorkflowID   string    `json:"workflow_id"`
 	PipelineID   string    `json:"pipeline_id"`
 	PipelineName string    `json:"pipeline_name"`
-	SourceType   string    `json:"source_type"`
+	InputType    string    `json:"input_type"`  // Input 타입 (하위호환성: source_type도 지원)
+	SourceType   string    `json:"source_type"` // Deprecated: input_type을 사용하세요
 	PartitionKey string    `json:"partition_key"`
 	OffsetValue  string    `json:"offset_value"`
 	OffsetType   string    `json:"offset_type"`
@@ -59,7 +60,7 @@ type ResetCheckpointRequest struct {
 func (h *CheckpointHandler) ListCheckpoints(c *gin.Context) {
 	pipelineID := c.Param("id")
 
-	var checkpoints []models.SourceCheckpoint
+	var checkpoints []models.InputCheckpoint
 	result := h.db.Where("pipeline_id = ?", pipelineID).
 		Order("partition_key ASC").
 		Find(&checkpoints)
@@ -69,7 +70,7 @@ func (h *CheckpointHandler) ListCheckpoints(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, types.APIResponse[[]models.SourceCheckpoint]{
+	c.JSON(http.StatusOK, types.APIResponse[[]models.InputCheckpoint]{
 		Success: true,
 		Data:    checkpoints,
 	})
@@ -81,7 +82,7 @@ func (h *CheckpointHandler) GetCheckpoint(c *gin.Context) {
 	pipelineID := c.Param("id")
 	partitionKey := c.Param("partitionKey")
 
-	var checkpoint models.SourceCheckpoint
+	var checkpoint models.InputCheckpoint
 	result := h.db.Where("pipeline_id = ? AND partition_key = ?", pipelineID, partitionKey).First(&checkpoint)
 
 	if result.Error != nil {
@@ -89,7 +90,7 @@ func (h *CheckpointHandler) GetCheckpoint(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, types.APIResponse[models.SourceCheckpoint]{
+	c.JSON(http.StatusOK, types.APIResponse[models.InputCheckpoint]{
 		Success: true,
 		Data:    checkpoint,
 	})
@@ -120,7 +121,7 @@ func (h *CheckpointHandler) ResetCheckpoints(c *gin.Context) {
 	}
 
 	// 기존 체크포인트 조회
-	var checkpoints []models.SourceCheckpoint
+	var checkpoints []models.InputCheckpoint
 	query := h.db.Where("pipeline_id = ?", pipelineID)
 
 	// 특정 파티션만 리셋하는 경우
@@ -142,7 +143,7 @@ func (h *CheckpointHandler) ResetCheckpoints(c *gin.Context) {
 	switch req.Mode {
 	case "beginning":
 		// 체크포인트 삭제 (처음부터 시작)
-		if err := query.Delete(&models.SourceCheckpoint{}).Error; err != nil {
+		if err := query.Delete(&models.InputCheckpoint{}).Error; err != nil {
 			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, err.Error())
 			return
 		}
@@ -183,7 +184,7 @@ func (h *CheckpointHandler) ResetCheckpoints(c *gin.Context) {
 	}
 
 	// 업데이트된 체크포인트 반환
-	var updatedCheckpoints []models.SourceCheckpoint
+	var updatedCheckpoints []models.InputCheckpoint
 	h.db.Where("pipeline_id = ?", pipelineID).Find(&updatedCheckpoints)
 
 	c.JSON(http.StatusOK, types.APIResponse[map[string]any]{
@@ -211,7 +212,7 @@ func (h *CheckpointHandler) DeleteCheckpoints(c *gin.Context) {
 		query = query.Where("partition_key = ?", partitionKey)
 	}
 
-	result := query.Delete(&models.SourceCheckpoint{})
+	result := query.Delete(&models.InputCheckpoint{})
 	if result.Error != nil {
 		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, result.Error.Error())
 		return
@@ -234,7 +235,8 @@ func (h *CheckpointHandler) UpdateCheckpoint(c *gin.Context) {
 	var req struct {
 		WorkflowID   string `json:"workflow_id" binding:"required"`
 		PipelineName string `json:"pipeline_name"`
-		SourceType   string `json:"source_type" binding:"required"`
+		InputType    string `json:"input_type"`                      // 새 필드명
+		SourceType   string `json:"source_type"`                     // 하위호환성
 		PartitionKey string `json:"partition_key" binding:"required"`
 		OffsetValue  string `json:"offset_value" binding:"required"`
 		OffsetType   string `json:"offset_type" binding:"required"`
@@ -247,18 +249,28 @@ func (h *CheckpointHandler) UpdateCheckpoint(c *gin.Context) {
 		return
 	}
 
+	// 하위 호환성: input_type이 없으면 source_type 사용
+	inputType := req.InputType
+	if inputType == "" {
+		inputType = req.SourceType
+	}
+	if inputType == "" {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, "input_type or source_type is required")
+		return
+	}
+
 	// Upsert: 있으면 업데이트, 없으면 생성
-	var checkpoint models.SourceCheckpoint
+	var checkpoint models.InputCheckpoint
 	result := h.db.Where("pipeline_id = ? AND partition_key = ?", pipelineID, req.PartitionKey).First(&checkpoint)
 
 	if result.Error != nil {
 		// 새로 생성
-		checkpoint = models.SourceCheckpoint{
+		checkpoint = models.InputCheckpoint{
 			ID:           uuid.New().String(),
 			WorkflowID:   req.WorkflowID,
 			PipelineID:   pipelineID,
 			PipelineName: req.PipelineName,
-			SourceType:   req.SourceType,
+			InputType:    inputType,
 			PartitionKey: req.PartitionKey,
 			OffsetValue:  req.OffsetValue,
 			OffsetType:   req.OffsetType,
@@ -283,7 +295,7 @@ func (h *CheckpointHandler) UpdateCheckpoint(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, types.APIResponse[models.SourceCheckpoint]{
+	c.JSON(http.StatusOK, types.APIResponse[models.InputCheckpoint]{
 		Success: true,
 		Data:    checkpoint,
 	})
@@ -294,7 +306,7 @@ func (h *CheckpointHandler) UpdateCheckpoint(c *gin.Context) {
 func (h *CheckpointHandler) GetCheckpointsByWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 
-	var checkpoints []models.SourceCheckpoint
+	var checkpoints []models.InputCheckpoint
 	result := h.db.Where("workflow_id = ?", workflowID).
 		Order("pipeline_name ASC, partition_key ASC").
 		Find(&checkpoints)
@@ -305,7 +317,7 @@ func (h *CheckpointHandler) GetCheckpointsByWorkflow(c *gin.Context) {
 	}
 
 	// 파이프라인별로 그룹화
-	grouped := make(map[string][]models.SourceCheckpoint)
+	grouped := make(map[string][]models.InputCheckpoint)
 	for _, cp := range checkpoints {
 		key := cp.PipelineID
 		if cp.PipelineName != "" {

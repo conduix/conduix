@@ -1,10 +1,10 @@
-# 배치 파이프라인 예시: SQL 소스
+# 배치 파이프라인 예시: SQL 입력
 # 데이터베이스에서 데이터를 읽어 처리하는 배치 파이프라인
 
 name: batch-sql-example
 type: batch
 
-source:
+input:
   type: sql
   driver: mysql  # mysql, postgres
   dsn: "${DB_USER}:${DB_PASSWORD}@tcp(${DB_HOST}:3306)/${DB_NAME}"

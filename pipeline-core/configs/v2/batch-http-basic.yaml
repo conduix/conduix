@@ -1,10 +1,10 @@
-# 배치 파이프라인 예시: HTTP 소스 (Basic 인증)
+# 배치 파이프라인 예시: HTTP 입력 (Basic 인증)
 # REST API에서 Basic 인증으로 데이터를 읽어오는 배치 파이프라인
 
 name: batch-http-basic-auth
 type: batch
 
-source:
+input:
   type: http
   url: "https://api.example.com/v1/reports"
   method: GET

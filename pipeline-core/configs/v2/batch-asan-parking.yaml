@@ -3,7 +3,7 @@
 name: asan-parking-enforcement
 type: batch
 
-source:
+input:
   type: http
   # serviceKey를 URL에 포함 (환경변수로 주입)
   url: "https://api.odcloud.kr/api/15040494/v1/uddi:dfcae358-aba1-4553-87c9-f0c3fbc30655?serviceKey=${PUBLIC_API_SERVICE_KEY}"

@@ -39,10 +39,10 @@
 name: "user-sync-pipeline"
 type: batch | realtime
 
-# 데이터 소스
-source:
+# 데이터 입력 (하위 호환: source도 동작)
+input:
   type: file | sql | http | kafka
-  # ... 소스별 설정
+  # ... 타입별 설정
 
 # 실시간 전용 설정
 realtime:
@@ -74,7 +74,7 @@ output:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │                      Source Layer                        │    │
+│  │                      Input Layer                         │    │
 │  │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐          │    │
 │  │  │ File │ │ SQL  │ │ HTTP │ │HTTP+ │ │Kafka │          │    │
 │  │  │      │ │      │ │      │ │Paging│ │      │          │    │
@@ -113,12 +113,12 @@ output:
 
 ---
 
-## 4. 데이터 소스 상세
+## 4. 데이터 입력 (Input) 상세
 
-### 4.1 File Source
+### 4.1 File Input
 
 ```yaml
-source:
+input:
   type: file
   path: "/data/users.json"       # 단일 파일
   paths:                         # 또는 여러 파일
@@ -127,10 +127,10 @@ source:
   csv_header: true               # CSV 헤더 유무
 ```
 
-### 4.2 SQL Source
+### 4.2 SQL Input
 
 ```yaml
-source:
+input:
   type: sql
   driver: mysql | postgres
   dsn: "user:pass@tcp(host:3306)/db"
@@ -143,10 +143,10 @@ source:
     state_key: "users_last_sync"
 ```
 
-### 4.3 HTTP Source (단순)
+### 4.3 HTTP Input (단순)
 
 ```yaml
-source:
+input:
   type: http
   url: "https://api.example.com/users"
   method: GET
@@ -154,10 +154,10 @@ source:
     Content-Type: "application/json"
 ```
 
-### 4.4 HTTP Source (페이징)
+### 4.4 HTTP Input (페이징)
 
 ```yaml
-source:
+input:
   type: http
   url: "https://api.example.com/users"
   method: GET
@@ -168,10 +168,10 @@ source:
     max_pages: 100              # 최대 페이지 (무한 루프 방지)
 ```
 
-### 4.5 HTTP Source (인증)
+### 4.5 HTTP Input (인증)
 
 ```yaml
-source:
+input:
   type: http
   url: "https://api.example.com/users"
   auth:
@@ -188,10 +188,10 @@ source:
     scopes: ["read:users"]
 ```
 
-### 4.6 Kafka Source
+### 4.6 Kafka Input
 
 ```yaml
-source:
+input:
   type: kafka
   brokers:
     - "kafka:9092"
@@ -333,7 +333,7 @@ steps:
 ## 8. 구현 순서
 
 1. **설정 파서**: 새 YAML 형식 파싱
-2. **소스 구현**: File → SQL → HTTP → Kafka
+2. **Input 구현**: File → SQL → HTTP → Kafka
 3. **파이프라인 코어**: Batch/Realtime 모드 분기
 4. **중복 제거**: Redis 기반 dedup
 5. **Upsert 로직**: 이벤트 타입별 처리

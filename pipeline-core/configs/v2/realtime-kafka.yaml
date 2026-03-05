@@ -1,11 +1,11 @@
-# 실시간 파이프라인 예시: Kafka 소스
+# 실시간 파이프라인 예시: Kafka 입력
 # Kafka에서 이벤트를 실시간으로 처리하는 파이프라인
 # 중복 제거 및 Upsert 로직 포함
 
 name: realtime-kafka-events
 type: realtime
 
-source:
+input:
   type: kafka
   brokers:
     - "kafka-1:9092"

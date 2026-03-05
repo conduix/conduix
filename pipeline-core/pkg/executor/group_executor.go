@@ -35,8 +35,8 @@ type GroupExecutor struct {
 
 	// Checkpoint 관련
 	checkpointClient *checkpoint.Client
-	activeSources    map[string]source.Source // pipelineID -> source
-	sourcesMu        sync.RWMutex
+	activeInputs     map[string]source.Source // pipelineID -> input source
+	inputsMu         sync.RWMutex
 
 	// Monitoring 관련
 	sampleBuffers   map[string]*SampleBuffer   // pipelineID -> SampleBuffer
@@ -76,7 +76,7 @@ func NewGroupExecutor(group *types.PipelineGroup, opts ...GroupExecutorOption) *
 		status:          types.PipelineGroupStatusIdle,
 		resultCh:        make(chan *types.PipelineExecutionResult, len(group.Pipelines)),
 		errorCh:         make(chan error, len(group.Pipelines)),
-		activeSources:   make(map[string]source.Source),
+		activeInputs:    make(map[string]source.Source),
 		sampleBuffers:   make(map[string]*SampleBuffer),
 		statsCollectors: make(map[string]*StatsCollector),
 		parentToChilds:  make(map[string][]link.PipelineLink),
@@ -542,14 +542,14 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 
 	// 활성 소스 추적
 	if src != nil {
-		e.sourcesMu.Lock()
-		e.activeSources[pipeline.ID] = src
-		e.sourcesMu.Unlock()
+		e.inputsMu.Lock()
+		e.activeInputs[pipeline.ID] = src
+		e.inputsMu.Unlock()
 
 		defer func() {
-			e.sourcesMu.Lock()
-			delete(e.activeSources, pipeline.ID)
-			e.sourcesMu.Unlock()
+			e.inputsMu.Lock()
+			delete(e.activeInputs, pipeline.ID)
+			e.inputsMu.Unlock()
 		}()
 	}
 
@@ -1322,43 +1322,43 @@ type PipelineRunner struct {
 // 소스 생성 헬퍼 함수들
 func createKafkaSourceFromConfig(config map[string]any) (source.Source, error) {
 	// config를 pkg/config.SourceV2로 변환
-	cfg := configToSourceV2(config)
+	cfg := configToInputV2(config)
 	cfg.Type = "kafka"
 	return source.NewKafkaSource(cfg)
 }
 
 func createHTTPSourceFromConfig(config map[string]any) (source.Source, error) {
-	cfg := configToSourceV2(config)
+	cfg := configToInputV2(config)
 	cfg.Type = "http"
 	return source.NewHTTPSource(cfg)
 }
 
 func createSQLSourceFromConfig(config map[string]any) (source.Source, error) {
-	cfg := configToSourceV2(config)
+	cfg := configToInputV2(config)
 	cfg.Type = "sql"
 	return source.NewSQLSource(cfg)
 }
 
 func createSQLEventSourceFromConfig(config map[string]any) (source.Source, error) {
-	cfg := configToSourceV2(config)
+	cfg := configToInputV2(config)
 	cfg.Type = "sql_event"
 	return source.NewSQLEventSource(cfg)
 }
 
 func createCDCSourceFromConfig(config map[string]any) (source.Source, error) {
-	cfg := configToSourceV2(config)
+	cfg := configToInputV2(config)
 	cfg.Type = "cdc"
 	return source.NewCDCSource(cfg)
 }
 
 func createFileSourceFromConfig(config map[string]any) (source.Source, error) {
-	cfg := configToSourceV2(config)
+	cfg := configToInputV2(config)
 	cfg.Type = "file"
 	return source.NewFileSource(cfg)
 }
 
 func createKubernetesSourceFromConfig(config map[string]any) (source.Source, error) {
-	cfg := configToSourceV2(config)
+	cfg := configToInputV2(config)
 	cfg.Type = "kubernetes"
 	return source.NewKubernetesSource(cfg)
 }
@@ -1397,8 +1397,8 @@ func (e *GroupExecutor) GetMonitoringInfo() *types.ExecutionMonitoringInfo {
 		}
 
 		// 체크포인트 정보 수집
-		e.sourcesMu.RLock()
-		if src, ok := e.activeSources[pipelineID]; ok {
+		e.inputsMu.RLock()
+		if src, ok := e.activeInputs[pipelineID]; ok {
 			if cpSource, ok := src.(source.CheckpointableSource); ok {
 				checkpoints := cpSource.GetSourceCheckpoints()
 				for _, cp := range checkpoints {
@@ -1411,7 +1411,7 @@ func (e *GroupExecutor) GetMonitoringInfo() *types.ExecutionMonitoringInfo {
 				}
 			}
 		}
-		e.sourcesMu.RUnlock()
+		e.inputsMu.RUnlock()
 
 		// Stage 통계 수집
 		stageStats := statsCollector.GetStageStats()

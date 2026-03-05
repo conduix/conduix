@@ -514,14 +514,14 @@ func (Connection) TableName() string {
 	return "connections"
 }
 
-// SourceCheckpoint 소스 체크포인트 모델
-// Realtime 파이프라인 소스의 오프셋을 추적하여 재시작 시 연속성 보장
-type SourceCheckpoint struct {
+// InputCheckpoint 입력 체크포인트 모델
+// Realtime 파이프라인 입력의 오프셋을 추적하여 재시작 시 연속성 보장
+type InputCheckpoint struct {
 	ID           string    `gorm:"primaryKey;size:36" json:"id"`
 	WorkflowID   string    `gorm:"size:36;not null;index:idx_checkpoint_workflow" json:"workflow_id"`
 	PipelineID   string    `gorm:"size:36;not null;index:idx_checkpoint_pipeline" json:"pipeline_id"`
 	PipelineName string    `gorm:"size:255" json:"pipeline_name"`
-	SourceType   string    `gorm:"size:50;not null" json:"source_type"`                                          // kubernetes, kafka, cdc, sql_event
+	InputType    string    `gorm:"size:50;not null;column:source_type" json:"input_type"` // kubernetes, kafka, cdc, sql_event (DB 컬럼명은 하위호환성 유지)
 	PartitionKey string    `gorm:"size:255;not null;index:idx_checkpoint_partition,unique" json:"partition_key"` // ns/pod/container, topic/partition
 	OffsetValue  string    `gorm:"size:255;not null" json:"offset_value"`                                        // timestamp, offset number
 	OffsetType   string    `gorm:"size:50;not null" json:"offset_type"`                                          // timestamp, numeric
@@ -534,10 +534,14 @@ type SourceCheckpoint struct {
 	// index:idx_checkpoint_partition,unique 에 포함
 }
 
-// TableName 테이블 이름
-func (SourceCheckpoint) TableName() string {
+// TableName 테이블 이름 (하위호환성 유지)
+func (InputCheckpoint) TableName() string {
 	return "source_checkpoints"
 }
+
+// SourceCheckpoint는 InputCheckpoint의 별칭 (하위 호환성)
+// Deprecated: InputCheckpoint를 사용하세요
+type SourceCheckpoint = InputCheckpoint
 
 // PipelineLink 파이프라인 간 연결 모델
 // 부모 파이프라인의 출력을 자식 파이프라인의 입력으로 연결 (Kafka 기반)

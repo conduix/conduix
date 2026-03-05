@@ -45,10 +45,10 @@ type Stats struct {
 
 // New 새 파이프라인 생성
 func New(cfg *config.PipelineConfigV2) (*Pipeline, error) {
-	// 소스 생성
-	src, err := source.NewSource(cfg.Source)
+	// 입력 소스 생성 (GetInput()으로 하위호환성 보장)
+	src, err := source.NewSource(cfg.GetInput())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create source: %w", err)
+		return nil, fmt.Errorf("failed to create input: %w", err)
 	}
 
 	// 프로세서 생성

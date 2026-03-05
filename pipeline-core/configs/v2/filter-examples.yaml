@@ -4,7 +4,7 @@
 name: filter-examples
 type: batch
 
-source:
+input:
   type: file
   path: "./data/users.json"
   format: json

@@ -103,9 +103,9 @@ func parseURLConnectionString(connStr string) (driver string, dsn string, err er
 	return driver, dsn, nil
 }
 
-// configToSourceV2 map[string]any를 config.SourceV2로 변환
-func configToSourceV2(cfg map[string]any) config.SourceV2 {
-	result := config.SourceV2{}
+// configToInputV2 map[string]any를 config.InputV2로 변환
+func configToInputV2(cfg map[string]any) config.InputV2 {
+	result := config.InputV2{}
 
 	// Type
 	if v, ok := cfg["type"].(string); ok {

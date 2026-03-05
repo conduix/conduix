@@ -1,10 +1,10 @@
-# 배치 파이프라인 예시: HTTP 소스 (페이지네이션 + OAuth2)
+# 배치 파이프라인 예시: HTTP 입력 (페이지네이션 + OAuth2)
 # REST API에서 페이지별로 데이터를 읽어오는 배치 파이프라인
 
 name: batch-http-paginated
 type: batch
 
-source:
+input:
   type: http
   url: "https://api.example.com/v1/users"
   method: GET

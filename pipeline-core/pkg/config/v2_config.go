@@ -20,16 +20,25 @@ const (
 type PipelineConfigV2 struct {
 	Name     string          `yaml:"name"`
 	Mode     PipelineMode    `yaml:"type"` // batch | realtime
-	Source   SourceV2        `yaml:"source"`
+	Input    InputV2         `yaml:"input"`
+	Source   *InputV2        `yaml:"source,omitempty"` // Deprecated: Input을 사용하세요 (하위호환성)
 	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
 	Contract *ContractConfig `yaml:"contract,omitempty"` // Data Contract 설정
 	Steps    []StepV2        `yaml:"steps"`
 	Output   OutputConfig    `yaml:"output"`
 }
 
-// SourceV2 데이터 소스 설정
-// RateLimitSourceConfig 소스 레벨 레이트 리밋 설정
-type RateLimitSourceConfig struct {
+// GetInput Input을 반환 (하위 호환성: Source가 설정된 경우 Source 반환)
+func (c *PipelineConfigV2) GetInput() InputV2 {
+	if c.Source != nil && c.Input.Type != "" {
+		return *c.Source
+	}
+	return c.Input
+}
+
+// InputV2 데이터 입력 설정 (구 SourceV2)
+// RateLimitInputConfig 입력 레벨 레이트 리밋 설정
+type RateLimitInputConfig struct {
 	Enabled  bool   `yaml:"enabled" json:"enabled"`
 	Rate     int    `yaml:"rate" json:"rate"`                             // 단위 시간당 처리량
 	Interval string `yaml:"interval" json:"interval"`                     // second, minute, hour
@@ -37,7 +46,11 @@ type RateLimitSourceConfig struct {
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"` // token_bucket, sliding_window, fixed_window
 }
 
-type SourceV2 struct {
+// RateLimitSourceConfig는 RateLimitInputConfig의 별칭 (하위 호환성)
+// Deprecated: RateLimitInputConfig를 사용하세요
+type RateLimitSourceConfig = RateLimitInputConfig
+
+type InputV2 struct {
 	Type string `yaml:"type"` // file, sql, http, kafka, sql_event, cdc
 
 	// File
@@ -168,6 +181,10 @@ type SourceV2 struct {
 	SSEMaxReconnect  int    `yaml:"sse_max_reconnect,omitempty" json:"sse_max_reconnect,omitempty"`   // 최대 재연결 시도 횟수 (default: 10)
 	SSELastEventID   string `yaml:"sse_last_event_id,omitempty" json:"sse_last_event_id,omitempty"`   // 마지막 이벤트 ID (재시작 시 복원용)
 }
+
+// SourceV2는 InputV2의 별칭 (하위 호환성)
+// Deprecated: InputV2를 사용하세요
+type SourceV2 = InputV2
 
 // IncrementalConfig 증분 처리 설정 (SQL용)
 type IncrementalConfig struct {
@@ -537,6 +554,11 @@ func (c *PipelineConfigV2) Validate() error {
 		return fmt.Errorf("pipeline name is required")
 	}
 
+	// 하위 호환성: Source가 설정되어 있으면 Input으로 복사
+	if c.Source != nil && c.Input.Type != "" && c.Input.Type == "" {
+		c.Input = *c.Source
+	}
+
 	if c.Mode == "" {
 		c.Mode = ModeBatch // 기본값
 	}
@@ -545,9 +567,9 @@ func (c *PipelineConfigV2) Validate() error {
 		return fmt.Errorf("invalid pipeline mode: %s (must be 'batch' or 'realtime')", c.Mode)
 	}
 
-	// 소스 검증
-	if err := c.validateSource(); err != nil {
-		return fmt.Errorf("source: %w", err)
+	// 입력 검증
+	if err := c.validateInput(); err != nil {
+		return fmt.Errorf("input: %w", err)
 	}
 
 	// 실시간 모드 검증
@@ -565,101 +587,101 @@ func (c *PipelineConfigV2) Validate() error {
 	return nil
 }
 
-func (c *PipelineConfigV2) validateSource() error {
-	switch c.Source.Type {
+func (c *PipelineConfigV2) validateInput() error {
+	switch c.Input.Type {
 	case "file":
-		if c.Source.Path == "" && len(c.Source.Paths) == 0 {
+		if c.Input.Path == "" && len(c.Input.Paths) == 0 {
 			return fmt.Errorf("file path is required")
 		}
-		if c.Source.Format == "" {
-			c.Source.Format = "json"
+		if c.Input.Format == "" {
+			c.Input.Format = "json"
 		}
 
 	case "sql":
-		if c.Source.Driver == "" {
+		if c.Input.Driver == "" {
 			return fmt.Errorf("sql driver is required")
 		}
-		if c.Source.DSN == "" {
+		if c.Input.DSN == "" {
 			return fmt.Errorf("sql dsn is required")
 		}
-		if c.Source.Query == "" {
+		if c.Input.Query == "" {
 			return fmt.Errorf("sql query is required")
 		}
 
 	case "http", "rest_api":
-		if c.Source.URL == "" {
+		if c.Input.URL == "" {
 			return fmt.Errorf("http url is required")
 		}
-		if c.Source.Method == "" {
-			c.Source.Method = "GET"
+		if c.Input.Method == "" {
+			c.Input.Method = "GET"
 		}
-		if c.Source.Auth != nil {
+		if c.Input.Auth != nil {
 			if err := c.validateAuth(); err != nil {
 				return fmt.Errorf("auth: %w", err)
 			}
 		}
 
 	case "kafka":
-		if len(c.Source.Brokers) == 0 {
+		if len(c.Input.Brokers) == 0 {
 			return fmt.Errorf("kafka brokers are required")
 		}
-		if len(c.Source.Topics) == 0 {
+		if len(c.Input.Topics) == 0 {
 			return fmt.Errorf("kafka topics are required")
 		}
-		if c.Source.GroupID == "" {
-			c.Source.GroupID = c.Name + "-consumer"
+		if c.Input.GroupID == "" {
+			c.Input.GroupID = c.Name + "-consumer"
 		}
 
 	case "sql_event":
-		if c.Source.Driver == "" {
+		if c.Input.Driver == "" {
 			return fmt.Errorf("sql_event driver is required")
 		}
-		if c.Source.DSN == "" {
+		if c.Input.DSN == "" {
 			return fmt.Errorf("sql_event dsn is required")
 		}
-		if c.Source.Table == "" {
+		if c.Input.Table == "" {
 			return fmt.Errorf("sql_event table is required")
 		}
-		if c.Source.IDColumn == "" {
-			c.Source.IDColumn = "id"
+		if c.Input.IDColumn == "" {
+			c.Input.IDColumn = "id"
 		}
-		if c.Source.BatchSize <= 0 {
-			c.Source.BatchSize = 1000
+		if c.Input.BatchSize <= 0 {
+			c.Input.BatchSize = 1000
 		}
-		if c.Source.PollInterval <= 0 {
-			c.Source.PollInterval = 1000
+		if c.Input.PollInterval <= 0 {
+			c.Input.PollInterval = 1000
 		}
 
 	case "cdc":
-		if c.Source.Driver == "" {
+		if c.Input.Driver == "" {
 			return fmt.Errorf("cdc driver is required (mysql or postgres)")
 		}
-		if c.Source.Host == "" {
+		if c.Input.Host == "" {
 			return fmt.Errorf("cdc host is required")
 		}
-		if c.Source.Username == "" {
+		if c.Input.Username == "" {
 			return fmt.Errorf("cdc username is required")
 		}
-		if c.Source.Port <= 0 {
-			switch c.Source.Driver {
+		if c.Input.Port <= 0 {
+			switch c.Input.Driver {
 			case "mysql":
-				c.Source.Port = 3306
+				c.Input.Port = 3306
 			case "postgres":
-				c.Source.Port = 5432
+				c.Input.Port = 5432
 			}
 		}
-		if c.Source.ServerID == 0 {
-			c.Source.ServerID = 101
+		if c.Input.ServerID == 0 {
+			c.Input.ServerID = 101
 		}
 
 	case "kubernetes", "k8s_logs":
 		// pod_selector 또는 pod_names 중 하나는 필수
-		if c.Source.K8sPodSelector == "" && len(c.Source.K8sPodNames) == 0 {
+		if c.Input.K8sPodSelector == "" && len(c.Input.K8sPodNames) == 0 {
 			return fmt.Errorf("kubernetes source requires pod_selector or pod_names")
 		}
 		// 기본값 설정
-		if c.Source.K8sTailLines == 0 && c.Source.K8sSinceSeconds == 0 && !c.Source.K8sFollow {
-			c.Source.K8sTailLines = 100 // 기본: 최근 100줄
+		if c.Input.K8sTailLines == 0 && c.Input.K8sSinceSeconds == 0 && !c.Input.K8sFollow {
+			c.Input.K8sTailLines = 100 // 기본: 최근 100줄
 		}
 
 	case "partitioned_http":
@@ -673,87 +695,87 @@ func (c *PipelineConfigV2) validateSource() error {
 		}
 
 	case "rabbitmq":
-		if c.Source.URL == "" {
+		if c.Input.URL == "" {
 			return fmt.Errorf("rabbitmq url is required")
 		}
-		if c.Source.Queue == "" {
+		if c.Input.Queue == "" {
 			return fmt.Errorf("rabbitmq queue is required")
 		}
-		if c.Source.Prefetch <= 0 {
-			c.Source.Prefetch = 10
+		if c.Input.Prefetch <= 0 {
+			c.Input.Prefetch = 10
 		}
 
 	case "sqs":
-		if c.Source.SQSQueueURL == "" {
+		if c.Input.SQSQueueURL == "" {
 			return fmt.Errorf("sqs queue_url is required")
 		}
-		if c.Source.SQSMaxMessages <= 0 || c.Source.SQSMaxMessages > 10 {
-			c.Source.SQSMaxMessages = 10
+		if c.Input.SQSMaxMessages <= 0 || c.Input.SQSMaxMessages > 10 {
+			c.Input.SQSMaxMessages = 10
 		}
-		if c.Source.SQSWaitTimeSeconds < 0 || c.Source.SQSWaitTimeSeconds > 20 {
-			c.Source.SQSWaitTimeSeconds = 20
+		if c.Input.SQSWaitTimeSeconds < 0 || c.Input.SQSWaitTimeSeconds > 20 {
+			c.Input.SQSWaitTimeSeconds = 20
 		}
-		if c.Source.SQSVisibilityTimeout <= 0 {
-			c.Source.SQSVisibilityTimeout = 30
+		if c.Input.SQSVisibilityTimeout <= 0 {
+			c.Input.SQSVisibilityTimeout = 30
 		}
 
 	case "websocket":
-		if c.Source.WSURL == "" {
+		if c.Input.WSURL == "" {
 			return fmt.Errorf("websocket url is required")
 		}
-		if c.Source.WSPingInterval <= 0 {
-			c.Source.WSPingInterval = 30000 // 30 seconds
+		if c.Input.WSPingInterval <= 0 {
+			c.Input.WSPingInterval = 30000 // 30 seconds
 		}
-		if c.Source.WSPongWait <= 0 {
-			c.Source.WSPongWait = 60000 // 60 seconds
+		if c.Input.WSPongWait <= 0 {
+			c.Input.WSPongWait = 60000 // 60 seconds
 		}
-		if c.Source.WSReconnectWait <= 0 {
-			c.Source.WSReconnectWait = 5000 // 5 seconds
+		if c.Input.WSReconnectWait <= 0 {
+			c.Input.WSReconnectWait = 5000 // 5 seconds
 		}
-		if c.Source.WSMaxReconnect <= 0 {
-			c.Source.WSMaxReconnect = 10
+		if c.Input.WSMaxReconnect <= 0 {
+			c.Input.WSMaxReconnect = 10
 		}
 
 	case "mqtt":
-		if c.Source.MQTTBroker == "" {
+		if c.Input.MQTTBroker == "" {
 			return fmt.Errorf("mqtt broker is required")
 		}
-		if c.Source.MQTTTopic == "" {
+		if c.Input.MQTTTopic == "" {
 			return fmt.Errorf("mqtt topic is required")
 		}
-		if c.Source.MQTTClientID == "" {
-			c.Source.MQTTClientID = c.Name + "-mqtt-client"
+		if c.Input.MQTTClientID == "" {
+			c.Input.MQTTClientID = c.Name + "-mqtt-client"
 		}
-		if c.Source.MQTTQoS < 0 || c.Source.MQTTQoS > 2 {
-			c.Source.MQTTQoS = 1
+		if c.Input.MQTTQoS < 0 || c.Input.MQTTQoS > 2 {
+			c.Input.MQTTQoS = 1
 		}
-		if c.Source.MQTTKeepAlive <= 0 {
-			c.Source.MQTTKeepAlive = 60
+		if c.Input.MQTTKeepAlive <= 0 {
+			c.Input.MQTTKeepAlive = 60
 		}
-		if c.Source.MQTTReconnectWait <= 0 {
-			c.Source.MQTTReconnectWait = 5000
+		if c.Input.MQTTReconnectWait <= 0 {
+			c.Input.MQTTReconnectWait = 5000
 		}
-		if c.Source.MQTTMaxReconnect <= 0 {
-			c.Source.MQTTMaxReconnect = 10
+		if c.Input.MQTTMaxReconnect <= 0 {
+			c.Input.MQTTMaxReconnect = 10
 		}
 
 	case "sse":
-		if c.Source.SSEURL == "" {
+		if c.Input.SSEURL == "" {
 			return fmt.Errorf("sse url is required")
 		}
-		if c.Source.SSEReconnectWait <= 0 {
-			c.Source.SSEReconnectWait = 3000
+		if c.Input.SSEReconnectWait <= 0 {
+			c.Input.SSEReconnectWait = 3000
 		}
-		if c.Source.SSEMaxReconnect <= 0 {
-			c.Source.SSEMaxReconnect = 10
+		if c.Input.SSEMaxReconnect <= 0 {
+			c.Input.SSEMaxReconnect = 10
 		}
 
 	default:
-		return fmt.Errorf("unsupported source type: %s", c.Source.Type)
+		return fmt.Errorf("unsupported source type: %s", c.Input.Type)
 	}
 
 	// http/sql + partition 설정 검증
-	if c.Source.Partition != nil {
+	if c.Input.Partition != nil {
 		if err := c.validatePartitionConfig(); err != nil {
 			return fmt.Errorf("partition: %w", err)
 		}
@@ -763,7 +785,7 @@ func (c *PipelineConfigV2) validateSource() error {
 }
 
 func (c *PipelineConfigV2) validateAuth() error {
-	auth := c.Source.Auth
+	auth := c.Input.Auth
 	switch auth.Type {
 	case "basic":
 		if auth.Username == "" || auth.Password == "" {
@@ -785,10 +807,10 @@ func (c *PipelineConfigV2) validateAuth() error {
 
 // validatePartitionedHTTP partitioned_http 소스 검증
 func (c *PipelineConfigV2) validatePartitionedHTTP() error {
-	if c.Source.Partition == nil {
+	if c.Input.Partition == nil {
 		return fmt.Errorf("partition config is required for partitioned_http source")
 	}
-	p := c.Source.Partition
+	p := c.Input.Partition
 
 	// 디스커버리 또는 정적 파티션 필수
 	if p.DiscoveryURL == "" && len(p.StaticPartitions) == 0 {
@@ -796,7 +818,7 @@ func (c *PipelineConfigV2) validatePartitionedHTTP() error {
 	}
 
 	// URL 템플릿 또는 기본 URL 필수
-	if p.URLTemplate == "" && c.Source.URL == "" {
+	if p.URLTemplate == "" && c.Input.URL == "" {
 		return fmt.Errorf("url_template or base url is required")
 	}
 
@@ -813,16 +835,16 @@ func (c *PipelineConfigV2) validatePartitionedHTTP() error {
 
 // validatePartitionedSQL partitioned_sql 소스 검증
 func (c *PipelineConfigV2) validatePartitionedSQL() error {
-	if c.Source.Driver == "" {
+	if c.Input.Driver == "" {
 		return fmt.Errorf("sql driver is required")
 	}
-	if c.Source.DSN == "" {
+	if c.Input.DSN == "" {
 		return fmt.Errorf("sql dsn is required")
 	}
-	if c.Source.Partition == nil {
+	if c.Input.Partition == nil {
 		return fmt.Errorf("partition config is required for partitioned_sql source")
 	}
-	p := c.Source.Partition
+	p := c.Input.Partition
 
 	// 디스커버리 또는 정적 파티션 필수
 	if p.DiscoveryQuery == "" && len(p.StaticPartitions) == 0 {
@@ -830,7 +852,7 @@ func (c *PipelineConfigV2) validatePartitionedSQL() error {
 	}
 
 	// 쿼리 템플릿 또는 기본 쿼리 필수
-	if p.QueryTemplate == "" && c.Source.Query == "" {
+	if p.QueryTemplate == "" && c.Input.Query == "" {
 		return fmt.Errorf("query_template or base query is required")
 	}
 
@@ -844,7 +866,7 @@ func (c *PipelineConfigV2) validatePartitionedSQL() error {
 
 // validatePartitionConfig 공통 파티션 설정 검증 (http/sql + partition)
 func (c *PipelineConfigV2) validatePartitionConfig() error {
-	p := c.Source.Partition
+	p := c.Input.Partition
 	if p == nil {
 		return nil
 	}
@@ -854,12 +876,12 @@ func (c *PipelineConfigV2) validatePartitionConfig() error {
 		p.Parallelism = 4
 	}
 
-	switch c.Source.Type {
+	switch c.Input.Type {
 	case "http", "rest_api":
 		if p.DiscoveryURL == "" && len(p.StaticPartitions) == 0 {
 			return fmt.Errorf("either discovery_url or static_partitions is required for HTTP partition")
 		}
-		if p.URLTemplate == "" && c.Source.URL == "" {
+		if p.URLTemplate == "" && c.Input.URL == "" {
 			return fmt.Errorf("url_template or base url is required for HTTP partition")
 		}
 		if p.DiscoveryMethod == "" {
@@ -870,7 +892,7 @@ func (c *PipelineConfigV2) validatePartitionConfig() error {
 		if p.DiscoveryQuery == "" && len(p.StaticPartitions) == 0 {
 			return fmt.Errorf("either discovery_query or static_partitions is required for SQL partition")
 		}
-		if p.QueryTemplate == "" && c.Source.Query == "" {
+		if p.QueryTemplate == "" && c.Input.Query == "" {
 			return fmt.Errorf("query_template or base query is required for SQL partition")
 		}
 	}

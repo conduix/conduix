@@ -1,10 +1,10 @@
-# 배치 파이프라인 예시: 파일 소스
+# 배치 파이프라인 예시: 파일 입력
 # 파일에서 데이터를 읽어 처리하는 배치 파이프라인
 
 name: batch-file-example
 type: batch
 
-source:
+input:
   type: file
   path: "./data/input.json"
   format: json  # json, csv, lines

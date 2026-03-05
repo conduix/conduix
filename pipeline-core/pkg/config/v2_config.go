@@ -164,16 +164,20 @@ type InputV2 struct {
 	WSSubscribeMsg  string   `yaml:"ws_subscribe_msg,omitempty" json:"ws_subscribe_msg,omitempty"`   // 연결 후 전송할 구독 메시지
 
 	// MQTT
-	MQTTBroker        string `yaml:"mqtt_broker,omitempty" json:"mqtt_broker,omitempty"`                 // MQTT Broker URL (tcp://, ssl://, ws://, wss://)
-	MQTTClientID      string `yaml:"mqtt_client_id,omitempty" json:"mqtt_client_id,omitempty"`           // 클라이언트 ID
-	MQTTUsername      string `yaml:"mqtt_username,omitempty" json:"mqtt_username,omitempty"`             // 인증 사용자명
-	MQTTPassword      string `yaml:"mqtt_password,omitempty" json:"mqtt_password,omitempty"`             // 인증 비밀번호
-	MQTTTopic         string `yaml:"mqtt_topic,omitempty" json:"mqtt_topic,omitempty"`                   // 구독 토픽 (와일드카드 지원: +, #)
-	MQTTQoS           int    `yaml:"mqtt_qos,omitempty" json:"mqtt_qos,omitempty"`                       // QoS 레벨 (0, 1, 2)
-	MQTTCleanSession  bool   `yaml:"mqtt_clean_session,omitempty" json:"mqtt_clean_session,omitempty"`   // Clean session 여부
-	MQTTKeepAlive     int    `yaml:"mqtt_keep_alive,omitempty" json:"mqtt_keep_alive,omitempty"`         // Keep-alive 간격 (seconds, default: 60)
-	MQTTReconnectWait int    `yaml:"mqtt_reconnect_wait,omitempty" json:"mqtt_reconnect_wait,omitempty"` // 재연결 대기 시간 (milliseconds, default: 5000)
-	MQTTMaxReconnect  int    `yaml:"mqtt_max_reconnect,omitempty" json:"mqtt_max_reconnect,omitempty"`   // 최대 재연결 시도 횟수 (default: 10)
+	MQTTBroker        string   `yaml:"mqtt_broker,omitempty" json:"mqtt_broker,omitempty"`                 // MQTT Broker URL (tcp://, ssl://, ws://, wss://)
+	MQTTClientID      string   `yaml:"mqtt_client_id,omitempty" json:"mqtt_client_id,omitempty"`           // 클라이언트 ID
+	MQTTUsername      string   `yaml:"mqtt_username,omitempty" json:"mqtt_username,omitempty"`             // 인증 사용자명
+	MQTTPassword      string   `yaml:"mqtt_password,omitempty" json:"mqtt_password,omitempty"`             // 인증 비밀번호
+	MQTTTopic         string   `yaml:"mqtt_topic,omitempty" json:"mqtt_topic,omitempty"`                   // 구독 토픽 (와일드카드 지원: +, #)
+	MQTTTopics        []string `yaml:"mqtt_topics,omitempty" json:"mqtt_topics,omitempty"`                 // 다중 토픽 구독 (와일드카드 지원)
+	MQTTQoS           int      `yaml:"mqtt_qos,omitempty" json:"mqtt_qos,omitempty"`                       // QoS 레벨 (0, 1, 2)
+	MQTTCleanSession  bool     `yaml:"mqtt_clean_session,omitempty" json:"mqtt_clean_session,omitempty"`   // Clean session 여부
+	MQTTKeepAlive     int      `yaml:"mqtt_keep_alive,omitempty" json:"mqtt_keep_alive,omitempty"`         // Keep-alive 간격 (seconds, default: 60)
+	MQTTReconnectWait int      `yaml:"mqtt_reconnect_wait,omitempty" json:"mqtt_reconnect_wait,omitempty"` // 재연결 대기 시간 (milliseconds, default: 5000)
+	MQTTMaxReconnect  int      `yaml:"mqtt_max_reconnect,omitempty" json:"mqtt_max_reconnect,omitempty"`   // 최대 재연결 시도 횟수 (default: 10)
+	MQTTTopicFilter   string   `yaml:"mqtt_topic_filter,omitempty" json:"mqtt_topic_filter,omitempty"`     // 토픽 필터 정규식 패턴
+	MQTTIncludeTopics []string `yaml:"mqtt_include_topics,omitempty" json:"mqtt_include_topics,omitempty"` // 포함할 토픽 목록 (와일드카드 지원)
+	MQTTExcludeTopics []string `yaml:"mqtt_exclude_topics,omitempty" json:"mqtt_exclude_topics,omitempty"` // 제외할 토픽 목록 (와일드카드 지원)
 
 	// SSE (Server-Sent Events)
 	SSEURL           string `yaml:"sse_url,omitempty" json:"sse_url,omitempty"`                       // SSE 엔드포인트 URL
@@ -243,6 +247,18 @@ type AuthConfig struct {
 	ClientSecret string   `yaml:"client_secret,omitempty"`
 	TokenURL     string   `yaml:"token_url,omitempty"`
 	Scopes       []string `yaml:"scopes,omitempty"`
+
+	// OAuth2 확장 설정
+	GrantType    string `yaml:"grant_type,omitempty" json:"grant_type,omitempty"`       // client_credentials, authorization_code, refresh_token
+	RefreshToken string `yaml:"refresh_token,omitempty" json:"refresh_token,omitempty"` // Refresh token (환경변수 지원)
+	AuthURL      string `yaml:"auth_url,omitempty" json:"auth_url,omitempty"`           // Authorization endpoint (PKCE용)
+	RedirectURL  string `yaml:"redirect_url,omitempty" json:"redirect_url,omitempty"`   // Redirect URL (PKCE용)
+
+	// PKCE 설정
+	UsePKCE             bool   `yaml:"use_pkce,omitempty" json:"use_pkce,omitempty"`                           // PKCE 사용 여부
+	PKCECodeVerifier    string `yaml:"pkce_code_verifier,omitempty" json:"pkce_code_verifier,omitempty"`       // Code verifier (자동 생성 가능)
+	PKCEChallengeMethod string `yaml:"pkce_challenge_method,omitempty" json:"pkce_challenge_method,omitempty"` // S256 또는 plain (기본: S256)
+
 	// API Key 인증
 	APIKey     string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
 	APIKeyIn   string `yaml:"api_key_in,omitempty" json:"api_key_in,omitempty"`     // header or query
@@ -851,8 +867,50 @@ func (c *PipelineConfigV2) validateAuth() error {
 			return fmt.Errorf("bearer auth requires token")
 		}
 	case "oauth2":
-		if auth.ClientID == "" || auth.ClientSecret == "" || auth.TokenURL == "" {
-			return fmt.Errorf("oauth2 requires client_id, client_secret, and token_url")
+		if auth.ClientID == "" {
+			return fmt.Errorf("oauth2 requires client_id")
+		}
+		if auth.TokenURL == "" {
+			return fmt.Errorf("oauth2 requires token_url")
+		}
+		// grant_type에 따른 추가 검증
+		grantType := auth.GrantType
+		if grantType == "" {
+			grantType = "client_credentials"
+		}
+		switch grantType {
+		case "client_credentials":
+			if auth.ClientSecret == "" {
+				return fmt.Errorf("oauth2 client_credentials requires client_secret")
+			}
+		case "refresh_token":
+			if auth.RefreshToken == "" {
+				return fmt.Errorf("oauth2 refresh_token grant requires refresh_token")
+			}
+		case "authorization_code":
+			if !auth.UsePKCE && auth.ClientSecret == "" {
+				return fmt.Errorf("oauth2 authorization_code requires client_secret or PKCE")
+			}
+			if auth.AuthURL == "" {
+				return fmt.Errorf("oauth2 authorization_code requires auth_url")
+			}
+		}
+		// PKCE 검증
+		if auth.UsePKCE {
+			if auth.PKCEChallengeMethod != "" && auth.PKCEChallengeMethod != "S256" && auth.PKCEChallengeMethod != "plain" {
+				return fmt.Errorf("pkce_challenge_method must be 'S256' or 'plain'")
+			}
+		}
+	case "api_key":
+		if auth.APIKey == "" {
+			return fmt.Errorf("api_key auth requires api_key")
+		}
+	case "mtls":
+		if auth.TLS == nil || !auth.TLS.Enabled {
+			return fmt.Errorf("mtls auth requires tls configuration")
+		}
+		if auth.TLS.ClientCert == "" || auth.TLS.ClientKey == "" {
+			return fmt.Errorf("mtls auth requires client_cert and client_key")
 		}
 	default:
 		return fmt.Errorf("unsupported auth type: %s", auth.Type)

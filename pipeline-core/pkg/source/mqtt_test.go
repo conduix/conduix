@@ -344,6 +344,14 @@ func (m *MockMQTTClient) IsConnected() bool {
 	return m.connected
 }
 
+func (m *MockMQTTClient) SubscribeMultiple(topics []string, qos byte, callback func(topic string, payload []byte)) error {
+	if len(topics) > 0 {
+		m.subscribedTo = topics[0]
+	}
+	m.callback = callback
+	return nil
+}
+
 func (m *MockMQTTClient) SimulateMessage(topic string, payload []byte) {
 	if m.callback != nil {
 		m.callback(topic, payload)
@@ -427,5 +435,144 @@ func TestMQTTSource_ComplexJSON(t *testing.T) {
 
 	if readings["temperature"] != 25.5 {
 		t.Errorf("expected temperature 25.5, got %v", readings["temperature"])
+	}
+}
+
+// MQTT Wildcard 매칭 테스트
+
+func TestMatchMQTTTopic_SingleLevelWildcard(t *testing.T) {
+	tests := []struct {
+		pattern  string
+		topic    string
+		expected bool
+	}{
+		// + 와일드카드 (단일 레벨)
+		{"sensor/+/temperature", "sensor/room1/temperature", true},
+		{"sensor/+/temperature", "sensor/room2/temperature", true},
+		{"sensor/+/temperature", "sensor/floor1/room1/temperature", false}, // + 는 단일 레벨만
+		{"sensor/+/+", "sensor/room1/temperature", true},
+		{"sensor/+/+", "sensor/room1/humidity", true},
+		{"+/+/+", "a/b/c", true},
+		{"+/+/+", "a/b/c/d", false},
+
+		// 정확히 일치
+		{"sensor/room1/temperature", "sensor/room1/temperature", true},
+		{"sensor/room1/temperature", "sensor/room2/temperature", false},
+	}
+
+	for _, tt := range tests {
+		result := matchMQTTTopic(tt.pattern, tt.topic)
+		if result != tt.expected {
+			t.Errorf("matchMQTTTopic(%q, %q) = %v, expected %v",
+				tt.pattern, tt.topic, result, tt.expected)
+		}
+	}
+}
+
+func TestMatchMQTTTopic_MultiLevelWildcard(t *testing.T) {
+	tests := []struct {
+		pattern  string
+		topic    string
+		expected bool
+	}{
+		// # 와일드카드 (다중 레벨)
+		{"sensor/#", "sensor/temperature", true},
+		{"sensor/#", "sensor/room1/temperature", true},
+		{"sensor/#", "sensor/floor1/room1/temperature", true},
+		{"sensor/#", "other/temperature", false},
+		{"#", "any/topic/here", true},
+		{"building/floor1/#", "building/floor1/room1/temp", true},
+		{"building/floor1/#", "building/floor2/room1/temp", false},
+	}
+
+	for _, tt := range tests {
+		result := matchMQTTTopic(tt.pattern, tt.topic)
+		if result != tt.expected {
+			t.Errorf("matchMQTTTopic(%q, %q) = %v, expected %v",
+				tt.pattern, tt.topic, result, tt.expected)
+		}
+	}
+}
+
+func TestMQTTSource_TopicFiltering(t *testing.T) {
+	cfg := config.SourceV2{
+		Type:              "mqtt",
+		MQTTBroker:        "tcp://localhost:1883",
+		MQTTTopic:         "sensor/#",
+		MQTTIncludeTopics: []string{"sensor/+/temperature"},
+		MQTTExcludeTopics: []string{"sensor/debug/#"},
+	}
+
+	source, err := NewMQTTSource(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 포함되어야 하는 토픽
+	if !source.shouldProcessTopic("sensor/room1/temperature") {
+		t.Error("expected sensor/room1/temperature to be included")
+	}
+
+	// 제외되어야 하는 토픽 (debug)
+	if source.shouldProcessTopic("sensor/debug/test") {
+		t.Error("expected sensor/debug/test to be excluded")
+	}
+
+	// 포함 패턴에 맞지 않는 토픽
+	if source.shouldProcessTopic("sensor/room1/humidity") {
+		t.Error("expected sensor/room1/humidity to be excluded (not in include pattern)")
+	}
+}
+
+func TestMQTTSource_TopicFilterRegex(t *testing.T) {
+	cfg := config.SourceV2{
+		Type:            "mqtt",
+		MQTTBroker:      "tcp://localhost:1883",
+		MQTTTopic:       "events/#",
+		MQTTTopicFilter: "^events/[a-z]+/data$", // 정규식 필터
+	}
+
+	source, err := NewMQTTSource(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 정규식에 맞는 토픽
+	if !source.shouldProcessTopic("events/sensor/data") {
+		t.Error("expected events/sensor/data to match regex filter")
+	}
+
+	// 정규식에 맞지 않는 토픽
+	if source.shouldProcessTopic("events/sensor123/data") {
+		t.Error("expected events/sensor123/data to not match regex filter")
+	}
+
+	if source.shouldProcessTopic("events/sensor/status") {
+		t.Error("expected events/sensor/status to not match regex filter")
+	}
+}
+
+func TestMQTTSource_MultipleTopics(t *testing.T) {
+	cfg := config.SourceV2{
+		Type:       "mqtt",
+		MQTTBroker: "tcp://localhost:1883",
+		MQTTTopics: []string{
+			"sensor/temperature",
+			"sensor/humidity",
+			"sensor/pressure",
+		},
+	}
+
+	source, err := NewMQTTSource(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(source.topics) != 3 {
+		t.Errorf("expected 3 topics, got %d", len(source.topics))
+	}
+
+	if source.topics[0] != "sensor/temperature" {
+		t.Errorf("expected first topic 'sensor/temperature', got '%s'", source.topics[0])
 	}
 }

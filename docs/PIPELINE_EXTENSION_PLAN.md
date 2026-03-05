@@ -601,9 +601,9 @@ stages:
 - [x] Late event 처리 (grace period) ✅
 - [x] Watermark 관리 ✅
 - [x] 중첩 필드 접근 지원 ✅
-- [x] Emit 모드 (on_close, on_update) ✅
+- [x] Emit 모드 (on_close, on_update, periodic) ✅
 - [x] 상태 저장 (Redis 백엔드) ✅ (2026-03-05)
-- [ ] Emit 모드 (periodic)
+- [x] Periodic emit 모드 구현 ✅ (2026-03-05)
 
 ### 4.2 Stream Join
 **우선순위: 중** | **예상 작업량: 높음**
@@ -691,9 +691,9 @@ stages:
 - [x] 중첩 필드 접근 (join_field, target_field) ✅
 - [x] on_missing 처리 (skip, error, default) ✅
 - [x] 타임아웃 설정 ✅
-- [ ] Batch lookup (성능 최적화)
-- [ ] 비동기 enrichment 옵션
-- [ ] Elasticsearch Lookup 소스
+- [x] Batch lookup (성능 최적화) ✅ (2026-03-05) - batch_lookup_stage.go
+- [x] 비동기 enrichment 옵션 ✅ (2026-03-05) - async_enrich_stage.go
+- [x] Elasticsearch Lookup 소스 ✅ (2026-03-05) - es_lookup_stage.go
 
 ### 4.4 Sub-pipeline (Inline Pipeline)
 **우선순위: 중** | **예상 작업량: 중**
@@ -721,13 +721,96 @@ stages:
                 - field: total
                   function: sum
                   source: item.price
+      merge_strategy: replace              # replace, merge, nested
+      on_error: skip                       # skip, fail, passthrough
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/stream/subpipeline_stage.go` 생성
-- [ ] 중첩 파이프라인 실행
-- [ ] 조건부 실행
-- [ ] 결과 병합
+- [x] `pipeline-core/pkg/stream/subpipeline_stage.go` 생성 ✅ (2026-03-05)
+- [x] 중첩 파이프라인 실행 ✅
+- [x] 조건부 실행 (VRL 조건식) ✅
+- [x] 결과 병합 전략 (replace, merge, nested) ✅
+- [x] 에러 처리 옵션 (skip, fail, passthrough) ✅
+
+### 4.5 Batch Lookup Stage
+**우선순위: 중** | **예상 작업량: 중**
+
+```yaml
+stages:
+  - name: batch_user_lookup
+    type: batch_lookup
+    config:
+      source:
+        type: redis                       # redis, sql, http
+        config:
+          address: "localhost:6379"
+          key_prefix: "user:"
+      join_field: user_id
+      target_field: user_info
+      batch_size: 100
+      workers: 4
+      timeout: "10s"
+```
+
+**구현 사항:**
+- [x] `pipeline-core/pkg/stream/batch_lookup_stage.go` 생성 ✅ (2026-03-05)
+- [x] Redis MGET 배치 조회 ✅
+- [x] SQL IN 쿼리 배치 조회 ✅
+- [x] HTTP 배치 엔드포인트 지원 ✅
+- [x] Worker pool 병렬 처리 ✅
+
+### 4.6 Async Enrich Stage
+**우선순위: 중** | **예상 작업량: 중**
+
+```yaml
+stages:
+  - name: async_enrichment
+    type: async_enrich
+    config:
+      source:
+        type: http
+        config:
+          url: "http://api.example.com/users"
+      join_field: user_id
+      target_field: user_info
+      concurrency: 10
+      ordered: false                      # true: 순서 보장, false: 빠른 처리
+      queue_size: 1000
+      timeout: "10s"
+```
+
+**구현 사항:**
+- [x] `pipeline-core/pkg/stream/async_enrich_stage.go` 생성 ✅ (2026-03-05)
+- [x] Worker pool 동시 처리 ✅
+- [x] 순서 보장/비보장 모드 ✅
+- [x] Redis/HTTP/SQL 소스 지원 ✅
+
+### 4.7 Elasticsearch Lookup Stage
+**우선순위: 중** | **예상 작업량: 중**
+
+```yaml
+stages:
+  - name: es_lookup
+    type: es_lookup
+    config:
+      endpoints: ["http://localhost:9200"]
+      index: "users"
+      id_field: user_id                   # Document ID로 조회
+      target_field: user_info
+      source_fields: ["name", "email"]    # 필요한 필드만 조회
+      auth:
+        type: basic
+        username: elastic
+        password: "${ES_PASSWORD}"
+```
+
+**구현 사항:**
+- [x] `pipeline-core/pkg/stream/es_lookup_stage.go` 생성 ✅ (2026-03-05)
+- [x] 단일 문서 조회 ✅
+- [x] _mget 배치 조회 ✅
+- [x] 인증 지원 (basic, api_key) ✅
+- [x] Source filtering ✅
+- [x] Endpoint rotation ✅
 
 ---
 
@@ -757,11 +840,13 @@ stages:
 ```
 
 **구현 사항:**
-- [ ] React Flow 기반 노드 에디터
-- [ ] 드래그앤드롭 컴포넌트 추가
-- [ ] 노드 간 연결선 드래그
-- [ ] 실시간 유효성 검사
-- [ ] YAML 자동 생성
+- [x] React Flow 기반 노드 에디터 ✅ (2026-03-05)
+- [x] 드래그앤드롭 컴포넌트 추가 (StagePanel) ✅
+- [x] 노드 간 연결선 드래그 ✅
+- [x] 실시간 유효성 검사 ✅
+- [x] YAML 자동 생성 (StageConfigDialog) ✅
+- [x] dagre 기반 자동 레이아웃 ✅
+- [x] Input/Stage/Output 노드 타입 구현 ✅
 
 ### 5.2 실시간 데이터 미리보기
 **우선순위: 중** | **예상 작업량: 중**
@@ -795,10 +880,12 @@ stages:
 **우선순위: 중** | **예상 작업량: 중**
 
 **구현 사항:**
-- [ ] 실시간 처리량 그래프
-- [ ] Stage별 지연 시간
-- [ ] 에러율 모니터링
-- [ ] Backpressure 상태
+- [x] 실시간 처리량 그래프 (ThroughputChart) ✅ (2026-03-05)
+- [x] Stage별 지연 시간 (StageMetricsTable) ✅
+- [x] 에러율 모니터링 (MetricsCard) ✅
+- [x] Multi-series 차트 (Stage별 비교) ✅
+- [x] 실시간 메트릭스 폴링 (usePipelineMetrics) ✅
+- [x] 대시보드 통합 (Running workflows 탭) ✅
 
 ---
 
@@ -837,9 +924,19 @@ stages:
 |------|-----------|------|
 | Stream Join | 5일 | ✅ 완료 (2026-03-05) |
 | BigQuery Output | 3일 | ✅ 완료 (2026-03-05) |
-| Secrets Provider (Vault) | 3일 | ✅ 완료 (2026-03-05) |
+| Secrets Provider (Vault/AWS/GCP) | 3일 | ✅ 완료 (2026-03-05) |
 | Data Preview | 3일 | ✅ 완료 (2026-03-05) |
-| Visual Pipeline Builder | 10일 | ⬜ 대기 |
+| Visual Pipeline Builder | 10일 | ✅ 완료 (2026-03-05) |
+| Pipeline Monitoring Dashboard | 3일 | ✅ 완료 (2026-03-05) |
+| Sub-pipeline Stage | 2일 | ✅ 완료 (2026-03-05) |
+| Batch Lookup Stage | 2일 | ✅ 완료 (2026-03-05) |
+| Async Enrich Stage | 2일 | ✅ 완료 (2026-03-05) |
+| ES Lookup Stage | 2일 | ✅ 완료 (2026-03-05) |
+| MongoDB CDC Input | 2일 | ✅ 완료 (2026-03-05) |
+| Redis Stream Input | 2일 | ✅ 완료 (2026-03-05) |
+| Windowed Agg Periodic Emit | 1일 | ✅ 완료 (2026-03-05) |
+| Snowflake Output | 3일 | ⬜ 대기 |
+| Parquet 포맷 | 2일 | ⬜ 대기 |
 
 ---
 
@@ -923,4 +1020,11 @@ require (
 | 2026-03-05 | 3.7 | GCP Secret Manager 프로바이더 구현 완료 (버전 지원, 필드 추출, ADC 지원) |
 | 2026-03-05 | 3.8 | MongoDB CDC Input 구현 완료 (Change Stream, Resume token, Checkpoint) |
 | 2026-03-05 | 3.9 | Redis Stream Input 구현 완료 (Consumer Group, XREADGROUP, XCLAIM) |
+| 2026-03-05 | 4.0 | Sub-pipeline Stage 구현 완료 (조건부 실행, 병합 전략, 에러 처리) |
+| 2026-03-05 | 4.1 | Batch Lookup Stage 구현 완료 (Redis MGET, SQL IN, HTTP 배치) |
+| 2026-03-05 | 4.2 | Async Enrich Stage 구현 완료 (Worker pool, 순서 보장/비보장) |
+| 2026-03-05 | 4.3 | ES Lookup Stage 구현 완료 (단일/배치 조회, _mget API) |
+| 2026-03-05 | 4.4 | Windowed Aggregation Periodic Emit 구현 완료 (주기적 부분 결과 방출) |
+| 2026-03-05 | 4.5 | Visual Pipeline Builder 구현 완료 (React Flow, dagre 레이아웃) |
+| 2026-03-05 | 4.6 | Pipeline Monitoring Dashboard 구현 완료 (처리량 차트, Stage 메트릭스) |
 

@@ -22,10 +22,11 @@ const (
 	SinkTypeGCS  SinkType = "gcs" // Google Cloud Storage
 
 	// 데이터베이스
-	SinkTypeSQL     SinkType = "sql" // MySQL, PostgreSQL 등
-	SinkTypeMongoDB SinkType = "mongodb"
-	SinkTypeHBase   SinkType = "hbase"
-	SinkTypeElastic SinkType = "elasticsearch"
+	SinkTypeSQL       SinkType = "sql" // MySQL, PostgreSQL 등
+	SinkTypeMongoDB   SinkType = "mongodb"
+	SinkTypeHBase     SinkType = "hbase"
+	SinkTypeElastic   SinkType = "elasticsearch"
+	SinkTypeSnowflake SinkType = "snowflake" // Snowflake Data Warehouse
 
 	// API
 	SinkTypeRestAPI SinkType = "rest_api"
@@ -193,6 +194,13 @@ func GetSinkRequirements() []SinkRequirement {
 			Description:          "외부 REST API로 전송",
 			RequiresProvisioning: true,
 			ProvisioningTypes:    []ProvisioningType{ProvisioningTypeAPISetup, ProvisioningTypeExternal},
+		},
+		{
+			Type:                 SinkTypeSnowflake,
+			DisplayName:          "Snowflake",
+			Description:          "Snowflake Data Warehouse에 저장",
+			RequiresProvisioning: true,
+			ProvisioningTypes:    []ProvisioningType{ProvisioningTypeTableCreation, ProvisioningTypeExternal},
 		},
 	}
 }

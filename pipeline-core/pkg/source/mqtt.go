@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +20,19 @@ type MQTTSource struct {
 	clientID      string
 	username      string
 	password      string
-	topic         string
+	topic         string   // 단일 토픽 (와일드카드 +, # 지원)
+	topics        []string // 다중 토픽 구독
 	qos           byte
 	cleanSession  bool
 	keepAlive     time.Duration
 	reconnectWait time.Duration
 	maxReconnect  int
 	tlsConfig     *config.TLSClientConfig
+
+	// 토픽 필터링
+	topicFilter   string   // 정규식 패턴으로 토픽 필터링
+	includeTopics []string // 포함할 토픽 목록 (와일드카드 지원)
+	excludeTopics []string // 제외할 토픽 목록 (와일드카드 지원)
 
 	client    MQTTClient
 	mu        sync.RWMutex
@@ -41,6 +49,7 @@ type MQTTClient interface {
 	Connect() error
 	Disconnect(quiesce uint)
 	Subscribe(topic string, qos byte, callback func(topic string, payload []byte)) error
+	SubscribeMultiple(topics []string, qos byte, callback func(topic string, payload []byte)) error
 	IsConnected() bool
 }
 
@@ -164,6 +173,50 @@ func (c *DefaultMQTTClient) IsConnected() bool {
 	return c.connected
 }
 
+// SubscribeMultiple 다중 토픽 구독
+func (c *DefaultMQTTClient) SubscribeMultiple(topics []string, qos byte, callback func(topic string, payload []byte)) error {
+	c.mu.RLock()
+	if !c.connected {
+		c.mu.RUnlock()
+		return fmt.Errorf("not connected")
+	}
+	c.mu.RUnlock()
+
+	// 실제 구현에서는:
+	// filters := make(map[string]byte)
+	// for _, topic := range topics {
+	//     filters[topic] = qos
+	// }
+	// token := c.conn.(*mqtt.Client).SubscribeMultiple(filters, func(client mqtt.Client, msg mqtt.Message) {
+	//     callback(msg.Topic(), msg.Payload())
+	// })
+	// token.Wait()
+	// return token.Error()
+
+	fmt.Printf("[mqtt] Subscribed to %d topics with QoS %d\n", len(topics), qos)
+	for _, topic := range topics {
+		fmt.Printf("[mqtt]   - %s\n", topic)
+	}
+
+	// 시뮬레이션용 고루틴
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancelFunc = cancel
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case payload := <-c.msgChan:
+				t := <-c.topicChan
+				callback(t, payload)
+			}
+		}
+	}()
+
+	return nil
+}
+
 // PublishForTest 테스트용 메시지 발행 (테스트에서만 사용)
 func (c *DefaultMQTTClient) PublishForTest(topic string, payload []byte) {
 	select {
@@ -198,18 +251,28 @@ func NewMQTTSource(cfg config.SourceV2) (*MQTTSource, error) {
 		qos = byte(cfg.MQTTQoS)
 	}
 
+	// 토픽 설정 (단일 또는 다중)
+	var topics []string
+	if len(cfg.MQTTTopics) > 0 {
+		topics = cfg.MQTTTopics
+	}
+
 	return &MQTTSource{
 		broker:        expandEnvVars(cfg.MQTTBroker),
 		clientID:      expandEnvVars(cfg.MQTTClientID),
 		username:      expandEnvVars(cfg.MQTTUsername),
 		password:      expandEnvVars(cfg.MQTTPassword),
 		topic:         cfg.MQTTTopic,
+		topics:        topics,
 		qos:           qos,
 		cleanSession:  cfg.MQTTCleanSession,
 		keepAlive:     keepAlive,
 		reconnectWait: reconnectWait,
 		maxReconnect:  maxReconnect,
 		tlsConfig:     cfg.TLS,
+		topicFilter:   cfg.MQTTTopicFilter,
+		includeTopics: cfg.MQTTIncludeTopics,
+		excludeTopics: cfg.MQTTExcludeTopics,
 	}, nil
 }
 
@@ -267,8 +330,13 @@ func (s *MQTTSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 			payload []byte
 		}, 100)
 
-		// 토픽 구독
-		err := s.client.Subscribe(s.topic, s.qos, func(topic string, payload []byte) {
+		// 메시지 콜백 (토픽 필터링 포함)
+		messageHandler := func(topic string, payload []byte) {
+			// 토픽 필터링 적용
+			if !s.shouldProcessTopic(topic) {
+				return
+			}
+
 			select {
 			case msgChan <- struct {
 				topic   string
@@ -276,7 +344,18 @@ func (s *MQTTSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 			}{topic, payload}:
 			case <-ctx.Done():
 			}
-		})
+		}
+
+		// 토픽 구독 (다중 토픽 또는 단일 토픽)
+		var err error
+		if len(s.topics) > 0 {
+			// 다중 토픽 구독
+			err = s.client.SubscribeMultiple(s.topics, s.qos, messageHandler)
+		} else {
+			// 단일 토픽 구독 (와일드카드 지원: +, #)
+			err = s.client.Subscribe(s.topic, s.qos, messageHandler)
+		}
+
 		if err != nil {
 			select {
 			case errs <- fmt.Errorf("failed to subscribe: %w", err):
@@ -311,6 +390,73 @@ func (s *MQTTSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 	}()
 
 	return records, errs
+}
+
+// shouldProcessTopic 토픽 필터링 확인
+func (s *MQTTSource) shouldProcessTopic(topic string) bool {
+	// 제외 토픽 체크
+	for _, pattern := range s.excludeTopics {
+		if matchMQTTTopic(pattern, topic) {
+			return false
+		}
+	}
+
+	// 포함 토픽이 지정된 경우 포함 체크
+	if len(s.includeTopics) > 0 {
+		matched := false
+		for _, pattern := range s.includeTopics {
+			if matchMQTTTopic(pattern, topic) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	// 정규식 필터 체크
+	if s.topicFilter != "" {
+		matched, err := regexp.MatchString(s.topicFilter, topic)
+		if err != nil || !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+// matchMQTTTopic MQTT 와일드카드 패턴 매칭
+// + : 단일 레벨 와일드카드 (예: sensor/+/temperature)
+// # : 다중 레벨 와일드카드 (예: sensor/#)
+func matchMQTTTopic(pattern, topic string) bool {
+	patternParts := strings.Split(pattern, "/")
+	topicParts := strings.Split(topic, "/")
+
+	pi := 0 // pattern index
+	ti := 0 // topic index
+
+	for pi < len(patternParts) && ti < len(topicParts) {
+		switch patternParts[pi] {
+		case "#":
+			// # 는 나머지 모든 레벨과 매칭
+			return true
+		case "+":
+			// + 는 단일 레벨과 매칭
+			pi++
+			ti++
+		default:
+			// 정확히 일치해야 함
+			if patternParts[pi] != topicParts[ti] {
+				return false
+			}
+			pi++
+			ti++
+		}
+	}
+
+	// 패턴과 토픽이 모두 끝나야 매칭 성공
+	return pi == len(patternParts) && ti == len(topicParts)
 }
 
 func (s *MQTTSource) convertMessage(topic string, payload []byte) (Record, error) {

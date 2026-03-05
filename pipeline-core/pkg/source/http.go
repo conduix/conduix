@@ -3,6 +3,8 @@ package source
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -31,9 +33,13 @@ type HTTPSource struct {
 	client     *http.Client
 
 	// OAuth2 토큰 캐시
-	tokenMu     sync.RWMutex
-	accessToken string
-	tokenExpiry time.Time
+	tokenMu      sync.RWMutex
+	accessToken  string
+	refreshToken string // Refresh token (런타임에 갱신될 수 있음)
+	tokenExpiry  time.Time
+
+	// PKCE 상태
+	pkceCodeVerifier string
 
 	// Rate limiting
 	rateLimitMu  sync.Mutex
@@ -50,7 +56,7 @@ func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
 		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
 	}
 
-	return &HTTPSource{
+	source := &HTTPSource{
 		url:        cfg.URL,
 		method:     cfg.Method,
 		headers:    cfg.Headers,
@@ -59,7 +65,27 @@ func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
 		pagination: cfg.Pagination,
 		rateLimit:  cfg.RateLimit,
 		client:     httpClient,
-	}, nil
+	}
+
+	// OAuth2 설정 초기화
+	if cfg.Auth != nil && cfg.Auth.Type == "oauth2" {
+		// Refresh token 초기화 (환경변수 지원)
+		if cfg.Auth.RefreshToken != "" {
+			source.refreshToken = expandEnvVars(cfg.Auth.RefreshToken)
+		}
+
+		// PKCE code verifier 초기화 또는 생성
+		if cfg.Auth.UsePKCE {
+			if cfg.Auth.PKCECodeVerifier != "" {
+				source.pkceCodeVerifier = cfg.Auth.PKCECodeVerifier
+			} else {
+				// 자동 생성 (43-128자 사이의 랜덤 문자열)
+				source.pkceCodeVerifier = generateCodeVerifier()
+			}
+		}
+	}
+
+	return source, nil
 }
 
 // buildHTTPClient TLS/mTLS 설정을 포함한 HTTP 클라이언트 생성
@@ -656,45 +682,256 @@ func (s *HTTPSource) getOAuth2Token(ctx context.Context) (string, error) {
 		return s.accessToken, nil
 	}
 
+	// Grant type 결정
+	grantType := s.auth.GrantType
+	if grantType == "" {
+		// 기본값: refresh token이 있으면 refresh_token, 없으면 client_credentials
+		if s.refreshToken != "" {
+			grantType = "refresh_token"
+		} else {
+			grantType = "client_credentials"
+		}
+	}
+
+	var tokenResp *oauth2TokenResponse
+	var err error
+
+	switch grantType {
+	case "refresh_token":
+		tokenResp, err = s.requestTokenWithRefreshToken(ctx)
+		if err != nil {
+			// Refresh token 실패 시 client_credentials로 폴백 (가능한 경우)
+			if s.auth.ClientSecret != "" {
+				fmt.Printf("[oauth2] Refresh token failed, falling back to client_credentials: %v\n", err)
+				tokenResp, err = s.requestTokenWithClientCredentials(ctx)
+			}
+		}
+	case "authorization_code":
+		// Authorization code flow는 외부에서 code를 받아와야 함
+		// 여기서는 PKCE code_verifier만 준비
+		return "", fmt.Errorf("authorization_code flow requires external authorization; use refresh_token after initial auth")
+	default:
+		// client_credentials (기본)
+		tokenResp, err = s.requestTokenWithClientCredentials(ctx)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	s.accessToken = tokenResp.AccessToken
+	// 만료 시간에서 1분 여유 둠
+	if tokenResp.ExpiresIn > 0 {
+		s.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn-60) * time.Second)
+	} else {
+		// ExpiresIn이 없으면 1시간 기본값
+		s.tokenExpiry = time.Now().Add(59 * time.Minute)
+	}
+
+	// 새 refresh token이 발급되면 저장
+	if tokenResp.RefreshToken != "" {
+		s.refreshToken = tokenResp.RefreshToken
+	}
+
+	return s.accessToken, nil
+}
+
+// oauth2TokenResponse OAuth2 토큰 응답
+type oauth2TokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Scope        string `json:"scope,omitempty"`
+}
+
+// requestTokenWithClientCredentials client_credentials grant로 토큰 요청
+func (s *HTTPSource) requestTokenWithClientCredentials(ctx context.Context) (*oauth2TokenResponse, error) {
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
 	data.Set("client_id", s.auth.ClientID)
-	data.Set("client_secret", s.auth.ClientSecret)
+	data.Set("client_secret", expandEnvVars(s.auth.ClientSecret))
 	if len(s.auth.Scopes) > 0 {
 		data.Set("scope", strings.Join(s.auth.Scopes, " "))
 	}
 
+	return s.doTokenRequest(ctx, data)
+}
+
+// requestTokenWithRefreshToken refresh_token grant로 토큰 갱신
+func (s *HTTPSource) requestTokenWithRefreshToken(ctx context.Context) (*oauth2TokenResponse, error) {
+	if s.refreshToken == "" {
+		return nil, fmt.Errorf("no refresh token available")
+	}
+
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", s.refreshToken)
+	data.Set("client_id", s.auth.ClientID)
+	// client_secret은 선택 (public client의 경우 불필요)
+	if s.auth.ClientSecret != "" {
+		data.Set("client_secret", expandEnvVars(s.auth.ClientSecret))
+	}
+	if len(s.auth.Scopes) > 0 {
+		data.Set("scope", strings.Join(s.auth.Scopes, " "))
+	}
+
+	return s.doTokenRequest(ctx, data)
+}
+
+// doTokenRequest 공통 토큰 요청 로직
+func (s *HTTPSource) doTokenRequest(ctx context.Context, data url.Values) (*oauth2TokenResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", s.auth.TokenURL,
 		strings.NewReader(data.Encode()))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token request failed: %w", err)
+		return nil, fmt.Errorf("token request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token request failed %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("token request failed %d: %s", resp.StatusCode, string(body))
 	}
 
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
+	var tokenResp oauth2TokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", fmt.Errorf("failed to decode token response: %w", err)
+		return nil, fmt.Errorf("failed to decode token response: %w", err)
+	}
+
+	return &tokenResp, nil
+}
+
+// PKCE 관련 함수들
+
+// generateCodeVerifier PKCE code_verifier 생성 (RFC 7636)
+// 43-128자 사이의 unreserved characters
+func generateCodeVerifier() string {
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+	const length = 64
+
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		// fallback to less random but still valid
+		for i := range b {
+			b[i] = charset[i%len(charset)]
+		}
+	} else {
+		for i := range b {
+			b[i] = charset[int(b[i])%len(charset)]
+		}
+	}
+	return string(b)
+}
+
+// generateCodeChallenge PKCE code_challenge 생성
+func generateCodeChallenge(verifier string, method string) string {
+	if method == "plain" {
+		return verifier
+	}
+	// S256 (기본)
+	hash := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+// GetPKCEAuthURL PKCE Authorization URL 생성 (외부에서 사용자 인증용)
+func (s *HTTPSource) GetPKCEAuthURL(state string) (string, error) {
+	if s.auth == nil || !s.auth.UsePKCE {
+		return "", fmt.Errorf("PKCE not enabled")
+	}
+	if s.auth.AuthURL == "" {
+		return "", fmt.Errorf("auth_url is required for PKCE")
+	}
+
+	challengeMethod := s.auth.PKCEChallengeMethod
+	if challengeMethod == "" {
+		challengeMethod = "S256"
+	}
+
+	codeChallenge := generateCodeChallenge(s.pkceCodeVerifier, challengeMethod)
+
+	u, err := url.Parse(s.auth.AuthURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid auth_url: %w", err)
+	}
+
+	q := u.Query()
+	q.Set("response_type", "code")
+	q.Set("client_id", s.auth.ClientID)
+	q.Set("code_challenge", codeChallenge)
+	q.Set("code_challenge_method", challengeMethod)
+	if s.auth.RedirectURL != "" {
+		q.Set("redirect_uri", s.auth.RedirectURL)
+	}
+	if len(s.auth.Scopes) > 0 {
+		q.Set("scope", strings.Join(s.auth.Scopes, " "))
+	}
+	if state != "" {
+		q.Set("state", state)
+	}
+	u.RawQuery = q.Encode()
+
+	return u.String(), nil
+}
+
+// ExchangeAuthorizationCode PKCE authorization code를 토큰으로 교환
+func (s *HTTPSource) ExchangeAuthorizationCode(ctx context.Context, code string) error {
+	if s.auth == nil || !s.auth.UsePKCE {
+		return fmt.Errorf("PKCE not enabled")
+	}
+
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", code)
+	data.Set("client_id", s.auth.ClientID)
+	data.Set("code_verifier", s.pkceCodeVerifier)
+	if s.auth.RedirectURL != "" {
+		data.Set("redirect_uri", s.auth.RedirectURL)
+	}
+	// Public client는 client_secret 불필요
+	if s.auth.ClientSecret != "" {
+		data.Set("client_secret", expandEnvVars(s.auth.ClientSecret))
+	}
+
+	tokenResp, err := s.doTokenRequest(ctx, data)
+	if err != nil {
+		return fmt.Errorf("failed to exchange authorization code: %w", err)
 	}
 
 	s.accessToken = tokenResp.AccessToken
-	// 만료 시간에서 1분 여유 둠
-	s.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn-60) * time.Second)
+	if tokenResp.ExpiresIn > 0 {
+		s.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn-60) * time.Second)
+	} else {
+		s.tokenExpiry = time.Now().Add(59 * time.Minute)
+	}
 
-	return s.accessToken, nil
+	if tokenResp.RefreshToken != "" {
+		s.refreshToken = tokenResp.RefreshToken
+	}
+
+	return nil
+}
+
+// GetRefreshToken 현재 refresh token 반환 (저장용)
+func (s *HTTPSource) GetRefreshToken() string {
+	s.tokenMu.RLock()
+	defer s.tokenMu.RUnlock()
+	return s.refreshToken
+}
+
+// SetRefreshToken refresh token 설정 (복원용)
+func (s *HTTPSource) SetRefreshToken(token string) {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	s.refreshToken = token
 }
 
 func (s *HTTPSource) Close() error {

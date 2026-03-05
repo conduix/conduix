@@ -485,6 +485,10 @@ func NewSink(cfg SinkConfig) (Sink, error) {
 		return NewKafkaSink(cfg.Name, cfg.Config), nil
 	case "file":
 		return NewFileSink(cfg.Name, cfg.Config), nil
+	case "snowflake":
+		return NewSnowflakeSink(cfg.Name, cfg.Config), nil
+	case "parquet":
+		return NewParquetFileSink(cfg.Name, cfg.Config), nil
 	default:
 		return nil, fmt.Errorf("unknown sink type: %s", cfg.Type)
 	}

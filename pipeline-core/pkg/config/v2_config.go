@@ -190,6 +190,37 @@ type InputV2 struct {
 	PubSubMaxExtension           string `yaml:"pubsub_max_extension,omitempty" json:"pubsub_max_extension,omitempty"`                       // ack deadline 최대 연장 시간 (default: "10m")
 	PubSubNumGoroutines          int    `yaml:"pubsub_num_goroutines,omitempty" json:"pubsub_num_goroutines,omitempty"`                     // 메시지 처리 고루틴 수 (default: 10)
 	PubSubSynchronous            bool   `yaml:"pubsub_synchronous,omitempty" json:"pubsub_synchronous,omitempty"`                           // 동기 처리 모드 (default: false)
+
+	// MongoDB CDC (Change Stream)
+	MongoDBURI                string `yaml:"mongodb_uri,omitempty" json:"mongodb_uri,omitempty"`                                   // MongoDB URI
+	MongoDBDatabase           string `yaml:"mongodb_database,omitempty" json:"mongodb_database,omitempty"`                         // Database 이름
+	MongoDBCollection         string `yaml:"mongodb_collection,omitempty" json:"mongodb_collection,omitempty"`                     // Collection 이름 (빈 값이면 database 전체)
+	MongoDBFullDocument       string `yaml:"mongodb_full_document,omitempty" json:"mongodb_full_document,omitempty"`               // updateLookup, whenAvailable, required
+	MongoDBFullDocumentBefore string `yaml:"mongodb_full_document_before,omitempty" json:"mongodb_full_document_before,omitempty"` // off, whenAvailable, required
+	MongoDBBatchSize          int    `yaml:"mongodb_batch_size,omitempty" json:"mongodb_batch_size,omitempty"`                     // Change Stream 배치 크기
+	MongoDBMaxAwaitTime       string `yaml:"mongodb_max_await_time,omitempty" json:"mongodb_max_await_time,omitempty"`             // 최대 대기 시간
+	MongoDBResumeAfter        string `yaml:"mongodb_resume_after,omitempty" json:"mongodb_resume_after,omitempty"`                 // Resume token
+	MongoDBReconnectWait      int    `yaml:"mongodb_reconnect_wait,omitempty" json:"mongodb_reconnect_wait,omitempty"`             // 재연결 대기 시간 (milliseconds)
+	MongoDBMaxReconnect       int    `yaml:"mongodb_max_reconnect,omitempty" json:"mongodb_max_reconnect,omitempty"`               // 최대 재연결 시도 횟수
+
+	// Redis Stream
+	RedisAddress         string `yaml:"redis_address,omitempty" json:"redis_address,omitempty"`                     // Redis 주소
+	RedisPassword        string `yaml:"redis_password,omitempty" json:"redis_password,omitempty"`                   // Redis 비밀번호
+	RedisDB              int    `yaml:"redis_db,omitempty" json:"redis_db,omitempty"`                               // Redis DB 번호
+	RedisUsername        string `yaml:"redis_username,omitempty" json:"redis_username,omitempty"`                   // Redis 사용자 이름 (6.0+)
+	RedisStream          string `yaml:"redis_stream,omitempty" json:"redis_stream,omitempty"`                       // Stream 이름
+	RedisGroup           string `yaml:"redis_group,omitempty" json:"redis_group,omitempty"`                         // Consumer Group 이름
+	RedisConsumer        string `yaml:"redis_consumer,omitempty" json:"redis_consumer,omitempty"`                   // Consumer 이름
+	RedisCount           int    `yaml:"redis_count,omitempty" json:"redis_count,omitempty"`                         // 한 번에 읽을 메시지 수
+	RedisBlock           string `yaml:"redis_block,omitempty" json:"redis_block,omitempty"`                         // Block 대기 시간
+	RedisNoAck           bool   `yaml:"redis_no_ack,omitempty" json:"redis_no_ack,omitempty"`                       // Auto-ack 여부
+	RedisStartID         string `yaml:"redis_start_id,omitempty" json:"redis_start_id,omitempty"`                   // 시작 ID (>, 0, $)
+	RedisClaimMinIdle    string `yaml:"redis_claim_min_idle,omitempty" json:"redis_claim_min_idle,omitempty"`       // Pending claim 최소 유휴 시간
+	RedisAutoCreateGroup bool   `yaml:"redis_auto_create_group,omitempty" json:"redis_auto_create_group,omitempty"` // Consumer Group 자동 생성
+	RedisReconnectWait   int    `yaml:"redis_reconnect_wait,omitempty" json:"redis_reconnect_wait,omitempty"`       // 재연결 대기 시간 (milliseconds)
+	RedisMaxReconnect    int    `yaml:"redis_max_reconnect,omitempty" json:"redis_max_reconnect,omitempty"`         // 최대 재연결 시도 횟수
+	RedisTLSEnabled      bool   `yaml:"redis_tls_enabled,omitempty" json:"redis_tls_enabled,omitempty"`             // TLS 활성화
+	RedisTLSSkipVerify   bool   `yaml:"redis_tls_skip_verify,omitempty" json:"redis_tls_skip_verify,omitempty"`     // TLS 인증서 검증 무시
 }
 
 // SourceV2는 InputV2의 별칭 (하위 호환성)

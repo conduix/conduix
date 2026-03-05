@@ -46,6 +46,18 @@ type Config struct {
 	VaultPath      string `yaml:"vault_path" json:"vault_path"`           // KV 시크릿 경로 (예: secret/data/myapp)
 	VaultNamespace string `yaml:"vault_namespace" json:"vault_namespace"` // Enterprise 네임스페이스
 
+	// AWS Secrets Manager 설정
+	AWSRegion          string `yaml:"aws_region" json:"aws_region"`
+	AWSAccessKeyID     string `yaml:"aws_access_key_id" json:"aws_access_key_id"`
+	AWSSecretAccessKey string `yaml:"aws_secret_access_key" json:"aws_secret_access_key"`
+	AWSSessionToken    string `yaml:"aws_session_token" json:"aws_session_token"`
+	AWSEndpoint        string `yaml:"aws_endpoint" json:"aws_endpoint"` // LocalStack 등
+
+	// GCP Secret Manager 설정
+	GCPProjectID       string `yaml:"gcp_project_id" json:"gcp_project_id"`
+	GCPCredentialsFile string `yaml:"gcp_credentials_file" json:"gcp_credentials_file"`
+	GCPCredentialsJSON string `yaml:"gcp_credentials_json" json:"gcp_credentials_json"`
+
 	// 캐시 설정
 	CacheTTL     time.Duration `yaml:"cache_ttl" json:"cache_ttl"`
 	CacheEnabled bool          `yaml:"cache_enabled" json:"cache_enabled"`
@@ -99,13 +111,51 @@ func NewManager(cfg *Config) (*Manager, error) {
 	// 기본 환경변수 제공자 등록
 	m.providers["env"] = &EnvProvider{}
 
-	// Vault 제공자 등록 (설정이 있는 경우)
-	if cfg != nil && cfg.Type == "vault" && cfg.VaultAddr != "" {
-		vault, err := NewVaultProvider(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Vault provider: %w", err)
+	if cfg != nil {
+		// Vault 제공자 등록
+		if cfg.Type == "vault" && cfg.VaultAddr != "" {
+			vault, err := NewVaultProvider(cfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create Vault provider: %w", err)
+			}
+			m.providers["vault"] = vault
 		}
-		m.providers["vault"] = vault
+
+		// AWS Secrets Manager 제공자 등록
+		if cfg.Type == "aws_secrets_manager" || cfg.AWSRegion != "" || os.Getenv("AWS_REGION") != "" {
+			awsCfg := &AWSConfig{
+				Region:          cfg.AWSRegion,
+				AccessKeyID:     cfg.AWSAccessKeyID,
+				SecretAccessKey: cfg.AWSSecretAccessKey,
+				SessionToken:    cfg.AWSSessionToken,
+				Endpoint:        cfg.AWSEndpoint,
+				MaxRetries:      cfg.MaxRetries,
+				RetryDelay:      cfg.RetryDelay,
+			}
+			awsProvider, err := NewAWSSecretsManagerProvider(awsCfg)
+			if err == nil {
+				m.providers["aws"] = awsProvider
+				m.providers["aws_secrets_manager"] = awsProvider
+			}
+			// 실패해도 다른 프로바이더는 계속 등록
+		}
+
+		// GCP Secret Manager 제공자 등록
+		if cfg.Type == "gcp_secret_manager" || cfg.GCPProjectID != "" || os.Getenv("GOOGLE_CLOUD_PROJECT") != "" {
+			gcpCfg := &GCPConfig{
+				ProjectID:       cfg.GCPProjectID,
+				CredentialsFile: cfg.GCPCredentialsFile,
+				CredentialsJSON: cfg.GCPCredentialsJSON,
+				MaxRetries:      cfg.MaxRetries,
+				RetryDelay:      cfg.RetryDelay,
+			}
+			gcpProvider, err := NewGCPSecretManagerProvider(gcpCfg)
+			if err == nil {
+				m.providers["gcp"] = gcpProvider
+				m.providers["gcp_secret_manager"] = gcpProvider
+			}
+			// 실패해도 다른 프로바이더는 계속 등록
+		}
 	}
 
 	return m, nil

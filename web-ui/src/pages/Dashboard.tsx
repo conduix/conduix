@@ -7,6 +7,11 @@ import {
   Box,
   Chip,
   Skeleton,
+  Tabs,
+  Tab,
+  Dialog,
+  DialogContent,
+  IconButton,
 } from '@mui/material'
 import { DataGrid, GridColDef } from '@mui/x-data-grid'
 import {
@@ -14,9 +19,12 @@ import {
   PlayCircle as PlayCircleIcon,
   Dns as ClusterIcon,
   Bolt as BoltIcon,
+  Visibility as ViewIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
+import { PipelineMonitor } from '../components/PipelineMonitor'
 
 interface Workflow {
   id: string
@@ -90,7 +98,11 @@ export default function DashboardPage() {
     offline: 0,
   })
   const [recentWorkflows, setRecentWorkflows] = useState<Workflow[]>([])
+  const [runningWorkflows, setRunningWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
+  const [tabValue, setTabValue] = useState(0)
+  const [monitorDialogOpen, setMonitorDialogOpen] = useState(false)
+  const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -111,6 +123,7 @@ export default function DashboardPage() {
           failed: workflows.filter((w) => w.status === 'error').length,
         })
         setRecentWorkflows(workflows.slice(0, 5))
+        setRunningWorkflows(workflows.filter((w) => w.status === 'running'))
       }
 
       try {
@@ -176,6 +189,26 @@ export default function DashboardPage() {
       width: 120,
       valueFormatter: ({ value }) => new Date(value).toLocaleDateString(),
     },
+    {
+      field: 'actions',
+      headerName: '',
+      width: 60,
+      sortable: false,
+      renderCell: (params) => {
+        if (params.row.status !== 'running') return null
+        return (
+          <IconButton
+            size="small"
+            onClick={() => {
+              setSelectedWorkflow(params.row)
+              setMonitorDialogOpen(true)
+            }}
+          >
+            <ViewIcon fontSize="small" />
+          </IconButton>
+        )
+      },
+    },
   ]
 
   return (
@@ -223,37 +256,89 @@ export default function DashboardPage() {
       </Grid>
 
       <Grid container spacing={2} sx={{ mt: 2 }}>
-        <Grid item xs={12} lg={6}>
+        <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                {t('dashboard.recentWorkflows')}
-              </Typography>
-              <DataGrid
-                rows={recentWorkflows}
-                columns={columns}
-                loading={loading}
-                autoHeight
-                hideFooter
-                disableRowSelectionOnClick
-                sx={{ border: 0 }}
-              />
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} lg={6}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                {t('dashboard.systemStatus')}
-              </Typography>
-              <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
-                {t('dashboard.systemMonitorPlaceholder')}
-              </Box>
+              <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)} sx={{ mb: 2 }}>
+                <Tab label={t('dashboard.recentWorkflows')} />
+                <Tab
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {t('dashboard.runningWorkflows')}
+                      {runningWorkflows.length > 0 && (
+                        <Chip
+                          label={runningWorkflows.length}
+                          size="small"
+                          color="success"
+                          sx={{ height: 20, fontSize: '0.7rem' }}
+                        />
+                      )}
+                    </Box>
+                  }
+                />
+              </Tabs>
+
+              {tabValue === 0 && (
+                <DataGrid
+                  rows={recentWorkflows}
+                  columns={columns}
+                  loading={loading}
+                  autoHeight
+                  hideFooter
+                  disableRowSelectionOnClick
+                  sx={{ border: 0 }}
+                />
+              )}
+
+              {tabValue === 1 && (
+                <>
+                  {runningWorkflows.length > 0 ? (
+                    <DataGrid
+                      rows={runningWorkflows}
+                      columns={columns}
+                      loading={loading}
+                      autoHeight
+                      hideFooter
+                      disableRowSelectionOnClick
+                      sx={{ border: 0 }}
+                    />
+                  ) : (
+                    <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
+                      {t('dashboard.noRunningWorkflows', 'No running workflows')}
+                    </Box>
+                  )}
+                </>
+              )}
             </CardContent>
           </Card>
         </Grid>
       </Grid>
+
+      {/* Pipeline Monitor Dialog */}
+      <Dialog
+        open={monitorDialogOpen}
+        onClose={() => setMonitorDialogOpen(false)}
+        maxWidth="xl"
+        fullWidth
+        PaperProps={{ sx: { height: '90vh' } }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 1, borderBottom: 1, borderColor: 'divider' }}>
+          <Typography variant="h6" sx={{ ml: 1 }}>
+            {selectedWorkflow?.name} - Pipeline Monitor
+          </Typography>
+          <IconButton onClick={() => setMonitorDialogOpen(false)}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
+        <DialogContent sx={{ p: 2 }}>
+          {selectedWorkflow && (
+            <PipelineMonitor
+              pipelineId={selectedWorkflow.id}
+              pipelineName={selectedWorkflow.name}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </Box>
   )
 }

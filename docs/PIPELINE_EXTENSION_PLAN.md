@@ -390,11 +390,11 @@ input:
 ```
 
 **구현 사항:**
-- [ ] 환경변수 프로바이더 (기본)
-- [ ] HashiCorp Vault 프로바이더
-- [ ] AWS Secrets Manager 프로바이더
-- [ ] GCP Secret Manager 프로바이더
-- [ ] 비밀 캐싱 및 자동 갱신
+- [x] 환경변수 프로바이더 (기본) ✅ (2026-03-05)
+- [x] HashiCorp Vault 프로바이더 ✅ (2026-03-05)
+- [x] AWS Secrets Manager 프로바이더 ✅ (2026-03-05)
+- [x] GCP Secret Manager 프로바이더 ✅ (2026-03-05)
+- [x] 비밀 캐싱 및 자동 갱신 ✅ (2026-03-05)
 
 ---
 
@@ -457,7 +457,7 @@ input:
 - [x] SQS Visibility timeout 지원 ✅
 - [x] SQS LocalStack 호환 (custom endpoint) ✅
 - [x] Dead letter queue 연동 (RabbitMQ/SQS DLQ Output) ✅ (2026-03-05)
-- [ ] Checkpoint 지원
+- [x] Checkpoint 지원 ✅ (이미 구현됨 - Ack/Visibility Timeout 기반)
 
 ### 3.2 실시간 스트리밍
 **우선순위: 중** | **예상 작업량: 중**
@@ -539,10 +539,10 @@ input:
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/source/mongodb_cdc.go` 생성
-- [ ] `pipeline-core/pkg/source/redis_stream.go` 생성
-- [ ] Resume token 관리
-- [ ] Consumer group 지원
+- [x] `pipeline-core/pkg/source/mongodb_cdc.go` 생성 ✅ (2026-03-05)
+- [x] `pipeline-core/pkg/source/redis_stream.go` 생성 ✅ (2026-03-05)
+- [x] Resume token 관리 ✅
+- [x] Consumer group 지원 ✅
 
 ---
 
@@ -602,7 +602,7 @@ stages:
 - [x] Watermark 관리 ✅
 - [x] 중첩 필드 접근 지원 ✅
 - [x] Emit 모드 (on_close, on_update) ✅
-- [ ] 상태 저장 (Redis 백엔드)
+- [x] 상태 저장 (Redis 백엔드) ✅ (2026-03-05)
 - [ ] Emit 모드 (periodic)
 
 ### 4.2 Stream Join
@@ -638,7 +638,7 @@ stages:
 - [x] ProcessLeft/ProcessRight 명시적 스트림 처리 ✅
 - [x] 키 문자열화 (stringifyKey)로 일관된 매칭 ✅
 - [x] FlushPending (미매칭 레코드 출력) ✅
-- [ ] Late arrival 처리 (watermark)
+- [x] Late arrival 처리 (watermark) ✅ (2026-03-05)
 
 ### 4.3 Enrichment (Lookup)
 **우선순위: 높음** | **예상 작업량: 중**
@@ -786,10 +786,10 @@ stages:
 ```
 
 **구현 사항:**
-- [ ] Sample 데이터 수집 API
-- [ ] Stage별 입/출력 비교
-- [ ] 변환 결과 diff 표시
-- [ ] 필터링 통계
+- [x] Sample 데이터 수집 API ✅ (2026-03-05)
+- [x] Stage별 입/출력 비교 ✅ (2026-03-05)
+- [x] 변환 결과 diff 표시 ✅ (2026-03-05)
+- [x] 필터링 통계 ✅ (2026-03-05)
 
 ### 5.3 파이프라인 모니터링 대시보드
 **우선순위: 중** | **예상 작업량: 중**
@@ -919,4 +919,8 @@ require (
 | 2026-03-05 | 3.3 | BigQuery Output 구현 완료 (Streaming Insert, 배치 플러시, 동적 스키마) |
 | 2026-03-05 | 3.4 | Secrets Provider 구현 완료 (환경변수, HashiCorp Vault, 캐시, 재시도) |
 | 2026-03-05 | 3.5 | Data Preview 구현 완료 (Stage 입/출력 미리보기, Diff, 통계, REST API) |
+| 2026-03-05 | 3.6 | AWS Secrets Manager 프로바이더 구현 완료 (자격증명 체인, 필드 추출, 재시도) |
+| 2026-03-05 | 3.7 | GCP Secret Manager 프로바이더 구현 완료 (버전 지원, 필드 추출, ADC 지원) |
+| 2026-03-05 | 3.8 | MongoDB CDC Input 구현 완료 (Change Stream, Resume token, Checkpoint) |
+| 2026-03-05 | 3.9 | Redis Stream Input 구현 완료 (Consumer Group, XREADGROUP, XCLAIM) |
 

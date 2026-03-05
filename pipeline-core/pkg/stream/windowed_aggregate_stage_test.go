@@ -479,3 +479,138 @@ func TestAggregator_IntValues(t *testing.T) {
 		t.Errorf("expected 60.0, got %v", result)
 	}
 }
+
+func TestWindowedAggregateStage_PeriodicEmit(t *testing.T) {
+	config := map[string]any{
+		"window": map[string]any{
+			"type": "tumbling",
+			"size": "1h",
+		},
+		"aggregations": []any{
+			map[string]any{
+				"field":    "count",
+				"function": "count",
+			},
+			map[string]any{
+				"field":    "total",
+				"function": "sum",
+				"source":   "value",
+			},
+		},
+		"emit": map[string]any{
+			"mode":                "periodic",
+			"interval":            "50ms",
+			"include_window_info": true,
+		},
+	}
+
+	stage, err := NewWindowedAggregateStage("periodic_emit_test", config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = stage.Close() }()
+
+	// Verify emit mode
+	if stage.emitMode != EmitPeriodic {
+		t.Errorf("expected emit mode 'periodic', got '%s'", stage.emitMode)
+	}
+
+	// Verify emit interval
+	if stage.emitInterval != 50*time.Millisecond {
+		t.Errorf("expected emit interval 50ms, got %v", stage.emitInterval)
+	}
+
+	// Verify emit ticker is running
+	if stage.emitTicker == nil {
+		t.Error("expected emitTicker to be initialized for periodic mode")
+	}
+
+	ctx := context.Background()
+
+	// Add records
+	for i := 0; i < 5; i++ {
+		record := &Record{Data: map[string]any{"value": float64(i * 10)}}
+		_, _ = stage.Process(ctx, record)
+	}
+
+	// Wait for periodic emit to fire
+	time.Sleep(120 * time.Millisecond)
+
+	// Get aggregated results
+	results := stage.GetAggregatedResults()
+
+	// Should have at least 1 partial result from periodic emit
+	if len(results) < 1 {
+		t.Errorf("expected at least 1 periodic emit result, got %d", len(results))
+	}
+
+	// Check that results have partial flag
+	for _, r := range results {
+		if r.Data["_is_partial"] != true {
+			t.Error("expected _is_partial to be true for periodic emit")
+		}
+		if r.Data["_emit_time"] == nil {
+			t.Error("expected _emit_time to be set for partial results")
+		}
+	}
+}
+
+func TestWindowedAggregateStage_PeriodicEmitDefaultInterval(t *testing.T) {
+	config := map[string]any{
+		"window": map[string]any{
+			"type": "tumbling",
+			"size": "1m", // 1 minute window
+		},
+		"aggregations": []any{
+			map[string]any{
+				"field":    "count",
+				"function": "count",
+			},
+		},
+		"emit": map[string]any{
+			"mode": "periodic",
+			// No interval specified, should default to window_size/4 = 15s
+		},
+	}
+
+	stage, err := NewWindowedAggregateStage("periodic_default_test", config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = stage.Close() }()
+
+	// Default interval should be window_size/4 = 1m/4 = 15s
+	expectedInterval := time.Minute / 4
+	if stage.emitInterval != expectedInterval {
+		t.Errorf("expected default emit interval %v, got %v", expectedInterval, stage.emitInterval)
+	}
+}
+
+func TestWindowedAggregateStage_OnCloseNoPeriodicTicker(t *testing.T) {
+	config := map[string]any{
+		"window": map[string]any{
+			"type": "tumbling",
+			"size": "1h",
+		},
+		"aggregations": []any{
+			map[string]any{
+				"field":    "count",
+				"function": "count",
+			},
+		},
+		"emit": map[string]any{
+			"mode": "on_close",
+		},
+	}
+
+	stage, err := NewWindowedAggregateStage("on_close_test", config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = stage.Close() }()
+
+	// On_close mode should not have emit ticker
+	if stage.emitTicker != nil {
+		t.Error("expected emitTicker to be nil for on_close mode")
+	}
+}

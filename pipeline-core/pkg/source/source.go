@@ -104,6 +104,10 @@ func NewSource(cfg config.SourceV2) (Source, error) {
 		return NewRabbitMQSource(cfg)
 	case "pubsub", "gcp_pubsub":
 		return NewPubSubSource(cfg)
+	case "mongodb_cdc":
+		return NewMongoDBCDCSource(cfg)
+	case "redis_stream":
+		return NewRedisStreamSource(cfg)
 	default:
 		return nil, &UnsupportedSourceError{Type: cfg.Type}
 	}

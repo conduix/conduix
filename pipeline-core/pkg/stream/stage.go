@@ -387,10 +387,20 @@ func NewStage(cfg StageConfig) (Stage, error) {
 		return NewFanOutStageFromConfig(cfg.Name, cfg.Config)
 	case "lookup_enrich":
 		return NewLookupEnrichStage(cfg.Name, cfg.Config)
+	case "batch_lookup":
+		return NewBatchLookupStage(cfg.Name, cfg.Config)
+	case "async_enrich":
+		return NewAsyncEnrichStage(cfg.Name, cfg.Config)
+	case "es_lookup":
+		return NewElasticsearchLookupStage(cfg.Name, cfg.Config)
+	case "es_lookup_batch":
+		return NewESLookupBatchStage(cfg.Name, cfg.Config)
 	case "windowed_aggregate":
 		return NewWindowedAggregateStage(cfg.Name, cfg.Config)
 	case "stream_join":
 		return NewStreamJoinStageFromConfig(cfg.Name, cfg.Config)
+	case "sub_pipeline":
+		return NewSubPipelineStage(cfg.Name, cfg.Config)
 	default:
 		return nil, fmt.Errorf("unknown stage type: %s", cfg.Type)
 	}

@@ -85,6 +85,10 @@ type WindowedAggregateStage struct {
 	redisKeyPrefix     string
 	statePersistPeriod time.Duration
 	persistTicker      *time.Ticker
+
+	// Periodic emit
+	emitInterval time.Duration
+	emitTicker   *time.Ticker
 }
 
 // windowState holds the state for a window
@@ -276,6 +280,12 @@ func NewWindowedAggregateStage(name string, config map[string]any) (*WindowedAgg
 		if incl, ok := emit["include_window_info"].(bool); ok {
 			s.includeWindowInfo = incl
 		}
+		// Periodic emit interval (defaults to window_size/4)
+		if interval, ok := emit["interval"].(string); ok {
+			if d, err := time.ParseDuration(interval); err == nil {
+				s.emitInterval = d
+			}
+		}
 	}
 
 	// Parse timestamp field
@@ -345,6 +355,15 @@ func NewWindowedAggregateStage(name string, config map[string]any) (*WindowedAgg
 	s.cleanupTicker = time.NewTicker(s.windowSize / 2)
 	go s.cleanupLoop()
 
+	// Start periodic emit goroutine if mode is periodic
+	if s.emitMode == EmitPeriodic {
+		if s.emitInterval == 0 {
+			s.emitInterval = s.windowSize / 4 // default: emit 4 times per window
+		}
+		s.emitTicker = time.NewTicker(s.emitInterval)
+		go s.periodicEmitLoop()
+	}
+
 	return s, nil
 }
 
@@ -356,6 +375,77 @@ func (s *WindowedAggregateStage) cleanupLoop() {
 		case <-s.cleanupTicker.C:
 			s.cleanupExpiredWindows()
 		}
+	}
+}
+
+// periodicEmitLoop 주기적으로 현재 윈도우 상태를 emit
+func (s *WindowedAggregateStage) periodicEmitLoop() {
+	for {
+		select {
+		case <-s.closeCh:
+			return
+		case <-s.emitTicker.C:
+			s.emitAllWindows(false) // partial=false, don't delete windows
+		}
+	}
+}
+
+// emitAllWindows emit all active windows (optionally deleting them)
+func (s *WindowedAggregateStage) emitAllWindows(deleteAfterEmit bool) {
+	s.windowsMu.Lock()
+	defer s.windowsMu.Unlock()
+
+	keysToDelete := make([]string, 0)
+	for key, ws := range s.windows {
+		s.emitWindowResultWithPartial(ws, !deleteAfterEmit)
+		if deleteAfterEmit {
+			keysToDelete = append(keysToDelete, key)
+		}
+	}
+
+	for _, key := range keysToDelete {
+		delete(s.windows, key)
+	}
+}
+
+// emitWindowResultWithPartial emit window result with partial flag
+func (s *WindowedAggregateStage) emitWindowResultWithPartial(ws *windowState, isPartial bool) {
+	result := make(map[string]any)
+
+	// Add group by values
+	for k, v := range ws.groupValues {
+		result[k] = v
+	}
+
+	// Add aggregation results
+	for field, agg := range ws.aggregators {
+		result[field] = agg.Result()
+	}
+
+	// Add window info if configured
+	if s.includeWindowInfo {
+		result["_window_start"] = ws.startTime.Format(time.RFC3339)
+		result["_window_end"] = ws.endTime.Format(time.RFC3339)
+		result["_window_group"] = ws.groupKey
+		result["_is_partial"] = isPartial
+		if isPartial {
+			result["_emit_time"] = time.Now().Format(time.RFC3339)
+		}
+	}
+
+	record := &Record{
+		Data: result,
+		Metadata: RecordMetadata{
+			Source: "aggregate",
+		},
+		Timestamp: time.Now(),
+	}
+
+	select {
+	case s.outputCh <- record:
+	default:
+		// Channel full, log warning
+		fmt.Printf("[windowed_aggregate] Output channel full, dropping aggregation result\n")
 	}
 }
 
@@ -796,6 +886,9 @@ func (s *WindowedAggregateStage) Close() error {
 	}
 	if s.persistTicker != nil {
 		s.persistTicker.Stop()
+	}
+	if s.emitTicker != nil {
+		s.emitTicker.Stop()
 	}
 
 	// Persist final state to Redis before closing

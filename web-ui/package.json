@@ -33,6 +33,7 @@
     "react-dom": "^18.2.0",
     "react-i18next": "^14.0.1",
     "react-router-dom": "^6.21.1",
+    "yaml": "^2.8.2",
     "zustand": "^4.4.7"
   },
   "devDependencies": {

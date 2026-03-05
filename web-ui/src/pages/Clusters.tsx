@@ -45,6 +45,8 @@ interface Cluster {
   status: string
   agent_count: number
   online_agent_count: number
+  desired_agents: number
+  agent_config?: string
   created_at: string
   updated_at: string
 }
@@ -55,6 +57,8 @@ interface ClusterFormData {
   api_server_url: string
   region: string
   status: string
+  desired_agents: number
+  node_selector: string // JSON 문자열로 관리
 }
 
 const initialFormData: ClusterFormData = {
@@ -63,6 +67,8 @@ const initialFormData: ClusterFormData = {
   api_server_url: '',
   region: '',
   status: 'active',
+  desired_agents: 1,
+  node_selector: '',
 }
 
 interface StatCardProps {
@@ -125,12 +131,26 @@ export default function ClustersPage() {
   const handleOpenDialog = (cluster?: Cluster) => {
     if (cluster) {
       setEditingCluster(cluster)
+      // agent_config에서 node_selector 추출
+      let nodeSelector = ''
+      if (cluster.agent_config) {
+        try {
+          const config = JSON.parse(cluster.agent_config)
+          if (config.node_selector) {
+            nodeSelector = JSON.stringify(config.node_selector, null, 2)
+          }
+        } catch {
+          // ignore
+        }
+      }
       setFormData({
         name: cluster.name,
         description: cluster.description || '',
         api_server_url: cluster.api_server_url || '',
         region: cluster.region || '',
         status: cluster.status,
+        desired_agents: cluster.desired_agents || 1,
+        node_selector: nodeSelector,
       })
     } else {
       setEditingCluster(null)
@@ -151,13 +171,46 @@ export default function ClustersPage() {
       return
     }
 
+    // node_selector JSON 유효성 검사
+    let nodeSelector: Record<string, string> | undefined
+    if (formData.node_selector.trim()) {
+      try {
+        nodeSelector = JSON.parse(formData.node_selector)
+      } catch {
+        showError(t('cluster.invalidNodeSelector'))
+        return
+      }
+    }
+
     setSubmitting(true)
     try {
+      const baseData = {
+        name: formData.name,
+        description: formData.description,
+        api_server_url: formData.api_server_url,
+        region: formData.region,
+        status: formData.status,
+      }
+
       if (editingCluster) {
-        await api.updateCluster(editingCluster.id, formData)
+        // 클러스터 정보 업데이트
+        await api.updateCluster(editingCluster.id, baseData)
+        // Agent 설정 업데이트
+        await api.updateClusterAgentConfig(editingCluster.id, {
+          desired_agents: formData.desired_agents,
+          agent_config: nodeSelector ? { node_selector: nodeSelector } : undefined,
+        })
         showSuccess(t('cluster.updateSuccess'))
       } else {
-        await api.createCluster(formData)
+        // 새 클러스터 생성
+        const response = await api.createCluster(baseData)
+        // 생성 후 Agent 설정 업데이트
+        if (response.data?.id) {
+          await api.updateClusterAgentConfig(response.data.id, {
+            desired_agents: formData.desired_agents,
+            agent_config: nodeSelector ? { node_selector: nodeSelector } : undefined,
+          })
+        }
         showSuccess(t('cluster.createSuccess'))
       }
       handleCloseDialog()
@@ -238,15 +291,21 @@ export default function ClustersPage() {
     {
       field: 'agent_count',
       headerName: t('cluster.agents'),
-      width: 150,
+      width: 180,
       renderCell: (params: GridRenderCellParams<Cluster>) => {
         const online = params.row.online_agent_count
-        const total = params.row.agent_count
+        const current = params.row.agent_count
+        const desired = params.row.desired_agents || 1
         return (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <DesktopIcon fontSize="small" color={online > 0 ? 'success' : 'disabled'} />
             <Typography variant="body2">
-              {online}/{total} {t('cluster.online')}
+              {online}/{current}
+              {current !== desired && (
+                <Typography component="span" variant="body2" color="text.secondary">
+                  {' '}(→{desired})
+                </Typography>
+              )}
             </Typography>
           </Box>
         )
@@ -401,6 +460,33 @@ export default function ClustersPage() {
                 </Select>
               </FormControl>
             )}
+
+            {/* Agent 배포 설정 */}
+            <Typography variant="subtitle2" sx={{ mt: 2 }}>
+              {t('cluster.agentSettings')}
+            </Typography>
+            <TextField
+              label={t('cluster.desiredAgents')}
+              type="number"
+              value={formData.desired_agents}
+              onChange={(e) => setFormData({ ...formData, desired_agents: parseInt(e.target.value) || 1 })}
+              fullWidth
+              inputProps={{ min: 0, max: 100 }}
+              helperText={t('cluster.desiredAgentsHelp')}
+            />
+            <TextField
+              label={t('cluster.nodeSelector')}
+              value={formData.node_selector}
+              onChange={(e) => setFormData({ ...formData, node_selector: e.target.value })}
+              fullWidth
+              multiline
+              rows={3}
+              placeholder='{"node-type": "pipeline", "zone": "a"}'
+              helperText={t('cluster.nodeSelectorHelp')}
+              InputProps={{
+                style: { fontFamily: 'monospace', fontSize: '0.875rem' },
+              }}
+            />
           </Box>
         </DialogContent>
         <DialogActions>

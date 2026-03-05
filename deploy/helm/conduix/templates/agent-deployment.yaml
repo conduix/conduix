@@ -43,6 +43,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: CLUSTER_ID
+              value: {{ .Values.agent.clusterId | default "default" | quote }}
             - name: CONTROL_PLANE_URL
               value: "http://{{ include "conduix.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}"
           envFrom:

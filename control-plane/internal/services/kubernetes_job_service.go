@@ -473,3 +473,60 @@ func truncateID(id string, length int) string {
 func boolPtr(b bool) *bool {
 	return &b
 }
+
+// int32Ptr int32 포인터 반환 헬퍼
+func int32Ptr(i int32) *int32 {
+	return &i
+}
+
+// ScaleDeployment Deployment의 replicas 수를 변경
+func (s *KubernetesJobService) ScaleDeployment(ctx context.Context, name string, namespace string, replicas int32) error {
+	if namespace == "" {
+		namespace = s.namespace
+	}
+
+	// Deployment 가져오기
+	deployment, err := s.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get deployment %s: %w", name, err)
+	}
+
+	// replicas 업데이트
+	deployment.Spec.Replicas = int32Ptr(replicas)
+
+	_, err = s.clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to scale deployment %s to %d: %w", name, replicas, err)
+	}
+
+	return nil
+}
+
+// GetDeploymentReplicas Deployment의 현재 replicas 수 조회
+func (s *KubernetesJobService) GetDeploymentReplicas(ctx context.Context, name string, namespace string) (int32, int32, error) {
+	if namespace == "" {
+		namespace = s.namespace
+	}
+
+	deployment, err := s.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get deployment %s: %w", name, err)
+	}
+
+	desired := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desired = *deployment.Spec.Replicas
+	}
+
+	return desired, deployment.Status.ReadyReplicas, nil
+}
+
+// ScaleAgentDeployment Agent Deployment 스케일링 (클러스터 ID 기반)
+// 현재는 단일 클러스터 구조이므로 conduix-agent deployment를 스케일링
+func (s *KubernetesJobService) ScaleAgentDeployment(ctx context.Context, clusterID string, replicas int32) error {
+	// TODO: 멀티 클러스터 지원 시 클러스터별 deployment 이름 매핑 필요
+	// 현재는 단일 conduix-agent deployment 사용
+	deploymentName := "conduix-agent"
+
+	return s.ScaleDeployment(ctx, deploymentName, s.namespace, replicas)
+}

@@ -260,6 +260,144 @@ stages:
 
 ---
 
+## Phase 2.5: 인증/인가 강화
+
+### Input별 인증 지원 현황 (업데이트: 2026-03-05)
+
+| Input Type | 지원 기능 | 상태 |
+|------------|-----------|------|
+| **HTTP** | Basic, Bearer, OAuth2, API Key (header/query), mTLS | ✅ 완료 |
+| **Kafka** | SASL/PLAIN, SASL/SCRAM-SHA-256, SASL/SCRAM-SHA-512, TLS, mTLS | ✅ 완료 |
+| **SQL** | DSN, 개별 TLS 설정 (MySQL, PostgreSQL) | ✅ 완료 |
+| **CDC** | MySQL 사용자 인증 + TLS | ✅ 완료 |
+| **Kubernetes** | ServiceAccount, kubeconfig | ✅ 완료 |
+| **File** | OS 파일 권한 | - |
+
+**미구현:**
+- HTTP: OAuth2 refresh token, PKCE
+- SQL: 비밀번호 마스킹 로깅
+- Secrets Provider (Vault, AWS SM, GCP SM)
+
+### 2.5.1 Kafka 보안 인증
+**우선순위: 높음** | **예상 작업량: 중**
+
+```yaml
+input:
+  type: kafka
+  config:
+    brokers: ["kafka:9092"]
+    topics: ["events"]
+    # SASL 인증
+    sasl:
+      mechanism: SCRAM-SHA-512    # PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+      username: "${KAFKA_USER}"
+      password: "${KAFKA_PASS}"
+    # TLS 암호화
+    tls:
+      enabled: true
+      ca_cert: "/path/to/ca.crt"
+      client_cert: "/path/to/client.crt"   # mTLS
+      client_key: "/path/to/client.key"    # mTLS
+      skip_verify: false
+```
+
+**구현 사항:**
+- [x] SASL/PLAIN, SASL/SCRAM-SHA-256, SASL/SCRAM-SHA-512 지원 ✅ (2026-03-05)
+- [x] SSL/TLS 암호화 연결 ✅
+- [x] mTLS 상호 인증 ✅
+- [x] 환경변수 치환 (`${VAR}` 형식) ✅
+
+### 2.5.2 SQL/CDC TLS 지원
+**우선순위: 높음** | **예상 작업량: 낮음**
+
+```yaml
+input:
+  type: sql
+  config:
+    driver: mysql
+    host: "db.example.com"
+    port: 3306
+    database: "mydb"
+    username: "${DB_USER}"
+    password: "${DB_PASS}"
+    db_tls:
+      enabled: true
+      mode: "verify-full"     # skip-verify, require, verify-ca, verify-full
+      ca_cert: "/path/to/ca.crt"
+      client_cert: "/path/to/client.crt"  # mTLS
+      client_key: "/path/to/client.key"   # mTLS
+    # 또는 기존 DSN 방식
+    dsn: "${DB_DSN}"
+```
+
+**구현 사항:**
+- [x] 환경변수 치환 (`${VAR}` 형식) ✅ (2026-03-05)
+- [x] DSN 외 개별 필드 설정 지원 ✅
+- [x] TLS 설정 분리 (DBTLSConfig) ✅
+- [x] MySQL/PostgreSQL TLS 자동 DSN 생성 ✅
+- [x] CDC(Canal) TLS 지원 ✅
+- [ ] 비밀번호 마스킹 로깅
+
+### 2.5.3 HTTP API Key 및 mTLS
+**우선순위: 중** | **예상 작업량: 중**
+
+```yaml
+input:
+  type: rest_api
+  config:
+    endpoint: "https://api.example.com/events"
+    auth:
+      # API Key (header or query)
+      type: api_key
+      api_key: "${API_KEY}"
+      api_key_in: header      # header or query
+      api_key_name: X-API-Key # 헤더/쿼리 파라미터 이름
+    # 또는 mTLS
+    auth:
+      type: mtls
+      tls:
+        enabled: true
+        client_cert: "/path/to/client.crt"
+        client_key: "/path/to/client.key"
+        ca_cert: "/path/to/ca.crt"
+```
+
+**구현 사항:**
+- [x] API Key 인증 (Header/Query 위치 선택) ✅ (2026-03-05)
+- [x] mTLS 클라이언트 인증서 지원 ✅
+- [x] 환경변수 치환 지원 ✅
+- [ ] OAuth2 refresh token 지원
+- [ ] PKCE 플로우 지원
+
+### 2.5.4 통합 비밀 관리 (Secrets Provider)
+**우선순위: 중** | **예상 작업량: 높음**
+
+```yaml
+# 파이프라인 전역 설정
+secrets:
+  provider: vault           # env, vault, aws_secrets_manager, gcp_secret_manager
+  config:
+    address: "https://vault.example.com"
+    role: "pipeline-reader"
+    path: "secret/data/pipeline"
+
+input:
+  type: kafka
+  config:
+    sasl:
+      username: "{{ secrets.kafka_user }}"
+      password: "{{ secrets.kafka_pass }}"
+```
+
+**구현 사항:**
+- [ ] 환경변수 프로바이더 (기본)
+- [ ] HashiCorp Vault 프로바이더
+- [ ] AWS Secrets Manager 프로바이더
+- [ ] GCP Secret Manager 프로바이더
+- [ ] 비밀 캐싱 및 자동 갱신
+
+---
+
 ## Phase 3: Input 확장
 
 ### 3.1 메시징 시스템
@@ -272,8 +410,18 @@ input:
   config:
     url: "amqp://guest:guest@localhost:5672/"
     queue: "events"
+    exchange: "my_exchange"
+    exchange_type: "topic"          # direct, fanout, topic, headers
+    routing_key: "events.#"
     prefetch: 100
     auto_ack: false
+    durable: true
+    exclusive: false
+    consumer_tag: "pipeline-consumer"
+    reconnect_wait: "5s"
+    tls:
+      enabled: true
+      ca_cert: "/path/to/ca.crt"
 
 # AWS SQS
 input:
@@ -281,8 +429,13 @@ input:
   config:
     queue_url: "https://sqs.us-east-1.amazonaws.com/123456789/my-queue"
     region: "us-east-1"
+    access_key_id: "${AWS_ACCESS_KEY_ID}"
+    secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
     max_messages: 10
-    wait_time_seconds: 20
+    wait_time_seconds: 20           # 0 for short polling, 1-20 for long polling
+    visibility_timeout: 30
+    delete_on_receive: false
+    endpoint: ""                    # Custom endpoint (LocalStack)
 
 # Google Pub/Sub
 input:
@@ -294,10 +447,15 @@ input:
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/source/rabbitmq.go` 생성
-- [ ] `pipeline-core/pkg/source/sqs.go` 생성
+- [x] `pipeline-core/pkg/source/rabbitmq.go` 생성 ✅ (2026-03-05)
+- [x] `pipeline-core/pkg/source/sqs.go` 생성 ✅ (2026-03-05)
 - [ ] `pipeline-core/pkg/source/pubsub.go` 생성
-- [ ] Ack/Nack 처리
+- [x] RabbitMQ Exchange/Queue 자동 선언 ✅
+- [x] RabbitMQ TLS 지원 ✅
+- [x] RabbitMQ 재연결 로직 ✅
+- [x] SQS Long polling 지원 ✅
+- [x] SQS Visibility timeout 지원 ✅
+- [x] SQS LocalStack 호환 (custom endpoint) ✅
 - [ ] Dead letter queue 연동
 - [ ] Checkpoint 지원
 
@@ -310,8 +468,18 @@ input:
   type: websocket
   config:
     url: "wss://stream.example.com/events"
-    reconnect_interval: "5s"
-    heartbeat_interval: "30s"
+    headers:
+      Authorization: "Bearer ${TOKEN}"
+    subprotocols: ["graphql-ws"]
+    ping_interval: "30s"
+    pong_wait: "10s"
+    reconnect_wait: "5s"
+    max_reconnect: 10               # 0 for infinite
+    message_type: text              # text or binary
+    subscribe_message: '{"type":"subscribe","channel":"events"}'
+    tls:
+      enabled: true
+      skip_verify: false
 
 # Server-Sent Events
 input:
@@ -331,12 +499,21 @@ input:
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/source/websocket.go` 생성
-- [ ] `pipeline-core/pkg/source/sse.go` 생성
-- [ ] `pipeline-core/pkg/source/mqtt.go` 생성
-- [ ] 재연결 로직
-- [ ] Heartbeat/Keep-alive
-- [ ] Wildcard topic 지원
+- [x] `pipeline-core/pkg/source/websocket.go` 생성 ✅ (2026-03-05)
+- [x] `pipeline-core/pkg/source/sse.go` 생성 ✅ (2026-03-05)
+- [x] `pipeline-core/pkg/source/mqtt.go` 생성 ✅ (2026-03-05)
+- [x] WebSocket 재연결 로직 (지수 백오프) ✅
+- [x] WebSocket Ping/Pong 지원 ✅
+- [x] WebSocket TLS/SSL 지원 ✅
+- [x] WebSocket Subprotocols 지원 ✅
+- [x] WebSocket Subscribe message 지원 ✅
+- [x] SSE Event 파싱 (id, event, data, retry) ✅
+- [x] SSE Last-Event-ID 지원 (재시작 시 복구) ✅
+- [x] MQTT QoS 레벨 (0, 1, 2) 지원 ✅
+- [x] MQTT Clean Session 지원 ✅
+- [x] MQTT 재연결 로직 ✅
+- [x] MQTT/SSE TLS 지원 ✅
+- [ ] Wildcard topic 지원 (MQTT)
 
 ### 3.3 데이터베이스 확장
 **우선순위: 중** | **예상 작업량: 중**
@@ -377,16 +554,18 @@ input:
 ```yaml
 stages:
   - name: minute_aggregation
-    type: aggregate
+    type: windowed_aggregate
     config:
       window:
         type: tumbling                       # tumbling, sliding, session
         size: "1m"
+        slide: "30s"                         # sliding window only
+        session_gap: "5m"                    # session window only
         grace_period: "10s"
       group_by: ["user_id", "event_type"]
       aggregations:
         - field: count
-          function: count
+          function: count                    # count records
         - field: total_amount
           function: sum
           source: amount
@@ -396,18 +575,35 @@ stages:
         - field: unique_items
           function: count_distinct
           source: item_id
+        - field: min_value
+          function: min
+          source: value
+        - field: max_value
+          function: max
+          source: value
+        - field: first_event
+          function: first
+          source: event_id
+        - field: last_event
+          function: last
+          source: event_id
       emit:
         mode: on_close                       # on_close, periodic, on_update
         include_window_info: true
+      timestamp_field: "_timestamp"          # event time field
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/stream/aggregate_stage.go` 확장
-- [ ] 윈도우 타입 (Tumbling, Sliding, Session)
-- [ ] 집계 함수 (count, sum, avg, min, max, count_distinct)
-- [ ] 상태 저장 (Memory, Redis)
-- [ ] Late event 처리 (grace period)
-- [ ] Watermark 관리
+- [x] `pipeline-core/pkg/stream/windowed_aggregate_stage.go` 생성 ✅ (2026-03-05)
+- [x] 윈도우 타입 (Tumbling, Sliding, Session) ✅
+- [x] 집계 함수 (count, sum, avg, min, max, count_distinct, first, last) ✅
+- [x] 그룹별 윈도우 상태 관리 ✅
+- [x] Late event 처리 (grace period) ✅
+- [x] Watermark 관리 ✅
+- [x] 중첩 필드 접근 지원 ✅
+- [x] Emit 모드 (on_close, on_update) ✅
+- [ ] 상태 저장 (Redis 백엔드)
+- [ ] Emit 모드 (periodic)
 
 ### 4.2 Stream Join
 **우선순위: 중** | **예상 작업량: 높음**
@@ -434,11 +630,15 @@ stages:
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/stream/join_stage.go` 생성
-- [ ] Join 타입 (Inner, Left, Right, Outer)
-- [ ] 시간 기반 윈도우 조인
-- [ ] 상태 저장 (조인 대기 레코드)
-- [ ] Late arrival 처리
+- [x] `pipeline-core/pkg/stream/stream_join_stage.go` 생성 ✅ (2026-03-05)
+- [x] Join 타입 (Inner, Left, Right, Outer) ✅
+- [x] 시간 기반 윈도우 조인 (Before/After 윈도우) ✅
+- [x] 상태 저장 (조인 대기 레코드 버퍼) ✅
+- [x] 자동 버퍼 정리 (만료 레코드 cleanup) ✅
+- [x] ProcessLeft/ProcessRight 명시적 스트림 처리 ✅
+- [x] 키 문자열화 (stringifyKey)로 일관된 매칭 ✅
+- [x] FlushPending (미매칭 레코드 출력) ✅
+- [ ] Late arrival 처리 (watermark)
 
 ### 4.3 Enrichment (Lookup)
 **우선순위: 높음** | **예상 작업량: 중**
@@ -446,29 +646,54 @@ stages:
 ```yaml
 stages:
   - name: user_enrichment
-    type: enrich
+    type: lookup_enrich
     config:
       source:
-        type: redis                          # redis, http, sql, elasticsearch
+        type: http                           # redis, http, sql
         config:
-          address: "localhost:6379"
-          key_template: "user:{{ .user_id }}"
-      join_field: user_id
-      target_field: user_info
+          # HTTP 소스
+          url: "http://api.example.com/users"
+          method: GET
+          headers:
+            Authorization: "Bearer ${API_TOKEN}"
+          timeout: "5s"
+
+          # Redis 소스 (type: redis)
+          # address: "localhost:6379"
+          # password: "${REDIS_PASS}"
+          # db: 0
+          # key_prefix: "user:"
+
+          # SQL 소스 (type: sql)
+          # driver: mysql
+          # dsn: "${DB_DSN}"
+          # query: "SELECT * FROM users WHERE id = ?"
+
+      join_field: user_id                    # 중첩 필드 지원: "order.user_id"
+      target_field: user_info                # 중첩 필드 지원: "order.user"
       cache:
         enabled: true
         ttl: "5m"
         max_size: 10000
       on_missing: skip                       # skip, error, default
-      default_value: {}
+      default_value:
+        name: "Unknown"
+        status: "inactive"
+      timeout: "10s"
 ```
 
 **구현 사항:**
-- [ ] `pipeline-core/pkg/stream/enrich_stage.go` 생성
-- [ ] 다양한 Lookup 소스 (Redis, HTTP API, SQL, ES)
-- [ ] 로컬 캐시 (LRU)
+- [x] `pipeline-core/pkg/stream/lookup_enrich_stage.go` 생성 ✅ (2026-03-05)
+- [x] HTTP Lookup 소스 ✅
+- [x] Redis Lookup 소스 ✅
+- [x] SQL Lookup 소스 ✅
+- [x] LRU 캐시 (TTL + 최대 크기) ✅
+- [x] 중첩 필드 접근 (join_field, target_field) ✅
+- [x] on_missing 처리 (skip, error, default) ✅
+- [x] 타임아웃 설정 ✅
 - [ ] Batch lookup (성능 최적화)
 - [ ] 비동기 enrichment 옵션
+- [ ] Elasticsearch Lookup 소스
 
 ### 4.4 Sub-pipeline (Inline Pipeline)
 **우선순위: 중** | **예상 작업량: 중**
@@ -586,27 +811,35 @@ stages:
 | Elasticsearch Output | 3일 | ✅ 완료 (2026-03-04) |
 | MongoDB Output | 2일 | ✅ 완료 (2026-03-04) |
 | S3 Output | 3일 | ✅ 완료 (2026-03-04) |
-| Conditional Router | 2일 | ⬜ 대기 |
-| Enrich Stage (Redis/HTTP) | 3일 | ⬜ 대기 |
+| Conditional Router | 2일 | ✅ 완료 (2026-03-05) |
+| Fan-out Stage | 2일 | ✅ 완료 (2026-03-05) |
+| Dynamic Output | 2일 | ✅ 완료 (2026-03-05) |
+| Kafka SASL/TLS 인증 | 1일 | ✅ 완료 (2026-03-05) |
+| SQL/CDC TLS 지원 | 1일 | ✅ 완료 (2026-03-05) |
+| HTTP API Key/mTLS | 1일 | ✅ 완료 (2026-03-05) |
+| Enrich Stage (Redis/HTTP/SQL) | 3일 | ✅ 완료 (2026-03-05) |
 
 ### 중간 우선순위 (Phase 3-4 일부)
 
 | 작업 | 예상 시간 | 상태 |
 |------|-----------|------|
-| RabbitMQ Input | 2일 | ⬜ 대기 |
-| SQS Input | 2일 | ⬜ 대기 |
-| WebSocket Input | 2일 | ⬜ 대기 |
-| Windowed Aggregation | 5일 | ⬜ 대기 |
-| Dynamic Output | 2일 | ⬜ 대기 |
+| RabbitMQ Input | 2일 | ✅ 완료 (2026-03-05) |
+| SQS Input | 2일 | ✅ 완료 (2026-03-05) |
+| WebSocket Input | 2일 | ✅ 완료 (2026-03-05) |
+| Windowed Aggregation | 5일 | ✅ 완료 (2026-03-05) |
+| Google Pub/Sub Input | 2일 | ⬜ 대기 |
+| MQTT Input | 2일 | ✅ 완료 (2026-03-05) |
+| SSE Input | 1일 | ✅ 완료 (2026-03-05) |
 
 ### 낮은 우선순위 (Phase 4-5)
 
 | 작업 | 예상 시간 | 상태 |
 |------|-----------|------|
-| Stream Join | 5일 | ⬜ 대기 |
+| Stream Join | 5일 | ✅ 완료 (2026-03-05) |
 | Visual Pipeline Builder | 10일 | ⬜ 대기 |
 | BigQuery Output | 3일 | ⬜ 대기 |
 | Data Preview | 3일 | ⬜ 대기 |
+| Secrets Provider (Vault) | 3일 | ⬜ 대기 |
 
 ---
 
@@ -664,4 +897,16 @@ require (
 | 2026-03-04 | 1.1 | sink → output 용어 통일, Elasticsearch Output 구현 완료 |
 | 2026-03-04 | 1.2 | MongoDB Output 구현 완료 (InsertMany, BulkWrite, Upsert, 동적 Collection) |
 | 2026-03-04 | 1.3 | S3 Output 구현 완료 (JSON/NDJSON/CSV, gzip, Hive 파티셔닝, MinIO 호환) |
+| 2026-03-05 | 1.4 | Router Stage 구현 완료 (condition, fan_out, filter 모드) |
+| 2026-03-05 | 1.5 | Fan-out Stage 구현 완료 (병렬 브랜치, 결과 병합) |
+| 2026-03-05 | 1.6 | Dynamic Output 구현 완료 (런타임 Output 선택) |
+| 2026-03-05 | 1.7 | Phase 2.5 인증 강화 완료 (Kafka SASL/TLS, SQL/CDC TLS, HTTP API Key/mTLS) |
+| 2026-03-05 | 1.8 | RabbitMQ Input 구현 완료 (Exchange, TLS, 재연결) |
+| 2026-03-05 | 1.9 | SQS Input 구현 완료 (Long polling, LocalStack 호환) |
+| 2026-03-05 | 2.0 | WebSocket Input 구현 완료 (Ping/Pong, TLS, Subprotocols) |
+| 2026-03-05 | 2.1 | Lookup Enrich Stage 구현 완료 (HTTP, Redis, SQL, LRU 캐시) |
+| 2026-03-05 | 2.2 | Windowed Aggregation Stage 구현 완료 (Tumbling, Sliding, Session, 8개 집계 함수) |
+| 2026-03-05 | 2.3 | MQTT Input 구현 완료 (QoS 0-2, Clean Session, TLS, 재연결) |
+| 2026-03-05 | 2.4 | SSE Input 구현 완료 (Event 파싱, Last-Event-ID 복구) |
+| 2026-03-05 | 2.5 | Stream Join Stage 구현 완료 (Inner/Left/Right/Outer, 윈도우 조인, 버퍼 관리) |
 

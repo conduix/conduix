@@ -69,9 +69,21 @@ func NewSource(cfg config.SourceV2) (Source, error) {
 	case "file":
 		return NewFileSource(cfg)
 	case "sql":
+		// partition 설정이 있으면 PartitionedSQLSource 사용
+		if cfg.Partition != nil {
+			return NewPartitionedSQLSource(cfg)
+		}
 		return NewSQLSource(cfg)
 	case "http", "rest_api":
+		// partition 설정이 있으면 PartitionedHTTPSource 사용
+		if cfg.Partition != nil {
+			return NewPartitionedHTTPSource(cfg)
+		}
 		return NewHTTPSource(cfg)
+	case "partitioned_http":
+		return NewPartitionedHTTPSource(cfg)
+	case "partitioned_sql":
+		return NewPartitionedSQLSource(cfg)
 	case "kafka":
 		return NewKafkaSource(cfg)
 	case "sql_event":
@@ -80,6 +92,12 @@ func NewSource(cfg config.SourceV2) (Source, error) {
 		return NewCDCSource(cfg)
 	case "kubernetes", "k8s_logs":
 		return NewKubernetesSource(cfg)
+	case "websocket":
+		return NewWebSocketSource(cfg)
+	case "mqtt":
+		return NewMQTTSource(cfg)
+	case "sse":
+		return NewSSESource(cfg)
 	default:
 		return nil, &UnsupportedSourceError{Type: cfg.Type}
 	}

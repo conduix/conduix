@@ -448,8 +448,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	injectedKafkaSinks := e.injectKafkaSinksForParent(ctx, &pipeline)
 
 	// Output Sink 및 PreStages 매핑
-	outputSinks := make(map[string]output.Output)       // output name -> sink
-	outputsWithSinks := make([]OutputWithSink, 0)   // Output + Sink + PreStages
+	outputSinks := make(map[string]output.Output) // output name -> sink
+	outputsWithSinks := make([]OutputWithSink, 0) // Output + Sink + PreStages
 
 	// 1. Outputs 배열에서 Sink 생성 (권장 방식)
 	for _, output := range pipeline.Outputs {

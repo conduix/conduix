@@ -35,6 +35,7 @@ type Server struct {
 	utilsHandler        *handlers.UtilsHandler
 	checkpointHandler   *handlers.CheckpointHandler
 	pipelineLinkHandler *handlers.PipelineLinkHandler
+	stageHandler        *handlers.StageHandler
 	startTime           time.Time
 	version             string
 }
@@ -49,6 +50,15 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 	// Kafka 서비스 초기화
 	kafkaService := services.NewKafkaService(nil)
 	linkService := services.NewPipelineLinkService(db, kafkaService, nil)
+
+	// Kubernetes 서비스 초기화 (실패해도 서버는 시작)
+	var k8sService *services.KubernetesJobService
+	k8sService, err := services.NewKubernetesJobService(&services.KubernetesJobServiceConfig{})
+	if err != nil {
+		// K8s 클라이언트 초기화 실패는 로컬 개발 환경에서 정상
+		// 실제 K8s 환경에서만 스케일링 기능 사용 가능
+		k8sService = nil
+	}
 
 	s := &Server{
 		router:              gin.New(),
@@ -66,10 +76,11 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		userHandler:         handlers.NewUserHandler(db),
 		projectHandler:      handlers.NewProjectHandler(db),
 		agentHandler:        handlers.NewAgentHandler(db, redisService),
-		clusterHandler:      handlers.NewClusterHandler(db, redisService),
+		clusterHandler:      handlers.NewClusterHandler(db, redisService, k8sService),
 		utilsHandler:        handlers.NewUtilsHandler(),
 		checkpointHandler:   handlers.NewCheckpointHandler(db),
 		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),
+		stageHandler:        handlers.NewStageHandler(),
 		startTime:           time.Now(),
 		version:             Version,
 	}
@@ -266,6 +277,10 @@ func (s *Server) setupRoutes() {
 				clusters.PUT("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.clusterHandler.UpdateCluster)
 				clusters.DELETE("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.clusterHandler.DeleteCluster)
 				clusters.GET("/:id/agents", s.clusterHandler.GetClusterAgents)
+				// Agent 스케일링 및 배포 설정
+				clusters.POST("/:id/scale", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.clusterHandler.ScaleAgents)
+				clusters.GET("/:id/agent-config", s.clusterHandler.GetAgentConfig)
+				clusters.PUT("/:id/agent-config", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.clusterHandler.UpdateAgentConfig)
 			}
 
 			// 유틸리티 (연결 테스트)
@@ -277,6 +292,16 @@ func (s *Server) setupRoutes() {
 				utils.POST("/test-mongodb", s.utilsHandler.TestMongoDB)
 				utils.POST("/test-s3", s.utilsHandler.TestS3)
 				utils.POST("/test-rest-api", s.utilsHandler.TestRESTAPI)
+			}
+
+			// Stage 스키마 (GUI 자동 생성용)
+			stages := authenticated.Group("/stages")
+			{
+				stages.GET("/schemas", s.stageHandler.GetAllSchemas)
+				stages.GET("/schemas/:type", s.stageHandler.GetSchema)
+				stages.GET("/categories", s.stageHandler.GetCategories)
+				stages.GET("/categories/:category/schemas", s.stageHandler.GetSchemasByCategory)
+				stages.GET("/field-types", s.stageHandler.GetFieldTypes)
 			}
 
 			// 파이프라인 링크 (부모-자식 연결)

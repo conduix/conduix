@@ -117,3 +117,87 @@ type WorkflowExecutionResult struct {
 // Backward compatibility type aliases
 type GroupExecutionCommand = WorkflowExecutionCommand
 type GroupExecutionResult = WorkflowExecutionResult
+
+// ClusterAgentConfig 클러스터별 Agent 배포 설정
+type ClusterAgentConfig struct {
+	// Kubernetes 배포 설정
+	NodeSelector map[string]string `json:"node_selector,omitempty"` // 노드 선택 레이블
+	Tolerations  []Toleration      `json:"tolerations,omitempty"`   // 테인트 허용
+	Affinity     *Affinity         `json:"affinity,omitempty"`      // 어피니티 규칙
+
+	// 리소스 설정
+	Resources *ResourceRequirements `json:"resources,omitempty"`
+
+	// Agent 설정
+	Labels map[string]string `json:"labels,omitempty"` // Agent Pod에 추가할 레이블
+	Env    map[string]string `json:"env,omitempty"`    // 추가 환경변수
+}
+
+// Toleration Kubernetes Toleration
+type Toleration struct {
+	Key               string `json:"key,omitempty"`
+	Operator          string `json:"operator,omitempty"` // Exists, Equal
+	Value             string `json:"value,omitempty"`
+	Effect            string `json:"effect,omitempty"` // NoSchedule, PreferNoSchedule, NoExecute
+	TolerationSeconds *int64 `json:"toleration_seconds,omitempty"`
+}
+
+// Affinity Kubernetes Affinity (간소화)
+type Affinity struct {
+	NodeAffinity    *NodeAffinity    `json:"node_affinity,omitempty"`
+	PodAntiAffinity *PodAntiAffinity `json:"pod_anti_affinity,omitempty"`
+}
+
+// NodeAffinity 노드 어피니티
+type NodeAffinity struct {
+	RequiredDuringSchedulingIgnoredDuringExecution  *NodeSelector `json:"required,omitempty"`
+	PreferredDuringSchedulingIgnoredDuringExecution []WeightedNodeSelector `json:"preferred,omitempty"`
+}
+
+// NodeSelector 노드 선택기
+type NodeSelector struct {
+	NodeSelectorTerms []NodeSelectorTerm `json:"terms,omitempty"`
+}
+
+// NodeSelectorTerm 노드 선택 조건
+type NodeSelectorTerm struct {
+	MatchExpressions []NodeSelectorRequirement `json:"match_expressions,omitempty"`
+}
+
+// NodeSelectorRequirement 노드 선택 요구사항
+type NodeSelectorRequirement struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"` // In, NotIn, Exists, DoesNotExist
+	Values   []string `json:"values,omitempty"`
+}
+
+// WeightedNodeSelector 가중치 노드 선택기
+type WeightedNodeSelector struct {
+	Weight     int32            `json:"weight"`
+	Preference NodeSelectorTerm `json:"preference"`
+}
+
+// PodAntiAffinity Pod 안티 어피니티
+type PodAntiAffinity struct {
+	// 같은 노드에 배포되지 않도록 분산
+	PreferredDuringSchedulingIgnoredDuringExecution []WeightedPodAffinityTerm `json:"preferred,omitempty"`
+}
+
+// WeightedPodAffinityTerm 가중치 Pod 어피니티 조건
+type WeightedPodAffinityTerm struct {
+	Weight          int32  `json:"weight"`
+	TopologyKey     string `json:"topology_key"` // kubernetes.io/hostname
+	LabelSelector   string `json:"label_selector,omitempty"`
+}
+
+// ResourceRequirements 리소스 요구사항
+type ResourceRequirements struct {
+	Requests ResourceList `json:"requests,omitempty"`
+	Limits   ResourceList `json:"limits,omitempty"`
+}
+
+// ResourceList 리소스 목록
+type ResourceList struct {
+	CPU    string `json:"cpu,omitempty"`    // "500m"
+	Memory string `json:"memory,omitempty"` // "512Mi"
+}

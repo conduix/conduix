@@ -3,12 +3,15 @@ package source
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +44,12 @@ type HTTPSource struct {
 
 // NewHTTPSource HTTP 소스 생성
 func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
+	// HTTP 클라이언트 생성 (TLS 설정 포함)
+	httpClient, err := buildHTTPClient(cfg.Auth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
+	}
+
 	return &HTTPSource{
 		url:        cfg.URL,
 		method:     cfg.Method,
@@ -49,10 +58,74 @@ func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
 		auth:       cfg.Auth,
 		pagination: cfg.Pagination,
 		rateLimit:  cfg.RateLimit,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		client:     httpClient,
 	}, nil
+}
+
+// buildHTTPClient TLS/mTLS 설정을 포함한 HTTP 클라이언트 생성
+func buildHTTPClient(auth *config.AuthConfig) (*http.Client, error) {
+	// 기본 타임아웃
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// mTLS 설정이 있는 경우
+	if auth != nil && auth.Type == "mtls" && auth.TLS != nil && auth.TLS.Enabled {
+		tlsConfig, err := buildHTTPTLSConfig(auth.TLS)
+		if err != nil {
+			return nil, err
+		}
+
+		client.Transport = &http.Transport{
+			TLSClientConfig: tlsConfig,
+		}
+		fmt.Println("[http] mTLS enabled")
+	}
+
+	return client, nil
+}
+
+// buildHTTPTLSConfig HTTP 클라이언트용 TLS 설정 생성
+func buildHTTPTLSConfig(cfg *config.TLSClientConfig) (*tls.Config, error) {
+	if cfg == nil || !cfg.Enabled {
+		return nil, nil
+	}
+
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: cfg.SkipVerify,
+	}
+
+	// 서버 이름 (SNI)
+	if cfg.ServerName != "" {
+		tlsConfig.ServerName = cfg.ServerName
+	}
+
+	// CA 인증서
+	if cfg.CACert != "" {
+		caCert, err := os.ReadFile(expandEnvVars(cfg.CACert))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	// 클라이언트 인증서 (mTLS)
+	if cfg.ClientCert != "" && cfg.ClientKey != "" {
+		cert, err := tls.LoadX509KeyPair(
+			expandEnvVars(cfg.ClientCert),
+			expandEnvVars(cfg.ClientKey),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsConfig, nil
 }
 
 func (s *HTTPSource) Name() string {
@@ -532,6 +605,33 @@ func (s *HTTPSource) setAuth(ctx context.Context, req *http.Request) error {
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
+
+	case "api_key":
+		// API Key 인증: header 또는 query parameter로 전달
+		apiKey := expandEnvVars(s.auth.APIKey)
+		keyName := s.auth.APIKeyName
+		if keyName == "" {
+			keyName = "X-API-Key" // 기본 헤더 이름
+		}
+
+		keyIn := s.auth.APIKeyIn
+		if keyIn == "" {
+			keyIn = "header" // 기본: 헤더로 전달
+		}
+
+		switch keyIn {
+		case "header":
+			req.Header.Set(keyName, apiKey)
+		case "query":
+			// 쿼리 파라미터로 API Key 추가
+			q := req.URL.Query()
+			q.Set(keyName, apiKey)
+			req.URL.RawQuery = q.Encode()
+		}
+
+	case "mtls":
+		// mTLS는 HTTP 클라이언트 레벨에서 처리됨 (Transport에 TLS 설정)
+		// 여기서는 추가 작업 불필요
 	}
 
 	return nil

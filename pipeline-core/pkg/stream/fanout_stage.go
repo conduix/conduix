@@ -26,8 +26,8 @@ const (
 
 // FanOutBranch represents a single branch in fan-out processing
 type FanOutBranch struct {
-	Name    string  `json:"name"`
-	Stages  []Stage `json:"-"` // Stages to execute in this branch
+	Name    string        `json:"name"`
+	Stages  []Stage       `json:"-"` // Stages to execute in this branch
 	Timeout time.Duration `json:"timeout"`
 	// Optional: only execute if condition matches
 	Condition string `json:"condition,omitempty"`
@@ -37,9 +37,9 @@ type FanOutBranch struct {
 type FanOutStageConfig struct {
 	Branches      []FanOutBranch `json:"branches"`
 	MergeStrategy MergeStrategy  `json:"merge_strategy"`
-	Parallel      bool           `json:"parallel"` // Execute branches in parallel
+	Parallel      bool           `json:"parallel"`      // Execute branches in parallel
 	FailOnError   bool           `json:"fail_on_error"` // Fail if any branch fails
-	Timeout       time.Duration  `json:"timeout"` // Global timeout
+	Timeout       time.Duration  `json:"timeout"`       // Global timeout
 }
 
 // FanOutStage splits processing into multiple branches and merges results
@@ -437,9 +437,9 @@ func (s *FanOutStage) GetBranchMetrics() map[string]map[string]int64 {
 			avgLatency = atomic.LoadInt64(&m.totalLatency) / processed
 		}
 		result[name] = map[string]int64{
-			"processed":         processed,
-			"errors":            atomic.LoadInt64(&m.errors),
-			"avg_latency_ns":    avgLatency,
+			"processed":      processed,
+			"errors":         atomic.LoadInt64(&m.errors),
+			"avg_latency_ns": avgLatency,
 		}
 	}
 	return result

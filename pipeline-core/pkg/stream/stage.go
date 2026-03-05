@@ -385,6 +385,12 @@ func NewStage(cfg StageConfig) (Stage, error) {
 		return NewRouterStageFromConfig(cfg.Name, cfg.Config)
 	case "fan_out":
 		return NewFanOutStageFromConfig(cfg.Name, cfg.Config)
+	case "lookup_enrich":
+		return NewLookupEnrichStage(cfg.Name, cfg.Config)
+	case "windowed_aggregate":
+		return NewWindowedAggregateStage(cfg.Name, cfg.Config)
+	case "stream_join":
+		return NewStreamJoinStageFromConfig(cfg.Name, cfg.Config)
 	default:
 		return nil, fmt.Errorf("unknown stage type: %s", cfg.Type)
 	}

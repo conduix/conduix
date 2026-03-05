@@ -143,6 +143,24 @@ interface FormState {
   rate_limit_interval: RateLimitConfig['interval']
   rate_limit_burst: number | ''
   rate_limit_strategy: RateLimitConfig['strategy']
+  // Partition (batch 소스용)
+  partition_enabled: boolean
+  partition_mode: 'discovery' | 'static'
+  partition_discovery_url: string
+  partition_discovery_query: string
+  partition_list_path: string
+  partition_id_field: string
+  partition_url_template: string
+  partition_query_template: string
+  partition_static_list: string  // 쉼표로 구분된 파티션 ID 목록
+  partition_parallelism: number | ''
+  // Batch Processing (파이프라인 레벨)
+  // Stage는 항상 병렬 처리, Sink만 bulk/individual 선택
+  batch_enabled: boolean
+  batch_output_mode: 'bulk' | 'individual'
+  batch_size: number | ''
+  batch_workers: number | ''
+  batch_flush_interval: string
 }
 
 const initialFormState: FormState = {
@@ -192,6 +210,23 @@ const initialFormState: FormState = {
   rate_limit_interval: 'second',
   rate_limit_burst: '',
   rate_limit_strategy: 'token_bucket',
+  // Partition
+  partition_enabled: false,
+  partition_mode: 'static',
+  partition_discovery_url: '',
+  partition_discovery_query: '',
+  partition_list_path: 'partitions',
+  partition_id_field: '',
+  partition_url_template: '',
+  partition_query_template: '',
+  partition_static_list: '',
+  partition_parallelism: 4,
+  // Batch Processing
+  batch_enabled: false,
+  batch_output_mode: 'bulk',
+  batch_size: 100,
+  batch_workers: 20,
+  batch_flush_interval: '5s',
 }
 
 export default function SourceEditorPage() {
@@ -297,6 +332,24 @@ export default function SourceEditorPage() {
                 }
               }
               }
+              // Partition (HTTP)
+              {
+              const partition = config.partition as Record<string, unknown> | undefined
+              if (partition) {
+                newFormState.partition_enabled = true
+                newFormState.partition_parallelism = partition.parallelism as number || 4
+                if (partition.static_partitions) {
+                  newFormState.partition_mode = 'static'
+                  newFormState.partition_static_list = (partition.static_partitions as string[]).join(', ')
+                } else if (partition.discovery_url) {
+                  newFormState.partition_mode = 'discovery'
+                  newFormState.partition_discovery_url = partition.discovery_url as string || ''
+                  newFormState.partition_list_path = partition.partition_list_path as string || 'partitions'
+                  newFormState.partition_id_field = partition.partition_id_field as string || ''
+                }
+                newFormState.partition_url_template = partition.url_template as string || ''
+              }
+              }
               break
             case 'kafka':
               newFormState.brokers = config.brokers as string || ''
@@ -314,6 +367,22 @@ export default function SourceEditorPage() {
               newFormState.connection_string = config.connection_string as string || ''
               newFormState.query = config.query as string || ''
               newFormState.fetch_size = config.fetch_size as number || 1000
+              // Partition (SQL)
+              {
+              const partition = config.partition as Record<string, unknown> | undefined
+              if (partition) {
+                newFormState.partition_enabled = true
+                newFormState.partition_parallelism = partition.parallelism as number || 4
+                if (partition.static_partitions) {
+                  newFormState.partition_mode = 'static'
+                  newFormState.partition_static_list = (partition.static_partitions as string[]).join(', ')
+                } else if (partition.discovery_query) {
+                  newFormState.partition_mode = 'discovery'
+                  newFormState.partition_discovery_query = partition.discovery_query as string || ''
+                }
+                newFormState.partition_query_template = partition.query_template as string || ''
+              }
+              }
               break
             case 'file':
               newFormState.path = config.path as string || ''
@@ -492,6 +561,24 @@ export default function SourceEditorPage() {
       // 파이프라인 업데이트 준비
       const updatedPipeline = { ...pipeline!, source: sourceToSave }
 
+      // 배치 처리 설정 (batch 워크플로우에서만)
+      // Stage는 항상 병렬 처리, Sink만 bulk/individual 선택
+      if (workflow?.type === 'batch') {
+        if (formState.batch_enabled) {
+          const batchConfig: WorkflowPipeline['batch'] = {
+            enabled: true,
+            output_mode: formState.batch_output_mode || 'bulk',
+            size: formState.batch_size || 100,
+            workers: formState.batch_workers || 20,
+            flush_interval: formState.batch_flush_interval || '5s',
+          }
+          updatedPipeline.batch = batchConfig
+        } else {
+          // 비활성화 시 batch 필드 제거
+          delete updatedPipeline.batch
+        }
+      }
+
       // 실시간 워크플로우인 경우: 소스 타입에 따라 realtime_mode 처리
       if (workflow?.type === 'realtime') {
         const autoMode = autoRealtimeModeBySourceType[sourceToSave.type]
@@ -591,6 +678,24 @@ export default function SourceEditorPage() {
               break
           }
         }
+
+        // HTTP Partition 설정
+        if (formState.partition_enabled) {
+          const partition: Record<string, unknown> = {
+            parallelism: formState.partition_parallelism || 4,
+          }
+          if (formState.partition_mode === 'static' && formState.partition_static_list) {
+            partition.static_partitions = formState.partition_static_list.split(',').map(s => s.trim()).filter(Boolean)
+          } else if (formState.partition_mode === 'discovery' && formState.partition_discovery_url) {
+            partition.discovery_url = formState.partition_discovery_url
+            if (formState.partition_list_path) partition.partition_list_path = formState.partition_list_path
+            if (formState.partition_id_field) partition.partition_id_field = formState.partition_id_field
+          }
+          if (formState.partition_url_template) {
+            partition.url_template = formState.partition_url_template
+          }
+          config.partition = partition
+        }
         break
       }
       case 'kafka':
@@ -609,6 +714,22 @@ export default function SourceEditorPage() {
         config.connection_string = formState.connection_string
         config.query = formState.query
         config.fetch_size = formState.fetch_size || 1000
+
+        // SQL Partition 설정
+        if (formState.partition_enabled) {
+          const partition: Record<string, unknown> = {
+            parallelism: formState.partition_parallelism || 4,
+          }
+          if (formState.partition_mode === 'static' && formState.partition_static_list) {
+            partition.static_partitions = formState.partition_static_list.split(',').map(s => s.trim()).filter(Boolean)
+          } else if (formState.partition_mode === 'discovery' && formState.partition_discovery_query) {
+            partition.discovery_query = formState.partition_discovery_query
+          }
+          if (formState.partition_query_template) {
+            partition.query_template = formState.partition_query_template
+          }
+          config.partition = partition
+        }
         break
       case 'file':
         config.path = formState.path
@@ -1027,6 +1148,192 @@ export default function SourceEditorPage() {
                 </Stack>
               </Box>
             )}
+
+            {/* Partition 설정 (batch 워크플로우용) */}
+            {workflow?.type === 'batch' && (
+              <>
+                <Divider sx={{ my: 2 }}>{t('source.partition.title')}</Divider>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formState.partition_enabled}
+                      onChange={(e) => updateFormField('partition_enabled', e.target.checked)}
+                    />
+                  }
+                  label={t('source.partition.enabled')}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: -1, mb: 1 }}>
+                  {t('source.partition.enabledHelp')}
+                </Typography>
+
+                {formState.partition_enabled && (
+                  <Box sx={{ ml: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+                    <Stack spacing={2}>
+                      <FormControl sx={{ width: 200 }}>
+                        <InputLabel>{t('source.partition.mode')}</InputLabel>
+                        <Select
+                          value={formState.partition_mode}
+                          onChange={(e) => updateFormField('partition_mode', e.target.value as 'discovery' | 'static')}
+                          label={t('source.partition.mode')}
+                        >
+                          <MenuItem value="static">{t('source.partition.modeStatic')}</MenuItem>
+                          <MenuItem value="discovery">{t('source.partition.modeDiscovery')}</MenuItem>
+                        </Select>
+                      </FormControl>
+
+                      {formState.partition_mode === 'static' ? (
+                        <TextField
+                          label={t('source.partition.staticList')}
+                          value={formState.partition_static_list}
+                          onChange={(e) => updateFormField('partition_static_list', e.target.value)}
+                          helperText={t('source.partition.staticListHelp')}
+                          placeholder="p0, p1, p2, p3"
+                          fullWidth
+                          multiline
+                          rows={2}
+                        />
+                      ) : (
+                        <>
+                          <TextField
+                            label={t('source.partition.discoveryUrl')}
+                            value={formState.partition_discovery_url}
+                            onChange={(e) => updateFormField('partition_discovery_url', e.target.value)}
+                            helperText={t('source.partition.discoveryUrlHelp')}
+                            placeholder="https://api.example.com/data/_partitions"
+                            fullWidth
+                          />
+                          <TextField
+                            label={t('source.partition.listPath')}
+                            value={formState.partition_list_path}
+                            onChange={(e) => updateFormField('partition_list_path', e.target.value)}
+                            helperText={t('source.partition.listPathHelp')}
+                            placeholder="partitions"
+                            sx={{ width: 200 }}
+                          />
+                          <TextField
+                            label={t('source.partition.idField')}
+                            value={formState.partition_id_field}
+                            onChange={(e) => updateFormField('partition_id_field', e.target.value)}
+                            helperText={t('source.partition.idFieldHelp')}
+                            placeholder="id"
+                            sx={{ width: 200 }}
+                          />
+                        </>
+                      )}
+
+                      <TextField
+                        label={t('source.partition.urlTemplate')}
+                        value={formState.partition_url_template}
+                        onChange={(e) => updateFormField('partition_url_template', e.target.value)}
+                        helperText={t('source.partition.urlTemplateHelp')}
+                        placeholder="https://api.example.com/data?partition=${partition}"
+                        fullWidth
+                      />
+
+                      <TextField
+                        label={t('source.partition.parallelism')}
+                        type="number"
+                        value={formState.partition_parallelism}
+                        onChange={(e) => updateFormField('partition_parallelism', e.target.value ? Number(e.target.value) : '')}
+                        helperText={t('source.partition.parallelismHelp')}
+                        inputProps={{ min: 1, max: 32 }}
+                        sx={{ width: 120 }}
+                      />
+                    </Stack>
+                  </Box>
+                )}
+              </>
+            )}
+
+            {/* 배치 처리 설정 (batch 워크플로우에서만 표시) */}
+            {workflow?.type === 'batch' && (
+              <>
+                <Divider sx={{ my: 2 }}>{t('source.batch.title')}</Divider>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formState.batch_enabled}
+                      onChange={(e) => updateFormField('batch_enabled', e.target.checked)}
+                    />
+                  }
+                  label={t('source.batch.enabled')}
+                />
+                <FormHelperText sx={{ mt: -1, mb: 1 }}>
+                  {t('source.batch.enabledHelp')}
+                </FormHelperText>
+
+                {formState.batch_enabled && (
+                  <Box sx={{ pl: 2 }}>
+                    <Stack spacing={2}>
+                      {/* Stage는 항상 병렬 처리 안내 */}
+                      <Typography variant="body2" color="text.secondary">
+                        {t('source.batch.stageNote')}
+                      </Typography>
+
+                      {/* Sink 처리 모드 선택 */}
+                      <FormControl sx={{ width: 280 }}>
+                        <InputLabel>{t('source.batch.outputMode')}</InputLabel>
+                        <Select
+                          value={formState.batch_output_mode}
+                          onChange={(e) => updateFormField('batch_output_mode', e.target.value as 'bulk' | 'individual')}
+                          label={t('source.batch.outputMode')}
+                        >
+                          <MenuItem value="bulk">
+                            <Box>
+                              <Typography variant="body2">{t('source.batch.outputModeBulk')}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {t('source.batch.outputModeBulkDesc')}
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="individual">
+                            <Box>
+                              <Typography variant="body2">{t('source.batch.outputModeIndividual')}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {t('source.batch.outputModeIndividualDesc')}
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                        </Select>
+                        <FormHelperText>{t('source.batch.outputModeHelp')}</FormHelperText>
+                      </FormControl>
+
+                      {/* 배치 크기 */}
+                      <TextField
+                        label={t('source.batch.size')}
+                        type="number"
+                        value={formState.batch_size}
+                        onChange={(e) => updateFormField('batch_size', e.target.value ? Number(e.target.value) : '')}
+                        helperText={t('source.batch.sizeHelp')}
+                        inputProps={{ min: 1, max: 10000 }}
+                        sx={{ width: 180 }}
+                      />
+
+                      {/* 병렬 워커 수 */}
+                      <TextField
+                        label={t('source.batch.workers')}
+                        type="number"
+                        value={formState.batch_workers}
+                        onChange={(e) => updateFormField('batch_workers', e.target.value ? Number(e.target.value) : '')}
+                        helperText={t('source.batch.workersHelp')}
+                        inputProps={{ min: 1, max: 100 }}
+                        sx={{ width: 180 }}
+                      />
+
+                      {/* 플러시 인터벌 */}
+                      <TextField
+                        label={t('source.batch.flushInterval')}
+                        value={formState.batch_flush_interval}
+                        onChange={(e) => updateFormField('batch_flush_interval', e.target.value)}
+                        helperText={t('source.batch.flushIntervalHelp')}
+                        placeholder="5s"
+                        sx={{ width: 180 }}
+                      />
+                    </Stack>
+                  </Box>
+                )}
+              </>
+            )}
           </Stack>
         )
 
@@ -1177,6 +1484,178 @@ export default function SourceEditorPage() {
               inputProps={{ min: 100, max: 100000 }}
               fullWidth
             />
+
+            {/* SQL Partition 설정 (batch 워크플로우용) */}
+            {workflow?.type === 'batch' && (
+              <>
+                <Divider sx={{ my: 2 }}>{t('source.partition.title')}</Divider>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formState.partition_enabled}
+                      onChange={(e) => updateFormField('partition_enabled', e.target.checked)}
+                    />
+                  }
+                  label={t('source.partition.enabled')}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: -1, mb: 1 }}>
+                  {t('source.partition.sqlEnabledHelp')}
+                </Typography>
+
+                {formState.partition_enabled && (
+                  <Box sx={{ ml: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+                    <Stack spacing={2}>
+                      <FormControl sx={{ width: 200 }}>
+                        <InputLabel>{t('source.partition.mode')}</InputLabel>
+                        <Select
+                          value={formState.partition_mode}
+                          onChange={(e) => updateFormField('partition_mode', e.target.value as 'discovery' | 'static')}
+                          label={t('source.partition.mode')}
+                        >
+                          <MenuItem value="static">{t('source.partition.modeStatic')}</MenuItem>
+                          <MenuItem value="discovery">{t('source.partition.modeDiscovery')}</MenuItem>
+                        </Select>
+                      </FormControl>
+
+                      {formState.partition_mode === 'static' ? (
+                        <TextField
+                          label={t('source.partition.staticList')}
+                          value={formState.partition_static_list}
+                          onChange={(e) => updateFormField('partition_static_list', e.target.value)}
+                          helperText={t('source.partition.sqlStaticListHelp')}
+                          placeholder="p202401, p202402, p202403"
+                          fullWidth
+                          multiline
+                          rows={2}
+                        />
+                      ) : (
+                        <TextField
+                          label={t('source.partition.discoveryQuery')}
+                          value={formState.partition_discovery_query}
+                          onChange={(e) => updateFormField('partition_discovery_query', e.target.value)}
+                          helperText={t('source.partition.discoveryQueryHelp')}
+                          placeholder="SELECT PARTITION_NAME FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'events'"
+                          fullWidth
+                          multiline
+                          rows={3}
+                        />
+                      )}
+
+                      <TextField
+                        label={t('source.partition.queryTemplate')}
+                        value={formState.partition_query_template}
+                        onChange={(e) => updateFormField('partition_query_template', e.target.value)}
+                        helperText={t('source.partition.queryTemplateHelp')}
+                        placeholder="SELECT * FROM events PARTITION (${partition})"
+                        fullWidth
+                        multiline
+                        rows={2}
+                      />
+
+                      <TextField
+                        label={t('source.partition.parallelism')}
+                        type="number"
+                        value={formState.partition_parallelism}
+                        onChange={(e) => updateFormField('partition_parallelism', e.target.value ? Number(e.target.value) : '')}
+                        helperText={t('source.partition.parallelismHelp')}
+                        inputProps={{ min: 1, max: 32 }}
+                        sx={{ width: 120 }}
+                      />
+                    </Stack>
+                  </Box>
+                )}
+              </>
+            )}
+
+            {/* 배치 처리 설정 (batch 워크플로우에서만 표시) */}
+            {workflow?.type === 'batch' && (
+              <>
+                <Divider sx={{ my: 2 }}>{t('source.batch.title')}</Divider>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formState.batch_enabled}
+                      onChange={(e) => updateFormField('batch_enabled', e.target.checked)}
+                    />
+                  }
+                  label={t('source.batch.enabled')}
+                />
+                <FormHelperText sx={{ mt: -1, mb: 1 }}>
+                  {t('source.batch.enabledHelp')}
+                </FormHelperText>
+
+                {formState.batch_enabled && (
+                  <Box sx={{ pl: 2 }}>
+                    <Stack spacing={2}>
+                      {/* Stage는 항상 병렬 처리 안내 */}
+                      <Typography variant="body2" color="text.secondary">
+                        {t('source.batch.stageNote')}
+                      </Typography>
+
+                      {/* Sink 처리 모드 선택 */}
+                      <FormControl sx={{ width: 280 }}>
+                        <InputLabel>{t('source.batch.outputMode')}</InputLabel>
+                        <Select
+                          value={formState.batch_output_mode}
+                          onChange={(e) => updateFormField('batch_output_mode', e.target.value as 'bulk' | 'individual')}
+                          label={t('source.batch.outputMode')}
+                        >
+                          <MenuItem value="bulk">
+                            <Box>
+                              <Typography variant="body2">{t('source.batch.outputModeBulk')}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {t('source.batch.outputModeBulkDesc')}
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                          <MenuItem value="individual">
+                            <Box>
+                              <Typography variant="body2">{t('source.batch.outputModeIndividual')}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {t('source.batch.outputModeIndividualDesc')}
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                        </Select>
+                        <FormHelperText>{t('source.batch.outputModeHelp')}</FormHelperText>
+                      </FormControl>
+
+                      {/* 배치 크기 */}
+                      <TextField
+                        label={t('source.batch.size')}
+                        type="number"
+                        value={formState.batch_size}
+                        onChange={(e) => updateFormField('batch_size', e.target.value ? Number(e.target.value) : '')}
+                        helperText={t('source.batch.sizeHelp')}
+                        inputProps={{ min: 1, max: 10000 }}
+                        sx={{ width: 180 }}
+                      />
+
+                      {/* 병렬 워커 수 */}
+                      <TextField
+                        label={t('source.batch.workers')}
+                        type="number"
+                        value={formState.batch_workers}
+                        onChange={(e) => updateFormField('batch_workers', e.target.value ? Number(e.target.value) : '')}
+                        helperText={t('source.batch.workersHelp')}
+                        inputProps={{ min: 1, max: 100 }}
+                        sx={{ width: 180 }}
+                      />
+
+                      {/* 플러시 인터벌 */}
+                      <TextField
+                        label={t('source.batch.flushInterval')}
+                        value={formState.batch_flush_interval}
+                        onChange={(e) => updateFormField('batch_flush_interval', e.target.value)}
+                        helperText={t('source.batch.flushIntervalHelp')}
+                        placeholder="5s"
+                        sx={{ width: 180 }}
+                      />
+                    </Stack>
+                  </Box>
+                )}
+              </>
+            )}
           </Stack>
         )
 

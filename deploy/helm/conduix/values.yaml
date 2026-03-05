@@ -111,6 +111,9 @@ migration:
 # =============================================================================
 agent:
   replicaCount: 3
+  # 클러스터 ID (Agent가 속한 클러스터 식별자)
+  # 미설정 시 'default' 사용
+  clusterId: "default"
   image:
     repository: ghcr.io/conduix/agent
     tag: "latest"

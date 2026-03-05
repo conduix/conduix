@@ -91,16 +91,21 @@ func (User) TableName() string {
 // Cluster 클러스터 모델
 // 여러 Kubernetes 클러스터를 관리하기 위한 모델
 type Cluster struct {
-	ID           string         `gorm:"primaryKey;size:36" json:"id"`
-	Name         string         `gorm:"size:255;not null;uniqueIndex" json:"name"`
-	Description  string         `gorm:"type:text" json:"description,omitempty"`
-	APIServerURL string         `gorm:"size:500" json:"api_server_url,omitempty"` // 정보성 (직접 연결 안 함)
-	Region       string         `gorm:"size:100" json:"region,omitempty"`
-	Status       string         `gorm:"size:50;default:active" json:"status"` // active, inactive
-	CreatedBy    string         `gorm:"size:36" json:"created_by,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	ID           string `gorm:"primaryKey;size:36" json:"id"`
+	Name         string `gorm:"size:255;not null;uniqueIndex" json:"name"`
+	Description  string `gorm:"type:text" json:"description,omitempty"`
+	APIServerURL string `gorm:"size:500" json:"api_server_url,omitempty"` // 정보성 (직접 연결 안 함)
+	Region       string `gorm:"size:100" json:"region,omitempty"`
+	Status       string `gorm:"size:50;default:active" json:"status"` // active, inactive
+
+	// Agent 배포 설정
+	DesiredAgents int    `gorm:"default:1" json:"desired_agents"`         // 원하는 Agent 수
+	AgentConfig   string `gorm:"type:text" json:"agent_config,omitempty"` // JSON: nodeSelector, tolerations, affinity 등
+
+	CreatedBy string         `gorm:"size:36" json:"created_by,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // TableName 테이블 이름

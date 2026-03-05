@@ -22,6 +22,13 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  # Deployment 스케일링 (Agent 수 조절)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
 ---
 # ClusterRoleBinding to grant the ServiceAccount cluster-wide pod log access
 apiVersion: rbac.authorization.k8s.io/v1

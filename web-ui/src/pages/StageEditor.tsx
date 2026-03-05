@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -47,11 +47,16 @@ import ForkRightIcon from '@mui/icons-material/ForkRight'
 import StorageIcon from '@mui/icons-material/Storage'
 import BlockIcon from '@mui/icons-material/Block'
 import ApiIcon from '@mui/icons-material/Api'
+import GavelIcon from '@mui/icons-material/Gavel'
 import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
 import yaml from 'js-yaml'
 import { api } from '../services/api'
-import type { Stage, StageType, WorkflowPipeline } from '../types/pipeline'
+import type { Stage, StageType, OutputType, WorkflowPipeline } from '../types/pipeline'
+
+// Stage 또는 Output 타입 (편집기에서 사용)
+type StageOrOutputType = StageType | OutputType
+import { ContractStageEditor } from '../components/ContractStageEditor'
 import type { DataType, DataTypeField } from '../types/data-type'
 import { useSnackbar } from '../hooks/useSnackbar'
 import { ConfirmDialog } from '../components/common/ConfirmDialog'
@@ -168,8 +173,8 @@ interface Workflow {
   }
 }
 
-// Stage 타입별 색상 및 아이콘
-const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode; label: string }> = {
+// Stage/Output 타입별 색상 및 아이콘
+const stageTypeConfig: Record<StageOrOutputType, { color: string; icon: React.ReactNode; label: string }> = {
   // 변환 Stage
   filter: { color: '#1976d2', icon: <FilterAltIcon fontSize="small" />, label: 'Filter' },
   remap: { color: '#4caf50', icon: <SwapHorizIcon fontSize="small" />, label: 'Remap' },
@@ -183,6 +188,7 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
   timestamp: { color: '#e91e63', icon: <AccessTimeIcon fontSize="small" />, label: 'Timestamp' },
   throttle: { color: '#ff9800', icon: <SpeedIcon fontSize="small" />, label: 'Throttle' },
   validate: { color: '#9e9e9e', icon: <CheckCircleIcon fontSize="small" />, label: 'Validate' },
+  contract: { color: '#673ab7', icon: <GavelIcon fontSize="small" />, label: 'Contract' },
   route: { color: '#00bcd4', icon: <ForkRightIcon fontSize="small" />, label: 'Route' },
   delete: { color: '#f44336', icon: <BlockIcon fontSize="small" />, label: 'Delete' },
   // Output Stage (출력)
@@ -196,7 +202,7 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
 }
 
 // Output 타입별 기본 설정값
-const getOutputConfigDefault = (outputType: StageType): Record<string, unknown> => {
+const getOutputConfigDefault = (outputType: OutputType): Record<string, unknown> => {
   switch (outputType) {
     case 'sql':
       return {
@@ -249,7 +255,7 @@ const getOutputConfigDefault = (outputType: StageType): Record<string, unknown> 
 // Stage form state interface
 interface StageFormState {
   name: string
-  type: StageType | ''
+  type: StageOrOutputType | ''
   // Filter
   condition: string
   // Remap
@@ -301,6 +307,8 @@ interface StageFormState {
   // Validate
   schema: string
   drop_on_fail: boolean
+  // Contract
+  contractConfig: Record<string, unknown>
   // SQL Output
   sql_connection_string: string
   sql_table: string
@@ -377,6 +385,7 @@ const initialStageFormState: StageFormState = {
   throttle_drop_on_limit: false,
   schema: '',
   drop_on_fail: false,
+  contractConfig: {},
   sql_connection_string: '',
   sql_table: '',
   sql_batch_size: 100,
@@ -439,6 +448,23 @@ export default function StageEditorPage() {
   // Delete confirmation
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [stageToDelete, setStageToDelete] = useState<string | null>(null)
+
+  // Available fields for Contract stage (from source config or previous stages)
+  const availableFields = useMemo(() => {
+    const fields: string[] = []
+    // Add common fields
+    fields.push('id', 'timestamp', 'type', 'source')
+    // Add fields from pipeline source if available
+    if (pipeline?.source?.config) {
+      const sourceConfig = pipeline.source.config
+      // Add fields from source schema or known patterns
+      if (sourceConfig.fields && Array.isArray(sourceConfig.fields)) {
+        fields.push(...(sourceConfig.fields as string[]))
+      }
+    }
+    // Remove duplicates
+    return [...new Set(fields)]
+  }, [pipeline])
 
   // Update stage form field
   const updateStageFormField = useCallback(<K extends keyof StageFormState>(field: K, value: StageFormState[K]) => {
@@ -639,12 +665,17 @@ export default function StageEditorPage() {
     setStageModalVisible(true)
   }
 
+  // Output 타입인지 확인
+  const isOutputType = (t: StageOrOutputType): t is OutputType => {
+    return ['sql', 'elasticsearch', 'kafka', 'mongodb', 's3', 'rest_api', 'file'].includes(t)
+  }
+
   // 타입 변경 시 기본값 설정
-  const handleStageTypeChange = (type: StageType) => {
+  const handleStageTypeChange = (type: StageOrOutputType) => {
     updateStageFormField('type', type)
 
-    // Output stage인 경우 기본값 설정
-    const defaultConfig = getOutputConfigDefault(type)
+    // Output 타입인 경우 기본값 설정
+    const defaultConfig = isOutputType(type) ? getOutputConfigDefault(type) : {}
 
     switch (type) {
       case 'sql':
@@ -778,6 +809,8 @@ export default function StageEditorPage() {
       // validate
       schema: stage.config?.schema ? JSON.stringify(stage.config.schema, null, 2) : '',
       drop_on_fail: stage.config?.drop_on_fail as boolean || false,
+      // contract
+      contractConfig: stage.type === 'contract' ? (stage.config || {}) : {},
       // SQL output
       sql_connection_string: stage.config?.connection_string as string || '',
       sql_table: stage.config?.table as string || '',
@@ -1259,6 +1292,13 @@ export default function StageEditorPage() {
           config = { schema: {} }
         }
         break
+      case 'contract':
+        // Contract stage config는 contractConfig state에서 직접 사용
+        config = stageForm.contractConfig || {
+          contract: { name: '', version: '1.0.0', rules: [] },
+          action: 'drop',
+        }
+        break
       // SQL Output stage
       case 'sql':
         config = {
@@ -1462,6 +1502,16 @@ export default function StageEditorPage() {
       }
       case 'validate':
         return <Typography variant="body2" color="text.secondary">Schema validation</Typography>
+      case 'contract': {
+        const contractName = (stage.config?.contract as { name?: string })?.name
+        const action = stage.config?.action as string
+        const rulesCount = ((stage.config?.contract as { rules?: unknown[] })?.rules || []).length
+        return (
+          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+            {contractName || 'Contract'} ({rulesCount} rules, {action || 'drop'})
+          </Typography>
+        )
+      }
       // Output stages
       case 'sql':
       case 'elasticsearch':
@@ -1971,6 +2021,14 @@ export default function StageEditorPage() {
               </Select>
             </FormControl>
           </Stack>
+        )
+      case 'contract':
+        return (
+          <ContractStageEditor
+            value={stageForm.contractConfig || {}}
+            onChange={(contractConfig) => updateStageFormField('contractConfig', contractConfig)}
+            availableFields={availableFields}
+          />
         )
       // SQL Output stage
       case 'sql':

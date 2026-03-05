@@ -410,14 +410,14 @@ func (s *ExecutionService) applyParameterBindings(pipeline types.WorkflowPipelin
 	expandedPipeline := pipeline
 	expandedPipeline.ID = fmt.Sprintf("%s_%d", pipeline.ID, index)
 
-	// Source config에 파라미터 바인딩 적용
-	if expandedPipeline.Source.Config == nil {
-		expandedPipeline.Source.Config = make(map[string]any)
+	// Input config에 파라미터 바인딩 적용 (Source는 deprecated)
+	if expandedPipeline.Input.Config == nil {
+		expandedPipeline.Input.Config = make(map[string]any)
 	}
 
 	for _, binding := range pipeline.ParameterBindings {
 		if value, ok := record[binding.ParentField]; ok {
-			expandedPipeline.Source.Config[binding.ChildParam] = value
+			expandedPipeline.Input.Config[binding.ChildParam] = value
 			s.logger.Debug("Applied parameter binding",
 				"parent_field", binding.ParentField,
 				"child_param", binding.ChildParam,

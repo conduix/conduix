@@ -2,14 +2,21 @@ package source
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl"
+	"github.com/segmentio/kafka-go/sasl/plain"
+	"github.com/segmentio/kafka-go/sasl/scram"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
@@ -24,6 +31,11 @@ type KafkaSource struct {
 	maxBytes       int
 	maxWait        time.Duration
 	commitInterval time.Duration
+
+	// 보안 설정
+	saslMechanism sasl.Mechanism
+	tlsConfig     *tls.Config
+	dialer        *kafka.Dialer
 
 	readers []*kafka.Reader
 	mu      sync.RWMutex
@@ -60,7 +72,7 @@ func NewKafkaSource(cfg config.SourceV2) (*KafkaSource, error) {
 		commitInterval = time.Duration(cfg.CommitInterval) * time.Millisecond
 	}
 
-	return &KafkaSource{
+	source := &KafkaSource{
 		brokers:        cfg.Brokers,
 		topics:         cfg.Topics,
 		groupID:        cfg.GroupID,
@@ -70,7 +82,124 @@ func NewKafkaSource(cfg config.SourceV2) (*KafkaSource, error) {
 		maxWait:        maxWait,
 		commitInterval: commitInterval,
 		checkpoints:    make(map[string]int64),
-	}, nil
+	}
+
+	// SASL 인증 설정
+	if cfg.SASL != nil {
+		mechanism, err := buildSASLMechanism(cfg.SASL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to configure SASL: %w", err)
+		}
+		source.saslMechanism = mechanism
+	}
+
+	// TLS 설정
+	if cfg.TLS != nil && cfg.TLS.Enabled {
+		tlsCfg, err := buildTLSConfig(cfg.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to configure TLS: %w", err)
+		}
+		source.tlsConfig = tlsCfg
+	}
+
+	// Dialer 생성 (SASL 또는 TLS가 있는 경우)
+	if source.saslMechanism != nil || source.tlsConfig != nil {
+		source.dialer = &kafka.Dialer{
+			Timeout:       10 * time.Second,
+			DualStack:     true,
+			SASLMechanism: source.saslMechanism,
+			TLS:           source.tlsConfig,
+		}
+	}
+
+	return source, nil
+}
+
+// buildSASLMechanism SASL 메커니즘 생성
+func buildSASLMechanism(cfg *config.SASLConfig) (sasl.Mechanism, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+
+	// 환경변수 치환
+	username := expandEnvVars(cfg.Username)
+	password := expandEnvVars(cfg.Password)
+
+	switch strings.ToUpper(cfg.Mechanism) {
+	case "PLAIN":
+		return plain.Mechanism{
+			Username: username,
+			Password: password,
+		}, nil
+
+	case "SCRAM-SHA-256":
+		mechanism, err := scram.Mechanism(scram.SHA256, username, password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SCRAM-SHA-256 mechanism: %w", err)
+		}
+		return mechanism, nil
+
+	case "SCRAM-SHA-512":
+		mechanism, err := scram.Mechanism(scram.SHA512, username, password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SCRAM-SHA-512 mechanism: %w", err)
+		}
+		return mechanism, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported SASL mechanism: %s (supported: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)", cfg.Mechanism)
+	}
+}
+
+// buildTLSConfig TLS 설정 생성
+func buildTLSConfig(cfg *config.TLSClientConfig) (*tls.Config, error) {
+	if cfg == nil || !cfg.Enabled {
+		return nil, nil
+	}
+
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: cfg.SkipVerify,
+	}
+
+	// 서버 이름 (SNI)
+	if cfg.ServerName != "" {
+		tlsCfg.ServerName = cfg.ServerName
+	}
+
+	// CA 인증서
+	if cfg.CACert != "" {
+		caCert, err := os.ReadFile(expandEnvVars(cfg.CACert))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert")
+		}
+		tlsCfg.RootCAs = caCertPool
+	}
+
+	// 클라이언트 인증서 (mTLS)
+	if cfg.ClientCert != "" && cfg.ClientKey != "" {
+		cert, err := tls.LoadX509KeyPair(
+			expandEnvVars(cfg.ClientCert),
+			expandEnvVars(cfg.ClientKey),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsCfg, nil
+}
+
+// expandEnvVars 환경변수 치환 (${VAR} 형식)
+func expandEnvVars(s string) string {
+	if strings.Contains(s, "${") {
+		return os.ExpandEnv(s)
+	}
+	return s
 }
 
 func (s *KafkaSource) Name() string {
@@ -98,8 +227,28 @@ func (s *KafkaSource) Open(ctx context.Context) error {
 			readerCfg.GroupID = s.groupID
 		}
 
+		// SASL/TLS가 설정된 경우 Dialer 사용
+		if s.dialer != nil {
+			readerCfg.Dialer = s.dialer
+		}
+
 		reader := kafka.NewReader(readerCfg)
 		s.readers = append(s.readers, reader)
+	}
+
+	// 보안 설정 로깅 (비밀번호 마스킹)
+	if s.saslMechanism != nil || s.tlsConfig != nil {
+		authInfo := []string{}
+		if s.saslMechanism != nil {
+			authInfo = append(authInfo, "SASL enabled")
+		}
+		if s.tlsConfig != nil {
+			authInfo = append(authInfo, "TLS enabled")
+			if len(s.tlsConfig.Certificates) > 0 {
+				authInfo = append(authInfo, "mTLS enabled")
+			}
+		}
+		fmt.Printf("[kafka] Security: %s\n", strings.Join(authInfo, ", "))
 	}
 
 	return nil

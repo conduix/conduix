@@ -2,9 +2,12 @@ package source
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +41,9 @@ type CDCSource struct {
 	tables   []string // 감시할 테이블 목록 (빈 경우 전체)
 	serverID uint32   // MySQL server ID (binlog용)
 	slotName string   // PostgreSQL replication slot name
+
+	// TLS 설정
+	tlsConfig *config.DBTLSConfig
 
 	canal    *canal.Canal
 	mu       sync.RWMutex
@@ -73,17 +79,18 @@ func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
 	}
 
 	return &CDCSource{
-		driver:   cfg.Driver,
-		host:     cfg.Host,
-		port:     port,
-		username: cfg.Username,
-		password: cfg.Password,
-		database: cfg.Database,
-		tables:   cfg.Tables,
-		serverID: serverID,
-		slotName: cfg.SlotName,
-		eventCh:  make(chan *CDCEvent, 1000),
-		errorCh:  make(chan error, 10),
+		driver:    cfg.Driver,
+		host:      cfg.Host,
+		port:      port,
+		username:  cfg.Username,
+		password:  cfg.Password,
+		database:  cfg.Database,
+		tables:    cfg.Tables,
+		serverID:  serverID,
+		slotName:  cfg.SlotName,
+		tlsConfig: cfg.DBTLS,
+		eventCh:   make(chan *CDCEvent, 1000),
+		errorCh:   make(chan error, 10),
 	}, nil
 }
 
@@ -115,6 +122,18 @@ func (s *CDCSource) openMySQL() error {
 		cfg.IncludeTableRegex = s.tables
 	}
 
+	// TLS 설정
+	if s.tlsConfig != nil && s.tlsConfig.Enabled {
+		tlsCfg, err := buildCDCTLSConfig(s.tlsConfig)
+		if err != nil {
+			return fmt.Errorf("failed to configure TLS: %w", err)
+		}
+		if tlsCfg != nil {
+			cfg.TLSConfig = tlsCfg
+			fmt.Printf("[cdc] MySQL TLS enabled: mode=%s\n", s.tlsConfig.Mode)
+		}
+	}
+
 	c, err := canal.NewCanal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create canal: %w", err)
@@ -128,6 +147,57 @@ func (s *CDCSource) openMySQL() error {
 	s.mu.Unlock()
 
 	return nil
+}
+
+// buildCDCTLSConfig CDC용 TLS 설정 생성
+func buildCDCTLSConfig(cfg *config.DBTLSConfig) (*tls.Config, error) {
+	if cfg == nil || !cfg.Enabled {
+		return nil, nil
+	}
+
+	tlsConfig := &tls.Config{}
+
+	// SSL 모드에 따른 설정
+	switch strings.ToLower(cfg.Mode) {
+	case "skip-verify", "prefer", "allow":
+		tlsConfig.InsecureSkipVerify = true
+	case "required", "require", "verify-ca":
+		tlsConfig.InsecureSkipVerify = false
+	case "verify-identity", "verify-full":
+		tlsConfig.InsecureSkipVerify = false
+		if cfg.ServerName != "" {
+			tlsConfig.ServerName = cfg.ServerName
+		}
+	default:
+		tlsConfig.InsecureSkipVerify = false
+	}
+
+	// CA 인증서 로드
+	if cfg.CACert != "" {
+		caCert, err := os.ReadFile(expandEnvVars(cfg.CACert))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	// 클라이언트 인증서 (mTLS)
+	if cfg.ClientCert != "" && cfg.ClientKey != "" {
+		cert, err := tls.LoadX509KeyPair(
+			expandEnvVars(cfg.ClientCert),
+			expandEnvVars(cfg.ClientKey),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsConfig, nil
 }
 
 func (s *CDCSource) openPostgreSQL() error {

@@ -22,27 +22,27 @@ func TestRouterStageConditionMode(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		data           map[string]any
-		expectedRoute  string
+		name            string
+		data            map[string]any
+		expectedRoute   string
 		expectedOutputs []string
 	}{
 		{
-			name:           "high priority",
-			data:           map[string]any{"priority": 9.0},
-			expectedRoute:  "high_priority",
+			name:            "high priority",
+			data:            map[string]any{"priority": 9.0},
+			expectedRoute:   "high_priority",
 			expectedOutputs: []string{"alert", "kafka"},
 		},
 		{
-			name:           "medium priority",
-			data:           map[string]any{"priority": 6.0},
-			expectedRoute:  "medium",
+			name:            "medium priority",
+			data:            map[string]any{"priority": 6.0},
+			expectedRoute:   "medium",
 			expectedOutputs: []string{"es"},
 		},
 		{
-			name:           "low priority",
-			data:           map[string]any{"priority": 3.0},
-			expectedRoute:  "low",
+			name:            "low priority",
+			data:            map[string]any{"priority": 3.0},
+			expectedRoute:   "low",
 			expectedOutputs: []string{"s3"},
 		},
 	}

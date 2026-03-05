@@ -22,6 +22,7 @@ type PipelineConfigV2 struct {
 	Mode     PipelineMode    `yaml:"type"` // batch | realtime
 	Source   SourceV2        `yaml:"source"`
 	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
+	Contract *ContractConfig `yaml:"contract,omitempty"` // Data Contract 설정
 	Steps    []StepV2        `yaml:"steps"`
 	Output   OutputConfig    `yaml:"output"`
 }
@@ -60,14 +61,16 @@ type SourceV2 struct {
 	Pagination *PaginationConfig `yaml:"pagination,omitempty"`
 
 	// Kafka
-	Brokers        []string `yaml:"brokers,omitempty"`
-	Topics         []string `yaml:"topics,omitempty"`
-	GroupID        string   `yaml:"group_id,omitempty"`
-	StartOffset    string   `yaml:"start_offset,omitempty"` // earliest, latest
-	MinBytes       int      `yaml:"min_bytes,omitempty"`
-	MaxBytes       int      `yaml:"max_bytes,omitempty"`
-	MaxWait        int      `yaml:"max_wait,omitempty"`        // milliseconds
-	CommitInterval int      `yaml:"commit_interval,omitempty"` // milliseconds
+	Brokers        []string         `yaml:"brokers,omitempty"`
+	Topics         []string         `yaml:"topics,omitempty"`
+	GroupID        string           `yaml:"group_id,omitempty"`
+	StartOffset    string           `yaml:"start_offset,omitempty"` // earliest, latest
+	MinBytes       int              `yaml:"min_bytes,omitempty"`
+	MaxBytes       int              `yaml:"max_bytes,omitempty"`
+	MaxWait        int              `yaml:"max_wait,omitempty"`        // milliseconds
+	CommitInterval int              `yaml:"commit_interval,omitempty"` // milliseconds
+	SASL           *SASLConfig      `yaml:"sasl,omitempty" json:"sasl,omitempty"`
+	TLS            *TLSClientConfig `yaml:"tls,omitempty" json:"tls,omitempty"`
 
 	// SQL Event Table (polling-based)
 	Table           string   `yaml:"table,omitempty"`
@@ -89,6 +92,11 @@ type SourceV2 struct {
 	ServerID uint32   `yaml:"server_id,omitempty"` // MySQL server ID for binlog
 	SlotName string   `yaml:"slot_name,omitempty"` // PostgreSQL replication slot
 
+	// Database TLS (SQL, CDC 공통 - TLS 필드는 Kafka에서도 사용)
+	// DSN 대신 개별 필드로 TLS 설정 시 사용
+	// MySQL: tls=custom, PostgreSQL: sslmode=verify-full
+	DBTLS *DBTLSConfig `yaml:"db_tls,omitempty" json:"db_tls,omitempty"`
+
 	// Kubernetes Logs
 	K8sNamespace     string   `yaml:"namespace,omitempty" json:"namespace,omitempty"`           // target namespace (empty = all namespaces)
 	K8sPodSelector   string   `yaml:"pod_selector,omitempty" json:"pod_selector,omitempty"`     // label selector (e.g., "app=nginx")
@@ -102,8 +110,63 @@ type SourceV2 struct {
 	K8sLogFormat     string   `yaml:"log_format,omitempty" json:"log_format,omitempty"`         // auto, json, text (default: auto)
 	K8sLogPattern    string   `yaml:"log_pattern,omitempty" json:"log_pattern,omitempty"`       // regex pattern with named groups for text logs
 
+	// 동적 파티션 설정 (batch 소스용)
+	Partition *PartitionConfig `yaml:"partition,omitempty" json:"partition,omitempty"`
+
 	// Rate Limiting (공통)
 	RateLimit *RateLimitSourceConfig `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+
+	// RabbitMQ
+	Queue         string `yaml:"queue,omitempty" json:"queue,omitempty"`
+	Exchange      string `yaml:"exchange,omitempty" json:"exchange,omitempty"`
+	ExchangeType  string `yaml:"exchange_type,omitempty" json:"exchange_type,omitempty"`   // direct, fanout, topic, headers
+	RoutingKey    string `yaml:"routing_key,omitempty" json:"routing_key,omitempty"`       // queue binding routing key
+	Prefetch      int    `yaml:"prefetch,omitempty" json:"prefetch,omitempty"`             // prefetch count (default: 10)
+	AutoAck       bool   `yaml:"auto_ack,omitempty" json:"auto_ack,omitempty"`             // auto acknowledge messages
+	Exclusive     bool   `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`           // exclusive queue
+	Durable       bool   `yaml:"durable,omitempty" json:"durable,omitempty"`               // durable queue/exchange
+	ConsumerTag   string `yaml:"consumer_tag,omitempty" json:"consumer_tag,omitempty"`     // consumer identifier
+	ReconnectWait int    `yaml:"reconnect_wait,omitempty" json:"reconnect_wait,omitempty"` // reconnect wait in milliseconds
+
+	// SQS (AWS Simple Queue Service)
+	SQSQueueURL          string `yaml:"sqs_queue_url,omitempty" json:"sqs_queue_url,omitempty"`                   // SQS Queue URL
+	SQSRegion            string `yaml:"sqs_region,omitempty" json:"sqs_region,omitempty"`                         // AWS Region
+	SQSAccessKeyID       string `yaml:"sqs_access_key_id,omitempty" json:"sqs_access_key_id,omitempty"`           // AWS Access Key ID
+	SQSSecretAccessKey   string `yaml:"sqs_secret_access_key,omitempty" json:"sqs_secret_access_key,omitempty"`   // AWS Secret Access Key
+	SQSSessionToken      string `yaml:"sqs_session_token,omitempty" json:"sqs_session_token,omitempty"`           // AWS Session Token (임시 자격 증명용)
+	SQSMaxMessages       int    `yaml:"sqs_max_messages,omitempty" json:"sqs_max_messages,omitempty"`             // 한 번에 수신할 최대 메시지 수 (1-10, default: 10)
+	SQSWaitTimeSeconds   int    `yaml:"sqs_wait_time_seconds,omitempty" json:"sqs_wait_time_seconds,omitempty"`   // Long polling 대기 시간 (0-20, default: 20)
+	SQSVisibilityTimeout int    `yaml:"sqs_visibility_timeout,omitempty" json:"sqs_visibility_timeout,omitempty"` // Visibility timeout in seconds (default: 30)
+	SQSDeleteOnReceive   bool   `yaml:"sqs_delete_on_receive,omitempty" json:"sqs_delete_on_receive,omitempty"`   // 수신 후 자동 삭제
+	SQSEndpoint          string `yaml:"sqs_endpoint,omitempty" json:"sqs_endpoint,omitempty"`                     // 커스텀 엔드포인트 (LocalStack 등)
+
+	// WebSocket
+	WSURL           string   `yaml:"ws_url,omitempty" json:"ws_url,omitempty"`                       // WebSocket URL (ws:// or wss://)
+	WSSubprotocols  []string `yaml:"ws_subprotocols,omitempty" json:"ws_subprotocols,omitempty"`     // 서브프로토콜 목록
+	WSPingInterval  int      `yaml:"ws_ping_interval,omitempty" json:"ws_ping_interval,omitempty"`   // Ping 간격 (milliseconds, default: 30000)
+	WSPongWait      int      `yaml:"ws_pong_wait,omitempty" json:"ws_pong_wait,omitempty"`           // Pong 대기 시간 (milliseconds, default: 60000)
+	WSReconnectWait int      `yaml:"ws_reconnect_wait,omitempty" json:"ws_reconnect_wait,omitempty"` // 재연결 대기 시간 (milliseconds, default: 5000)
+	WSMaxReconnect  int      `yaml:"ws_max_reconnect,omitempty" json:"ws_max_reconnect,omitempty"`   // 최대 재연결 시도 횟수 (default: 10)
+	WSMessageType   string   `yaml:"ws_message_type,omitempty" json:"ws_message_type,omitempty"`     // 메시지 타입: text, binary (default: text)
+	WSSubscribeMsg  string   `yaml:"ws_subscribe_msg,omitempty" json:"ws_subscribe_msg,omitempty"`   // 연결 후 전송할 구독 메시지
+
+	// MQTT
+	MQTTBroker        string `yaml:"mqtt_broker,omitempty" json:"mqtt_broker,omitempty"`                 // MQTT Broker URL (tcp://, ssl://, ws://, wss://)
+	MQTTClientID      string `yaml:"mqtt_client_id,omitempty" json:"mqtt_client_id,omitempty"`           // 클라이언트 ID
+	MQTTUsername      string `yaml:"mqtt_username,omitempty" json:"mqtt_username,omitempty"`             // 인증 사용자명
+	MQTTPassword      string `yaml:"mqtt_password,omitempty" json:"mqtt_password,omitempty"`             // 인증 비밀번호
+	MQTTTopic         string `yaml:"mqtt_topic,omitempty" json:"mqtt_topic,omitempty"`                   // 구독 토픽 (와일드카드 지원: +, #)
+	MQTTQoS           int    `yaml:"mqtt_qos,omitempty" json:"mqtt_qos,omitempty"`                       // QoS 레벨 (0, 1, 2)
+	MQTTCleanSession  bool   `yaml:"mqtt_clean_session,omitempty" json:"mqtt_clean_session,omitempty"`   // Clean session 여부
+	MQTTKeepAlive     int    `yaml:"mqtt_keep_alive,omitempty" json:"mqtt_keep_alive,omitempty"`         // Keep-alive 간격 (seconds, default: 60)
+	MQTTReconnectWait int    `yaml:"mqtt_reconnect_wait,omitempty" json:"mqtt_reconnect_wait,omitempty"` // 재연결 대기 시간 (milliseconds, default: 5000)
+	MQTTMaxReconnect  int    `yaml:"mqtt_max_reconnect,omitempty" json:"mqtt_max_reconnect,omitempty"`   // 최대 재연결 시도 횟수 (default: 10)
+
+	// SSE (Server-Sent Events)
+	SSEURL           string `yaml:"sse_url,omitempty" json:"sse_url,omitempty"`                       // SSE 엔드포인트 URL
+	SSEReconnectWait int    `yaml:"sse_reconnect_wait,omitempty" json:"sse_reconnect_wait,omitempty"` // 재연결 대기 시간 (milliseconds, default: 3000)
+	SSEMaxReconnect  int    `yaml:"sse_max_reconnect,omitempty" json:"sse_max_reconnect,omitempty"`   // 최대 재연결 시도 횟수 (default: 10)
+	SSELastEventID   string `yaml:"sse_last_event_id,omitempty" json:"sse_last_event_id,omitempty"`   // 마지막 이벤트 ID (재시작 시 복원용)
 }
 
 // IncrementalConfig 증분 처리 설정 (SQL용)
@@ -114,7 +177,7 @@ type IncrementalConfig struct {
 
 // AuthConfig HTTP 인증 설정
 type AuthConfig struct {
-	Type         string   `yaml:"type"` // basic, bearer, oauth2
+	Type         string   `yaml:"type"` // basic, bearer, oauth2, api_key, mtls
 	Username     string   `yaml:"username,omitempty"`
 	Password     string   `yaml:"password,omitempty"`
 	Token        string   `yaml:"token,omitempty"`
@@ -122,6 +185,57 @@ type AuthConfig struct {
 	ClientSecret string   `yaml:"client_secret,omitempty"`
 	TokenURL     string   `yaml:"token_url,omitempty"`
 	Scopes       []string `yaml:"scopes,omitempty"`
+	// API Key 인증
+	APIKey     string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	APIKeyIn   string `yaml:"api_key_in,omitempty" json:"api_key_in,omitempty"`     // header or query
+	APIKeyName string `yaml:"api_key_name,omitempty" json:"api_key_name,omitempty"` // header/query parameter name
+	// mTLS 인증 (TLSClientConfig 참조)
+	TLS *TLSClientConfig `yaml:"tls,omitempty" json:"tls,omitempty"`
+}
+
+// SASLConfig Kafka SASL 인증 설정
+type SASLConfig struct {
+	// Mechanism SASL 메커니즘: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+	Mechanism string `yaml:"mechanism" json:"mechanism"`
+	// Username SASL 사용자 이름
+	Username string `yaml:"username" json:"username"`
+	// Password SASL 비밀번호 (환경변수: ${VAR} 형식 지원)
+	Password string `yaml:"password" json:"password"`
+}
+
+// TLSClientConfig TLS/SSL 클라이언트 설정
+type TLSClientConfig struct {
+	// Enabled TLS 사용 여부
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// CACert CA 인증서 파일 경로
+	CACert string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	// ClientCert 클라이언트 인증서 파일 경로 (mTLS용)
+	ClientCert string `yaml:"client_cert,omitempty" json:"client_cert,omitempty"`
+	// ClientKey 클라이언트 개인키 파일 경로 (mTLS용)
+	ClientKey string `yaml:"client_key,omitempty" json:"client_key,omitempty"`
+	// SkipVerify 서버 인증서 검증 건너뛰기 (개발용, 운영 비권장)
+	SkipVerify bool `yaml:"skip_verify,omitempty" json:"skip_verify,omitempty"`
+	// ServerName TLS SNI 서버 이름 (선택)
+	ServerName string `yaml:"server_name,omitempty" json:"server_name,omitempty"`
+}
+
+// DBTLSConfig 데이터베이스 TLS 설정 (MySQL, PostgreSQL 공통)
+// SQL과 CDC 소스에서 DSN 대신 개별 필드로 TLS 설정 시 사용
+type DBTLSConfig struct {
+	// Enabled TLS 사용 여부
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Mode TLS 모드
+	// MySQL: skip-verify, preferred, required (= verify-ca), verify-identity (= verify-full)
+	// PostgreSQL: disable, allow, prefer, require, verify-ca, verify-full
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// CACert CA 인증서 파일 경로
+	CACert string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	// ClientCert 클라이언트 인증서 파일 경로 (mTLS용)
+	ClientCert string `yaml:"client_cert,omitempty" json:"client_cert,omitempty"`
+	// ClientKey 클라이언트 개인키 파일 경로 (mTLS용)
+	ClientKey string `yaml:"client_key,omitempty" json:"client_key,omitempty"`
+	// ServerName 서버 이름 검증용 (verify-identity/verify-full에서 사용)
+	ServerName string `yaml:"server_name,omitempty" json:"server_name,omitempty"`
 }
 
 // PaginationConfig HTTP 페이징 설정
@@ -148,6 +262,31 @@ type PaginationConfig struct {
 	URLPath string `yaml:"url_path" json:"url_path"` // 응답에서 다음 URL 경로 (예: links.next)
 }
 
+// PartitionConfig 동적 파티션 설정 (batch 소스용)
+// HTTP/SQL 소스에서 파티션 목록을 동적으로 조회 후 병렬 처리
+type PartitionConfig struct {
+	// 공통 설정
+	Parallelism int `yaml:"parallelism,omitempty" json:"parallelism,omitempty"` // 동시 처리 파티션 수 (기본: 4)
+
+	// HTTP 파티션 디스커버리
+	DiscoveryURL      string            `yaml:"discovery_url,omitempty" json:"discovery_url,omitempty"`             // 파티션 목록 조회 URL
+	DiscoveryMethod   string            `yaml:"discovery_method,omitempty" json:"discovery_method,omitempty"`       // HTTP 메서드 (기본: GET)
+	DiscoveryHeaders  map[string]string `yaml:"discovery_headers,omitempty" json:"discovery_headers,omitempty"`     // 추가 헤더
+	DiscoveryAuth     *AuthConfig       `yaml:"discovery_auth,omitempty" json:"discovery_auth,omitempty"`           // 인증 (없으면 소스 auth 사용)
+	PartitionListPath string            `yaml:"partition_list_path,omitempty" json:"partition_list_path,omitempty"` // 응답에서 파티션 목록 경로 (예: "partitions", "data.partitions")
+	PartitionIDField  string            `yaml:"partition_id_field,omitempty" json:"partition_id_field,omitempty"`   // 파티션 ID 필드 (기본: 배열 요소 자체)
+
+	// SQL 파티션 디스커버리
+	DiscoveryQuery string `yaml:"discovery_query,omitempty" json:"discovery_query,omitempty"` // 파티션 목록 조회 쿼리
+
+	// 파티션별 데이터 조회 템플릿 (${partition} 변수 사용)
+	URLTemplate   string `yaml:"url_template,omitempty" json:"url_template,omitempty"`     // HTTP: 파티션별 URL 템플릿
+	QueryTemplate string `yaml:"query_template,omitempty" json:"query_template,omitempty"` // SQL: 파티션별 쿼리 템플릿
+
+	// 정적 파티션 목록 (디스커버리 대신 직접 지정)
+	StaticPartitions []string `yaml:"static_partitions,omitempty" json:"static_partitions,omitempty"`
+}
+
 // RealtimeConfig 실시간 파이프라인 설정
 type RealtimeConfig struct {
 	IDField        string `yaml:"id_field"`         // 중복 체크용 ID 필드
@@ -155,6 +294,71 @@ type RealtimeConfig struct {
 	EntityIDField  string `yaml:"entity_id_field"`  // 엔티티 ID 필드
 	DedupStorage   string `yaml:"dedup_storage"`    // redis, memory
 	DedupTTL       string `yaml:"dedup_ttl"`        // 중복 ID 보관 기간
+}
+
+// ContractConfig Data Contract 설정
+type ContractConfig struct {
+	Name        string            `yaml:"name"`
+	Version     string            `yaml:"version,omitempty"`
+	Description string            `yaml:"description,omitempty"`
+	Owner       string            `yaml:"owner,omitempty"`
+	Team        string            `yaml:"team,omitempty"`
+	SLA         *ContractSLA      `yaml:"sla,omitempty"`
+	Schema      *ContractSchema   `yaml:"schema,omitempty"`
+	Rules       []BusinessRule    `yaml:"rules,omitempty"`
+	OnViolation string            `yaml:"on_violation,omitempty"` // drop, quarantine, tag, error
+	DLQ         *DLQConfig        `yaml:"dlq,omitempty"`
+	Tags        map[string]string `yaml:"tags,omitempty"`
+}
+
+// ContractSLA 서비스 수준 계약
+type ContractSLA struct {
+	Freshness    string  `yaml:"freshness,omitempty"`
+	Completeness float64 `yaml:"completeness,omitempty"`
+	Accuracy     float64 `yaml:"accuracy,omitempty"`
+}
+
+// ContractSchema 스키마 정의
+type ContractSchema struct {
+	Fields []ContractField `yaml:"fields"`
+	Strict bool            `yaml:"strict,omitempty"`
+}
+
+// ContractField 필드 스키마
+type ContractField struct {
+	Name        string   `yaml:"name"`
+	Type        string   `yaml:"type"`
+	Required    bool     `yaml:"required,omitempty"`
+	Description string   `yaml:"description,omitempty"`
+	Pattern     string   `yaml:"pattern,omitempty"`
+	MinLength   *int     `yaml:"min_length,omitempty"`
+	MaxLength   *int     `yaml:"max_length,omitempty"`
+	Min         *float64 `yaml:"min,omitempty"`
+	Max         *float64 `yaml:"max,omitempty"`
+	Enum        []any    `yaml:"enum,omitempty"`
+}
+
+// BusinessRule 비즈니스 규칙 정의
+type BusinessRule struct {
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description,omitempty"`
+	Condition   string   `yaml:"condition"`
+	Severity    string   `yaml:"severity,omitempty"` // error, warning, info
+	Tags        []string `yaml:"tags,omitempty"`
+}
+
+// DLQConfig Dead Letter Queue 설정
+type DLQConfig struct {
+	Enabled       bool              `yaml:"enabled"`
+	Type          string            `yaml:"type"` // kafka, file, http
+	MaxRetries    int               `yaml:"max_retries,omitempty"`
+	RetryInterval string            `yaml:"retry_interval,omitempty"`
+	Brokers       []string          `yaml:"brokers,omitempty"`
+	Topic         string            `yaml:"topic,omitempty"`
+	Path          string            `yaml:"path,omitempty"`
+	Format        string            `yaml:"format,omitempty"`
+	URL           string            `yaml:"url,omitempty"`
+	Headers       map[string]string `yaml:"headers,omitempty"`
 }
 
 // StepV2 처리 단계
@@ -251,11 +455,14 @@ func (fc *FilterConfig) GetExpression() string {
 
 // OutputConfig 출력 설정 (Stub)
 type OutputConfig struct {
-	Type      string               `yaml:"type"` // stub, sql, kafka
+	Type      string               `yaml:"type"` // stub, sql, kafka, elasticsearch, mongodb, s3
 	LogLevel  string               `yaml:"log_level,omitempty"`
 	LogFormat string               `yaml:"log_format,omitempty"`
 	Metrics   *MetricsOutputConfig `yaml:"metrics,omitempty"`
 	Callback  *CallbackConfig      `yaml:"callback,omitempty"`
+
+	// 범용 설정 맵 (elasticsearch, mongodb, s3 등에서 사용)
+	Config map[string]interface{} `yaml:"config,omitempty" json:"config,omitempty"`
 
 	// SQL Sink
 	Driver          string            `yaml:"driver,omitempty"`           // mysql, postgres
@@ -455,8 +662,101 @@ func (c *PipelineConfigV2) validateSource() error {
 			c.Source.K8sTailLines = 100 // 기본: 최근 100줄
 		}
 
+	case "partitioned_http":
+		if err := c.validatePartitionedHTTP(); err != nil {
+			return err
+		}
+
+	case "partitioned_sql":
+		if err := c.validatePartitionedSQL(); err != nil {
+			return err
+		}
+
+	case "rabbitmq":
+		if c.Source.URL == "" {
+			return fmt.Errorf("rabbitmq url is required")
+		}
+		if c.Source.Queue == "" {
+			return fmt.Errorf("rabbitmq queue is required")
+		}
+		if c.Source.Prefetch <= 0 {
+			c.Source.Prefetch = 10
+		}
+
+	case "sqs":
+		if c.Source.SQSQueueURL == "" {
+			return fmt.Errorf("sqs queue_url is required")
+		}
+		if c.Source.SQSMaxMessages <= 0 || c.Source.SQSMaxMessages > 10 {
+			c.Source.SQSMaxMessages = 10
+		}
+		if c.Source.SQSWaitTimeSeconds < 0 || c.Source.SQSWaitTimeSeconds > 20 {
+			c.Source.SQSWaitTimeSeconds = 20
+		}
+		if c.Source.SQSVisibilityTimeout <= 0 {
+			c.Source.SQSVisibilityTimeout = 30
+		}
+
+	case "websocket":
+		if c.Source.WSURL == "" {
+			return fmt.Errorf("websocket url is required")
+		}
+		if c.Source.WSPingInterval <= 0 {
+			c.Source.WSPingInterval = 30000 // 30 seconds
+		}
+		if c.Source.WSPongWait <= 0 {
+			c.Source.WSPongWait = 60000 // 60 seconds
+		}
+		if c.Source.WSReconnectWait <= 0 {
+			c.Source.WSReconnectWait = 5000 // 5 seconds
+		}
+		if c.Source.WSMaxReconnect <= 0 {
+			c.Source.WSMaxReconnect = 10
+		}
+
+	case "mqtt":
+		if c.Source.MQTTBroker == "" {
+			return fmt.Errorf("mqtt broker is required")
+		}
+		if c.Source.MQTTTopic == "" {
+			return fmt.Errorf("mqtt topic is required")
+		}
+		if c.Source.MQTTClientID == "" {
+			c.Source.MQTTClientID = c.Name + "-mqtt-client"
+		}
+		if c.Source.MQTTQoS < 0 || c.Source.MQTTQoS > 2 {
+			c.Source.MQTTQoS = 1
+		}
+		if c.Source.MQTTKeepAlive <= 0 {
+			c.Source.MQTTKeepAlive = 60
+		}
+		if c.Source.MQTTReconnectWait <= 0 {
+			c.Source.MQTTReconnectWait = 5000
+		}
+		if c.Source.MQTTMaxReconnect <= 0 {
+			c.Source.MQTTMaxReconnect = 10
+		}
+
+	case "sse":
+		if c.Source.SSEURL == "" {
+			return fmt.Errorf("sse url is required")
+		}
+		if c.Source.SSEReconnectWait <= 0 {
+			c.Source.SSEReconnectWait = 3000
+		}
+		if c.Source.SSEMaxReconnect <= 0 {
+			c.Source.SSEMaxReconnect = 10
+		}
+
 	default:
 		return fmt.Errorf("unsupported source type: %s", c.Source.Type)
+	}
+
+	// http/sql + partition 설정 검증
+	if c.Source.Partition != nil {
+		if err := c.validatePartitionConfig(); err != nil {
+			return fmt.Errorf("partition: %w", err)
+		}
 	}
 
 	return nil
@@ -480,6 +780,101 @@ func (c *PipelineConfigV2) validateAuth() error {
 	default:
 		return fmt.Errorf("unsupported auth type: %s", auth.Type)
 	}
+	return nil
+}
+
+// validatePartitionedHTTP partitioned_http 소스 검증
+func (c *PipelineConfigV2) validatePartitionedHTTP() error {
+	if c.Source.Partition == nil {
+		return fmt.Errorf("partition config is required for partitioned_http source")
+	}
+	p := c.Source.Partition
+
+	// 디스커버리 또는 정적 파티션 필수
+	if p.DiscoveryURL == "" && len(p.StaticPartitions) == 0 {
+		return fmt.Errorf("either discovery_url or static_partitions is required")
+	}
+
+	// URL 템플릿 또는 기본 URL 필수
+	if p.URLTemplate == "" && c.Source.URL == "" {
+		return fmt.Errorf("url_template or base url is required")
+	}
+
+	// 기본값 설정
+	if p.Parallelism <= 0 {
+		p.Parallelism = 4
+	}
+	if p.DiscoveryMethod == "" {
+		p.DiscoveryMethod = "GET"
+	}
+
+	return nil
+}
+
+// validatePartitionedSQL partitioned_sql 소스 검증
+func (c *PipelineConfigV2) validatePartitionedSQL() error {
+	if c.Source.Driver == "" {
+		return fmt.Errorf("sql driver is required")
+	}
+	if c.Source.DSN == "" {
+		return fmt.Errorf("sql dsn is required")
+	}
+	if c.Source.Partition == nil {
+		return fmt.Errorf("partition config is required for partitioned_sql source")
+	}
+	p := c.Source.Partition
+
+	// 디스커버리 또는 정적 파티션 필수
+	if p.DiscoveryQuery == "" && len(p.StaticPartitions) == 0 {
+		return fmt.Errorf("either discovery_query or static_partitions is required")
+	}
+
+	// 쿼리 템플릿 또는 기본 쿼리 필수
+	if p.QueryTemplate == "" && c.Source.Query == "" {
+		return fmt.Errorf("query_template or base query is required")
+	}
+
+	// 기본값 설정
+	if p.Parallelism <= 0 {
+		p.Parallelism = 4
+	}
+
+	return nil
+}
+
+// validatePartitionConfig 공통 파티션 설정 검증 (http/sql + partition)
+func (c *PipelineConfigV2) validatePartitionConfig() error {
+	p := c.Source.Partition
+	if p == nil {
+		return nil
+	}
+
+	// 기본값 설정
+	if p.Parallelism <= 0 {
+		p.Parallelism = 4
+	}
+
+	switch c.Source.Type {
+	case "http", "rest_api":
+		if p.DiscoveryURL == "" && len(p.StaticPartitions) == 0 {
+			return fmt.Errorf("either discovery_url or static_partitions is required for HTTP partition")
+		}
+		if p.URLTemplate == "" && c.Source.URL == "" {
+			return fmt.Errorf("url_template or base url is required for HTTP partition")
+		}
+		if p.DiscoveryMethod == "" {
+			p.DiscoveryMethod = "GET"
+		}
+
+	case "sql":
+		if p.DiscoveryQuery == "" && len(p.StaticPartitions) == 0 {
+			return fmt.Errorf("either discovery_query or static_partitions is required for SQL partition")
+		}
+		if p.QueryTemplate == "" && c.Source.Query == "" {
+			return fmt.Errorf("query_template or base query is required for SQL partition")
+		}
+	}
+
 	return nil
 }
 

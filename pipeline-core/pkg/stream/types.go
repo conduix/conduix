@@ -101,11 +101,29 @@ type ProcessorStats struct {
 // StageStats holds per-stage statistics
 type StageStats struct {
 	Name          string
+	Type          string // stage type (filter, remap, contract, etc.)
 	InputCount    int64
 	OutputCount   int64
 	FilteredCount int64
 	ErrorCount    int64
 	AvgLatency    time.Duration
+
+	// Contract Stage 전용 통계
+	ContractStats *ContractStageStats `json:"contract_stats,omitempty"`
+}
+
+// ContractStageStats Contract Stage 전용 통계
+type ContractStageStats struct {
+	ContractID       string           `json:"contract_id"`
+	ValidRecords     int64            `json:"valid_records"`
+	InvalidRecords   int64            `json:"invalid_records"`
+	WarningRecords   int64            `json:"warning_records"`
+	ViolationsByRule map[string]int64 `json:"violations_by_rule"`
+
+	// Circuit Breaker 상태
+	CircuitState        string  `json:"circuit_state"` // closed, open, half_open
+	CircuitFailureRate  float64 `json:"circuit_failure_rate"`
+	ConsecutiveFailures int64   `json:"consecutive_failures"`
 }
 
 // SourceConfig is the common configuration for sources

@@ -10,8 +10,8 @@ import (
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/dedup"
-	"github.com/conduix/conduix/pipeline-core/pkg/processor"
 	"github.com/conduix/conduix/pipeline-core/pkg/output"
+	"github.com/conduix/conduix/pipeline-core/pkg/processor"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
 )
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -19,14 +20,16 @@ import (
 type ClusterHandler struct {
 	db           *database.DB
 	redisService *services.RedisService
+	k8sService   *services.KubernetesJobService
 	logger       *slog.Logger
 }
 
 // NewClusterHandler 클러스터 핸들러 생성
-func NewClusterHandler(db *database.DB, redisService *services.RedisService) *ClusterHandler {
+func NewClusterHandler(db *database.DB, redisService *services.RedisService, k8sService *services.KubernetesJobService) *ClusterHandler {
 	return &ClusterHandler{
 		db:           db,
 		redisService: redisService,
+		k8sService:   k8sService,
 		logger:       slog.Default(),
 	}
 }
@@ -89,19 +92,37 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 		return
 	}
 
-	// 각 클러스터별 Agent 수 조회
+	// Redis에서 실제 활성 Agent 하트비트 조회 (실시간 데이터)
+	heartbeats, err := h.redisService.GetAllAgentHeartbeats()
+	if err != nil {
+		h.logger.Warn("Failed to fetch agent heartbeats, falling back to DB", "request_id", requestID, "error", err)
+		heartbeats = nil
+	}
+
+	// 클러스터별 Agent 수 계산 (Redis 하트비트 기반)
+	clusterAgentCounts := make(map[string]int)
+	clusterOnlineAgentCounts := make(map[string]int)
+	now := time.Now()
+
+	for _, heartbeat := range heartbeats {
+		clusterID := heartbeat.ClusterID
+		if clusterID == "" {
+			clusterID = "default" // 클러스터 미지정 Agent는 default로 간주
+		}
+		clusterAgentCounts[clusterID]++
+		// 30초 이내 하트비트가 있으면 online
+		if now.Sub(heartbeat.Timestamp) <= 30*time.Second {
+			clusterOnlineAgentCounts[clusterID]++
+		}
+	}
+
+	// 응답 생성
 	responses := make([]ClusterResponse, 0, len(clusters))
 	for _, cluster := range clusters {
-		var agentCount int64
-		var onlineAgentCount int64
-
-		h.db.Model(&models.Agent{}).Where("cluster_id = ?", cluster.ID).Count(&agentCount)
-		h.db.Model(&models.Agent{}).Where("cluster_id = ? AND status = ?", cluster.ID, "online").Count(&onlineAgentCount)
-
 		responses = append(responses, ClusterResponse{
 			Cluster:          cluster,
-			AgentCount:       int(agentCount),
-			OnlineAgentCount: int(onlineAgentCount),
+			AgentCount:       clusterAgentCounts[cluster.ID],
+			OnlineAgentCount: clusterOnlineAgentCounts[cluster.ID],
 		})
 	}
 
@@ -127,16 +148,31 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 		return
 	}
 
-	// Agent 수 조회
-	var agentCount int64
-	var onlineAgentCount int64
-	h.db.Model(&models.Agent{}).Where("cluster_id = ?", cluster.ID).Count(&agentCount)
-	h.db.Model(&models.Agent{}).Where("cluster_id = ? AND status = ?", cluster.ID, "online").Count(&onlineAgentCount)
+	// Redis에서 실제 활성 Agent 하트비트 조회 (실시간 데이터)
+	var agentCount int
+	var onlineAgentCount int
+	now := time.Now()
+
+	heartbeats, err := h.redisService.GetAllAgentHeartbeats()
+	if err == nil && heartbeats != nil {
+		for _, heartbeat := range heartbeats {
+			hbClusterID := heartbeat.ClusterID
+			if hbClusterID == "" {
+				hbClusterID = "default"
+			}
+			if hbClusterID == cluster.ID {
+				agentCount++
+				if now.Sub(heartbeat.Timestamp) <= 30*time.Second {
+					onlineAgentCount++
+				}
+			}
+		}
+	}
 
 	response := ClusterResponse{
 		Cluster:          cluster,
-		AgentCount:       int(agentCount),
-		OnlineAgentCount: int(onlineAgentCount),
+		AgentCount:       agentCount,
+		OnlineAgentCount: onlineAgentCount,
 	}
 
 	middleware.SuccessResponse(c, response)
@@ -373,4 +409,177 @@ func (h *ClusterHandler) GetClusterAgents(c *gin.Context) {
 	}
 
 	middleware.SuccessResponse(c, agentsWithHeartbeat)
+}
+
+// ScaleAgentsRequest Agent 스케일링 요청
+type ScaleAgentsRequest struct {
+	DesiredAgents int `json:"desired_agents" binding:"required,min=0,max=100"`
+}
+
+// UpdateAgentConfigRequest Agent 배포 설정 업데이트 요청
+type UpdateAgentConfigRequest struct {
+	DesiredAgents int                       `json:"desired_agents,omitempty"`
+	AgentConfig   *types.ClusterAgentConfig `json:"agent_config,omitempty"`
+}
+
+// ScaleAgents POST /api/v1/clusters/:id/scale
+// @Summary 클러스터 Agent 스케일링
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Param id path string true "Cluster ID"
+// @Param request body ScaleAgentsRequest true "Scale Request"
+// @Success 200 {object} types.APIResponse[models.Cluster]
+// @Router /clusters/{id}/scale [post]
+func (h *ClusterHandler) ScaleAgents(c *gin.Context) {
+	requestID := middleware.GetRequestID(c)
+	clusterID := c.Param("id")
+
+	var cluster models.Cluster
+	if err := h.db.First(&cluster, "id = ?", clusterID).Error; err != nil {
+		h.logger.Warn("Cluster not found", "request_id", requestID, "cluster_id", clusterID)
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Cluster not found")
+		return
+	}
+
+	var req ScaleAgentsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request body", "request_id", requestID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
+	// DesiredAgents 업데이트
+	cluster.DesiredAgents = req.DesiredAgents
+	cluster.UpdatedAt = time.Now()
+
+	if err := h.db.Save(&cluster).Error; err != nil {
+		h.logger.Error("Failed to update cluster", "request_id", requestID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to scale agents")
+		return
+	}
+
+	// Kubernetes Deployment 스케일링 실행
+	if h.k8sService != nil {
+		if err := h.k8sService.ScaleAgentDeployment(c.Request.Context(), clusterID, int32(req.DesiredAgents)); err != nil {
+			h.logger.Error("Failed to scale Kubernetes deployment", "request_id", requestID, "error", err)
+			// DB는 업데이트 되었으므로 경고만 반환
+			middleware.SuccessResponse(c, gin.H{
+				"cluster": cluster,
+				"warning": "Database updated but Kubernetes scaling failed: " + err.Error(),
+			})
+			return
+		}
+		h.logger.Info("Kubernetes deployment scaled", "request_id", requestID, "cluster_id", clusterID, "replicas", req.DesiredAgents)
+	}
+
+	h.logger.Info("Cluster agents scaled", "request_id", requestID, "cluster_id", clusterID, "desired_agents", req.DesiredAgents)
+	middleware.SuccessResponse(c, cluster)
+}
+
+// UpdateAgentConfig PUT /api/v1/clusters/:id/agent-config
+// @Summary 클러스터 Agent 배포 설정 업데이트
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Param id path string true "Cluster ID"
+// @Param request body UpdateAgentConfigRequest true "Agent Config"
+// @Success 200 {object} types.APIResponse[models.Cluster]
+// @Router /clusters/{id}/agent-config [put]
+func (h *ClusterHandler) UpdateAgentConfig(c *gin.Context) {
+	requestID := middleware.GetRequestID(c)
+	clusterID := c.Param("id")
+
+	var cluster models.Cluster
+	if err := h.db.First(&cluster, "id = ?", clusterID).Error; err != nil {
+		h.logger.Warn("Cluster not found", "request_id", requestID, "cluster_id", clusterID)
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Cluster not found")
+		return
+	}
+
+	var req UpdateAgentConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request body", "request_id", requestID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
+	// DesiredAgents 업데이트
+	if req.DesiredAgents > 0 {
+		cluster.DesiredAgents = req.DesiredAgents
+	}
+
+	// AgentConfig JSON으로 저장
+	if req.AgentConfig != nil {
+		configJSON, err := json.Marshal(req.AgentConfig)
+		if err != nil {
+			h.logger.Error("Failed to marshal agent config", "request_id", requestID, "error", err)
+			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeInternalError, "Failed to process agent config")
+			return
+		}
+		cluster.AgentConfig = string(configJSON)
+	}
+
+	cluster.UpdatedAt = time.Now()
+
+	if err := h.db.Save(&cluster).Error; err != nil {
+		h.logger.Error("Failed to update cluster", "request_id", requestID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to update agent config")
+		return
+	}
+
+	// DesiredAgents가 변경되었으면 Kubernetes Deployment 스케일링
+	if req.DesiredAgents > 0 && h.k8sService != nil {
+		if err := h.k8sService.ScaleAgentDeployment(c.Request.Context(), clusterID, int32(req.DesiredAgents)); err != nil {
+			h.logger.Error("Failed to scale Kubernetes deployment", "request_id", requestID, "error", err)
+			// DB는 업데이트 되었으므로 경고만 반환
+			middleware.SuccessResponse(c, gin.H{
+				"cluster": cluster,
+				"warning": "Database updated but Kubernetes scaling failed: " + err.Error(),
+			})
+			return
+		}
+		h.logger.Info("Kubernetes deployment scaled", "request_id", requestID, "cluster_id", clusterID, "replicas", req.DesiredAgents)
+	}
+
+	h.logger.Info("Cluster agent config updated", "request_id", requestID, "cluster_id", clusterID)
+	middleware.SuccessResponse(c, cluster)
+}
+
+// GetAgentConfig GET /api/v1/clusters/:id/agent-config
+// @Summary 클러스터 Agent 배포 설정 조회
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Param id path string true "Cluster ID"
+// @Success 200 {object} types.APIResponse[types.ClusterAgentConfig]
+// @Router /clusters/{id}/agent-config [get]
+func (h *ClusterHandler) GetAgentConfig(c *gin.Context) {
+	requestID := middleware.GetRequestID(c)
+	clusterID := c.Param("id")
+
+	var cluster models.Cluster
+	if err := h.db.First(&cluster, "id = ?", clusterID).Error; err != nil {
+		h.logger.Warn("Cluster not found", "request_id", requestID, "cluster_id", clusterID)
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Cluster not found")
+		return
+	}
+
+	var config types.ClusterAgentConfig
+	if cluster.AgentConfig != "" {
+		if err := json.Unmarshal([]byte(cluster.AgentConfig), &config); err != nil {
+			h.logger.Warn("Failed to parse agent config", "request_id", requestID, "error", err)
+		}
+	}
+
+	// 응답에 DesiredAgents도 포함
+	response := struct {
+		DesiredAgents int                      `json:"desired_agents"`
+		AgentConfig   types.ClusterAgentConfig `json:"agent_config"`
+	}{
+		DesiredAgents: cluster.DesiredAgents,
+		AgentConfig:   config,
+	}
+
+	middleware.SuccessResponse(c, response)
 }

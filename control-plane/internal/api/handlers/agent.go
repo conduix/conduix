@@ -253,6 +253,27 @@ func (h *AgentHandler) RegisterAgent(c *gin.Context) {
 		labelsJSON += "]"
 	}
 
+	// ClusterID가 있으면 해당 Cluster가 존재하는지 확인하고, 없으면 자동 생성
+	if req.ClusterID != "" {
+		var cluster models.Cluster
+		if err := h.db.First(&cluster, "id = ?", req.ClusterID).Error; err != nil {
+			// Cluster가 없으면 자동 생성
+			cluster = models.Cluster{
+				ID:          req.ClusterID,
+				Name:        req.ClusterID, // 기본 이름은 ID와 동일
+				Description: "Auto-created cluster for agent: " + req.Hostname,
+				Status:      "active",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}
+			if createErr := h.db.Create(&cluster).Error; createErr != nil {
+				// 동시 생성으로 인한 중복 에러는 무시 (이미 존재하는 경우)
+				// MySQL의 경우 duplicate key error, 이 경우 계속 진행
+				_ = createErr
+			}
+		}
+	}
+
 	agent := models.Agent{
 		ID:            req.ID,
 		Hostname:      req.Hostname,

@@ -836,10 +836,10 @@ stages:
 | 작업 | 예상 시간 | 상태 |
 |------|-----------|------|
 | Stream Join | 5일 | ✅ 완료 (2026-03-05) |
+| BigQuery Output | 3일 | ✅ 완료 (2026-03-05) |
+| Secrets Provider (Vault) | 3일 | ✅ 완료 (2026-03-05) |
+| Data Preview | 3일 | ✅ 완료 (2026-03-05) |
 | Visual Pipeline Builder | 10일 | ⬜ 대기 |
-| BigQuery Output | 3일 | ⬜ 대기 |
-| Data Preview | 3일 | ⬜ 대기 |
-| Secrets Provider (Vault) | 3일 | ⬜ 대기 |
 
 ---
 
@@ -916,4 +916,7 @@ require (
 | 2026-03-05 | 3.0 | S3 Multipart Upload 구현 완료 (5MB 이상 자동 분할, 동시 업로드) |
 | 2026-03-05 | 3.1 | Windowed Aggregation Redis 상태 저장 구현 완료 (재시작 시 상태 복원) |
 | 2026-03-05 | 3.2 | Stream Join Watermark 처리 구현 완료 (Late data 처리, 워터마크 기반 윈도우 클로즈) |
+| 2026-03-05 | 3.3 | BigQuery Output 구현 완료 (Streaming Insert, 배치 플러시, 동적 스키마) |
+| 2026-03-05 | 3.4 | Secrets Provider 구현 완료 (환경변수, HashiCorp Vault, 캐시, 재시도) |
+| 2026-03-05 | 3.5 | Data Preview 구현 완료 (Stage 입/출력 미리보기, Diff, 통계, REST API) |
 

@@ -194,6 +194,8 @@ func NewOutput(cfg config.OutputConfig) (Output, error) {
 		return NewS3Output(cfg)
 	case "gcs":
 		return NewGCSOutput(cfg)
+	case "bigquery", "bq":
+		return NewBigQueryOutput(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported output type: %s", cfg.Type)
 	}

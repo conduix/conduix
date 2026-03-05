@@ -36,6 +36,7 @@ type Server struct {
 	checkpointHandler   *handlers.CheckpointHandler
 	pipelineLinkHandler *handlers.PipelineLinkHandler
 	stageHandler        *handlers.StageHandler
+	previewHandler      *handlers.PreviewHandler
 	startTime           time.Time
 	version             string
 }
@@ -81,6 +82,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		checkpointHandler:   handlers.NewCheckpointHandler(db),
 		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),
 		stageHandler:        handlers.NewStageHandler(),
+		previewHandler:      handlers.NewPreviewHandler(),
 		startTime:           time.Now(),
 		version:             Version,
 	}
@@ -302,6 +304,13 @@ func (s *Server) setupRoutes() {
 				stages.GET("/categories", s.stageHandler.GetCategories)
 				stages.GET("/categories/:category/schemas", s.stageHandler.GetSchemasByCategory)
 				stages.GET("/field-types", s.stageHandler.GetFieldTypes)
+			}
+
+			// 미리보기
+			previewGroup := authenticated.Group("/preview")
+			{
+				previewGroup.POST("/stage", s.previewHandler.PreviewStage)
+				previewGroup.POST("/pipeline", s.previewHandler.PreviewPipeline)
 			}
 
 			// 파이프라인 링크 (부모-자식 연결)

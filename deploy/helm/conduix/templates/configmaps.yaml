@@ -135,6 +135,7 @@ data:
 
         root /usr/share/nginx/html;
         index index.html;
+        charset utf-8;
 
         # Gzip 압축
         gzip on;

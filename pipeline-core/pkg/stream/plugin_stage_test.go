@@ -48,7 +48,7 @@ func TestStreamToSDKRecord(t *testing.T) {
 		Data: map[string]any{"name": "alice", "score": 0.95},
 		Metadata: RecordMetadata{
 			Source:    "kafka",
-			Key:      "key1",
+			Key:       "key1",
 			Partition: 3,
 			Offset:    100,
 		},

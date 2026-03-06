@@ -9,6 +9,7 @@ RUN apk add --no-cache git
 # Go 모듈 복사 및 다운로드
 COPY shared/go.mod shared/go.sum ./shared/
 COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
+COPY plugin-sdk/go.mod plugin-sdk/go.sum ./plugin-sdk/
 COPY control-plane/go.mod control-plane/go.sum ./control-plane/
 
 WORKDIR /app/control-plane
@@ -18,6 +19,7 @@ RUN go mod download
 WORKDIR /app
 COPY shared ./shared
 COPY pipeline-core ./pipeline-core
+COPY plugin-sdk ./plugin-sdk
 COPY control-plane ./control-plane
 
 # 빌드

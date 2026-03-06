@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
+	"github.com/conduix/conduix/control-plane/internal/builder"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -17,15 +19,17 @@ import (
 
 // PluginHandler 플러그인 API 핸들러
 type PluginHandler struct {
-	db     *database.DB
-	logger *slog.Logger
+	db      *database.DB
+	builder *builder.Builder
+	logger  *slog.Logger
 }
 
 // NewPluginHandler 플러그인 핸들러 생성
 func NewPluginHandler(db *database.DB) *PluginHandler {
 	return &PluginHandler{
-		db:     db,
-		logger: slog.Default(),
+		db:      db,
+		builder: builder.New(builder.DefaultConfig()),
+		logger:  slog.Default(),
 	}
 }
 
@@ -410,6 +414,277 @@ func (h *PluginHandler) DeletePlugin(c *gin.Context) {
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
 		Message: "Plugin deleted successfully",
+	})
+}
+
+// BuildPluginRequest 플러그인 빌드 요청
+type BuildPluginRequest struct {
+	Name       string `json:"name" binding:"required"`
+	Version    string `json:"version" binding:"required"`
+	SourceCode string `json:"source_code" binding:"required"` // main.go 소스코드
+	GoMod      string `json:"go_mod,omitempty"`               // go.mod (optional)
+	Platform   string `json:"platform,omitempty"`             // GOOS/GOARCH (default: linux/arm64)
+}
+
+// BuildPlugin POST /api/v1/plugins/build
+// @Summary 플러그인 빌드 (소스코드 → 바이너리)
+// @Tags plugins
+// @Accept json
+// @Produce json
+// @Param request body BuildPluginRequest true "Build Request"
+// @Success 200 {object} types.APIResponse[models.PluginBuild]
+// @Router /plugins/build [post]
+func (h *PluginHandler) BuildPlugin(c *gin.Context) {
+	requestID := middleware.GetRequestID(c)
+
+	var req BuildPluginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid build request", "request_id", requestID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
+	// 소스코드 검증
+	if _, err := h.builder.ValidateSource(req.SourceCode); err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "Source validation failed: "+err.Error())
+		return
+	}
+
+	// Plugin 조회 또는 생성
+	var plugin models.Plugin
+	if err := h.db.First(&plugin, "name = ?", req.Name).Error; err != nil {
+		// 존재하지 않으면 생성
+		userID, _ := c.Get("user_id")
+		userIDStr := ""
+		if userID != nil {
+			userIDStr = userID.(string)
+		}
+
+		plugin = models.Plugin{
+			ID:        uuid.New().String(),
+			Name:      req.Name,
+			Version:   req.Version,
+			Status:    "active",
+			CreatedBy: userIDStr,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := h.db.Create(&plugin).Error; err != nil {
+			h.logger.Error("Failed to create plugin", "request_id", requestID, "error", err)
+			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to create plugin")
+			return
+		}
+	}
+
+	// 빌드 레코드 생성
+	now := time.Now()
+	build := &models.PluginBuild{
+		ID:         uuid.New().String(),
+		PluginID:   plugin.ID,
+		Status:     "building",
+		SourceCode: req.SourceCode,
+		GoMod:      req.GoMod,
+		Version:    req.Version,
+		Platform:   req.Platform,
+		StartedAt:  &now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+
+	if build.Platform == "" {
+		build.Platform = "linux/arm64"
+	}
+
+	if err := h.db.Create(build).Error; err != nil {
+		h.logger.Error("Failed to create build record", "request_id", requestID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to create build record")
+		return
+	}
+
+	// 비동기 빌드 실행
+	go h.executeBuild(build, &plugin, &req)
+
+	h.logger.Info("Plugin build started", "request_id", requestID, "build_id", build.ID, "plugin", req.Name)
+	c.JSON(http.StatusAccepted, types.APIResponse[models.PluginBuild]{
+		Success: true,
+		Data:    *build,
+		Message: "Build started",
+	})
+}
+
+// executeBuild 비동기 빌드 실행
+func (h *PluginHandler) executeBuild(build *models.PluginBuild, plugin *models.Plugin, req *BuildPluginRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	result, err := h.builder.Build(ctx, &builder.BuildRequest{
+		PluginID:   plugin.ID,
+		PluginName: req.Name,
+		Version:    req.Version,
+		SourceCode: req.SourceCode,
+		GoMod:      req.GoMod,
+		Platform:   req.Platform,
+	})
+
+	now := time.Now()
+	build.FinishedAt = &now
+	build.UpdatedAt = now
+
+	if err != nil {
+		build.Status = "failed"
+		build.Error = err.Error()
+		if result != nil {
+			build.BuildLog = result.BuildLog
+			build.DurationMs = int(result.Duration.Milliseconds())
+		}
+		h.db.Save(build)
+		h.logger.Error("Plugin build failed", "build_id", build.ID, "error", err)
+		return
+	}
+
+	build.Status = "success"
+	build.BuildLog = result.BuildLog
+	build.DurationMs = int(result.Duration.Milliseconds())
+	h.db.Save(build)
+
+	// 바이너리 저장
+	binary := &models.PluginBinary{
+		ID:         uuid.New().String(),
+		PluginID:   plugin.ID,
+		Version:    req.Version,
+		Platform:   build.Platform,
+		BinaryData: result.Binary,
+		Checksum:   result.Checksum,
+		SizeBytes:  result.Size,
+		BuildID:    build.ID,
+		CreatedAt:  now,
+	}
+
+	if err := h.db.Create(binary).Error; err != nil {
+		h.logger.Error("Failed to save binary", "build_id", build.ID, "error", err)
+		return
+	}
+
+	// Plugin 버전 업데이트
+	plugin.Version = req.Version
+	plugin.UpdatedAt = now
+	h.db.Save(plugin)
+
+	h.logger.Info("Plugin build completed",
+		"build_id", build.ID,
+		"plugin", plugin.Name,
+		"version", req.Version,
+		"size_bytes", result.Size,
+		"duration_ms", build.DurationMs,
+	)
+}
+
+// GetBuild GET /api/v1/plugins/builds/:id
+// @Summary 빌드 상태 조회
+// @Tags plugins
+// @Produce json
+// @Param id path string true "Build ID"
+// @Success 200 {object} types.APIResponse[models.PluginBuild]
+// @Router /plugins/builds/{id} [get]
+func (h *PluginHandler) GetBuild(c *gin.Context) {
+	buildID := c.Param("id")
+
+	var build models.PluginBuild
+	if err := h.db.First(&build, "id = ?", buildID).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Build not found")
+		return
+	}
+
+	middleware.SuccessResponse(c, build)
+}
+
+// ListBuilds GET /api/v1/plugins/:name/builds
+// @Summary 플러그인의 빌드 이력 조회
+// @Tags plugins
+// @Produce json
+// @Param name path string true "Plugin Name"
+// @Success 200 {object} types.APIResponse[[]models.PluginBuild]
+// @Router /plugins/{name}/builds [get]
+func (h *PluginHandler) ListBuilds(c *gin.Context) {
+	pluginName := c.Param("name")
+
+	var plugin models.Plugin
+	if err := h.db.First(&plugin, "name = ?", pluginName).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Plugin not found")
+		return
+	}
+
+	var builds []models.PluginBuild
+	if err := h.db.Where("plugin_id = ?", plugin.ID).Order("created_at DESC").Find(&builds).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch builds")
+		return
+	}
+
+	middleware.SuccessResponse(c, builds)
+}
+
+// GetBinary GET /api/v1/plugins/:name/binary
+// @Summary 플러그인 바이너리 다운로드
+// @Tags plugins
+// @Produce octet-stream
+// @Param name path string true "Plugin Name"
+// @Param version query string false "Version (default: latest)"
+// @Param platform query string false "Platform (default: linux/arm64)"
+// @Success 200 {file} binary
+// @Router /plugins/{name}/binary [get]
+func (h *PluginHandler) GetBinary(c *gin.Context) {
+	pluginName := c.Param("name")
+
+	var plugin models.Plugin
+	if err := h.db.First(&plugin, "name = ?", pluginName).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Plugin not found")
+		return
+	}
+
+	version := c.DefaultQuery("version", plugin.Version)
+	platform := c.DefaultQuery("platform", "linux/arm64")
+
+	var binary models.PluginBinary
+	if err := h.db.Where("plugin_id = ? AND version = ? AND platform = ?", plugin.ID, version, platform).
+		First(&binary).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Binary not found for version/platform")
+		return
+	}
+
+	c.Header("Content-Disposition", "attachment; filename="+pluginName+"-"+version+".bin")
+	c.Header("X-Checksum-SHA256", binary.Checksum)
+	c.Data(http.StatusOK, "application/octet-stream", binary.BinaryData)
+}
+
+// ValidateSourceRequest 소스코드 검증 요청
+type ValidateSourceRequest struct {
+	SourceCode string `json:"source_code" binding:"required"`
+}
+
+// ValidatePluginSource POST /api/v1/plugins/validate
+// @Summary 플러그인 소스코드 검증 (빌드 없이)
+// @Tags plugins
+// @Accept json
+// @Produce json
+// @Param request body ValidateSourceRequest true "Source Code"
+// @Success 200 {object} types.APIResponse[map[string]any]
+// @Router /plugins/validate [post]
+func (h *PluginHandler) ValidatePluginSource(c *gin.Context) {
+	var req ValidateSourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
+	imports, err := h.builder.ValidateSource(req.SourceCode)
+	if err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
+	middleware.SuccessResponse(c, map[string]any{
+		"valid":   true,
+		"imports": imports,
 	})
 }
 

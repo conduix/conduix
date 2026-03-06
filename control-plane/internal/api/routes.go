@@ -320,8 +320,13 @@ func (s *Server) setupRoutes() {
 			plugins := authenticated.Group("/plugins")
 			{
 				plugins.GET("", s.pluginHandler.ListPlugins)
+				plugins.POST("/build", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.pluginHandler.BuildPlugin)
+				plugins.POST("/validate", s.pluginHandler.ValidatePluginSource)
+				plugins.GET("/builds/:id", s.pluginHandler.GetBuild)
 				plugins.GET("/:name", s.pluginHandler.GetPlugin)
 				plugins.GET("/:name/stages", s.pluginHandler.GetPluginStages)
+				plugins.GET("/:name/builds", s.pluginHandler.ListBuilds)
+				plugins.GET("/:name/binary", s.pluginHandler.GetBinary)
 				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
 				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)
 			}

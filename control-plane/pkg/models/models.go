@@ -590,12 +590,12 @@ func (PipelineLink) TableName() string {
 }
 
 // Plugin 플러그인 모델
-// 외부 사용자가 개발한 커스텀 Stage를 제공하는 플러그인 패키지
+// Go 네이티브 바이너리로 빌드되는 커스텀 Stage 플러그인
 type Plugin struct {
 	ID          string         `gorm:"primaryKey;size:36" json:"id"`
 	Name        string         `gorm:"size:255;not null;uniqueIndex" json:"name"` // 플러그인 이름 (예: my-company-plugins)
 	Version     string         `gorm:"size:50;not null" json:"version"`           // 버전 (예: v1.0.0)
-	Image       string         `gorm:"size:500;not null" json:"image"`            // 컨테이너 이미지 (예: myregistry/conduix-plugins:v1.0.0)
+	Image       string         `gorm:"size:500" json:"image,omitempty"`           // 컨테이너 이미지 (V2 호환, V3에서는 optional)
 	Description string         `gorm:"type:text" json:"description,omitempty"`    // 플러그인 설명
 	SourceRepo  string         `gorm:"size:500" json:"source_repo,omitempty"`     // Git 저장소 URL (optional)
 	Status      string         `gorm:"size:50;default:active" json:"status"`      // active, inactive, deprecated
@@ -605,7 +605,9 @@ type Plugin struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relations
-	Stages []PluginStage `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
+	Stages   []PluginStage  `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
+	Binaries []PluginBinary `gorm:"foreignKey:PluginID" json:"binaries,omitempty"`
+	Builds   []PluginBuild  `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
 }
 
 // TableName 테이블 이름
@@ -636,4 +638,52 @@ type PluginStage struct {
 // TableName 테이블 이름
 func (PluginStage) TableName() string {
 	return "plugin_stages"
+}
+
+// PluginBuild 플러그인 빌드 이력
+type PluginBuild struct {
+	ID         string     `gorm:"primaryKey;size:36" json:"id"`
+	PluginID   string     `gorm:"size:36;index" json:"plugin_id"`
+	Status     string     `gorm:"size:20;not null;default:pending" json:"status"` // pending, building, success, failed
+	SourceCode string     `gorm:"type:mediumtext;not null" json:"source_code"`    // main.go 소스
+	GoMod      string     `gorm:"type:text" json:"go_mod,omitempty"`              // go.mod 내용
+	BuildLog   string     `gorm:"type:mediumtext" json:"build_log,omitempty"`     // 빌드 출력 로그
+	Error      string     `gorm:"type:text" json:"error,omitempty"`               // 에러 메시지
+	DurationMs int        `json:"duration_ms,omitempty"`                          // 빌드 소요 시간 (ms)
+	Version    string     `gorm:"size:50" json:"version,omitempty"`               // 빌드 대상 버전
+	Platform   string     `gorm:"size:20;default:linux/arm64" json:"platform"`    // GOOS/GOARCH
+	CreatedBy  string     `gorm:"size:36" json:"created_by,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+
+	// Relations
+	Plugin *Plugin `gorm:"foreignKey:PluginID" json:"plugin,omitempty"`
+}
+
+// TableName 테이블 이름
+func (PluginBuild) TableName() string {
+	return "plugin_builds"
+}
+
+// PluginBinary 빌드된 플러그인 바이너리 (MySQL BLOB 저장)
+type PluginBinary struct {
+	ID         string    `gorm:"primaryKey;size:36" json:"id"`
+	PluginID   string    `gorm:"size:36;not null;index" json:"plugin_id"`
+	Version    string    `gorm:"size:50;not null" json:"version"`
+	Platform   string    `gorm:"size:20;not null;default:linux/arm64" json:"platform"` // GOOS/GOARCH
+	BinaryData []byte    `gorm:"type:longblob;not null" json:"-"`                      // 빌드된 바이너리 (응답에서 제외)
+	Checksum   string    `gorm:"size:64;not null" json:"checksum"`                     // SHA256
+	SizeBytes  int64     `json:"size_bytes"`
+	BuildID    string    `gorm:"size:36" json:"build_id,omitempty"` // 빌드 FK
+	CreatedAt  time.Time `json:"created_at"`
+
+	// Relations
+	Plugin *Plugin `gorm:"foreignKey:PluginID" json:"plugin,omitempty"`
+}
+
+// TableName 테이블 이름
+func (PluginBinary) TableName() string {
+	return "plugin_binaries"
 }

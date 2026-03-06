@@ -31,11 +31,14 @@ func (Pipeline) TableName() string {
 }
 
 // PipelineRun 파이프라인 실행 기록
+// Job/Deployment 기반 실행을 지원
 type PipelineRun struct {
 	ID             string     `gorm:"primaryKey;size:36" json:"id"`
 	PipelineID     string     `gorm:"size:36;not null;index" json:"pipeline_id"`
-	Status         string     `gorm:"size:50;not null" json:"status"`
-	AgentID        string     `gorm:"size:36" json:"agent_id,omitempty"`
+	WorkflowID     string     `gorm:"size:36;index" json:"workflow_id,omitempty"` // 워크플로우 FK (optional)
+	ClusterID      string     `gorm:"size:36;index" json:"cluster_id,omitempty"`  // 실행 클러스터
+	Status         string     `gorm:"size:50;not null" json:"status"`             // pending, running, completed, failed, canceled
+	AgentID        string     `gorm:"size:36" json:"agent_id,omitempty"`          // 실행 관리한 Agent
 	StartedAt      *time.Time `json:"started_at,omitempty"`
 	EndedAt        *time.Time `json:"ended_at,omitempty"`
 	ProcessedCount int64      `gorm:"default:0" json:"processed_count"`
@@ -43,7 +46,16 @@ type PipelineRun struct {
 	ErrorMessage   string     `gorm:"type:text" json:"error_message,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 
+	// K8s 리소스 정보 (Job/Deployment 기반 실행)
+	ExecutionMode   string `gorm:"size:50" json:"execution_mode,omitempty"`     // batch, streaming, hybrid
+	K8sResourceType string `gorm:"size:50" json:"k8s_resource_type,omitempty"`  // job, cronjob, deployment
+	K8sResourceName string `gorm:"size:255" json:"k8s_resource_name,omitempty"` // K8s 리소스 이름
+	K8sNamespace    string `gorm:"size:255" json:"k8s_namespace,omitempty"`     // K8s 네임스페이스
+	RunnerImage     string `gorm:"size:500" json:"runner_image,omitempty"`      // Pipeline Runner 이미지
+
+	// Relations
 	Pipeline Pipeline `gorm:"foreignKey:PipelineID" json:"pipeline"`
+	Cluster  *Cluster `gorm:"foreignKey:ClusterID" json:"cluster,omitempty"`
 }
 
 // TableName 테이블 이름
@@ -114,16 +126,26 @@ func (Cluster) TableName() string {
 }
 
 // Agent 에이전트 모델
+// Agent는 클러스터 매니저 역할을 담당 (파이프라인 실행 X, Job/Deployment 관리 O)
 type Agent struct {
 	ID            string     `gorm:"primaryKey;size:36" json:"id"`
 	Hostname      string     `gorm:"size:255;not null" json:"hostname"`
 	IPAddress     string     `gorm:"size:45" json:"ip_address,omitempty"`
-	Status        string     `gorm:"size:50;default:unknown" json:"status"`
+	Status        string     `gorm:"size:50;default:unknown" json:"status"` // active, inactive, error
 	LastHeartbeat *time.Time `json:"last_heartbeat,omitempty"`
 	RegisteredAt  time.Time  `json:"registered_at"`
 	Version       string     `gorm:"size:50" json:"version,omitempty"`
 	Labels        string     `gorm:"type:text" json:"labels,omitempty"` // JSON array
 	ClusterID     string     `gorm:"size:36;index" json:"cluster_id,omitempty"`
+
+	// Leader Election (HA 구성)
+	IsLeader       bool       `gorm:"default:false" json:"is_leader"`               // 현재 리더 여부
+	LeaderSince    *time.Time `json:"leader_since,omitempty"`                       // 리더가 된 시점
+	LeaderLeaseTTL int        `gorm:"default:30" json:"leader_lease_ttl,omitempty"` // 리더 임대 TTL (초)
+
+	// 리소스 모니터링 (클러스터 매니저 역할)
+	Metrics      string `gorm:"type:text" json:"metrics,omitempty"`      // JSON - CPU, Memory, Pod count 등
+	Capabilities string `gorm:"type:text" json:"capabilities,omitempty"` // JSON - 지원 기능 목록
 }
 
 // TableName 테이블 이름
@@ -565,4 +587,53 @@ type PipelineLink struct {
 // TableName 테이블 이름
 func (PipelineLink) TableName() string {
 	return "pipeline_links"
+}
+
+// Plugin 플러그인 모델
+// 외부 사용자가 개발한 커스텀 Stage를 제공하는 플러그인 패키지
+type Plugin struct {
+	ID          string         `gorm:"primaryKey;size:36" json:"id"`
+	Name        string         `gorm:"size:255;not null;uniqueIndex" json:"name"` // 플러그인 이름 (예: my-company-plugins)
+	Version     string         `gorm:"size:50;not null" json:"version"`           // 버전 (예: v1.0.0)
+	Image       string         `gorm:"size:500;not null" json:"image"`            // 컨테이너 이미지 (예: myregistry/conduix-plugins:v1.0.0)
+	Description string         `gorm:"type:text" json:"description,omitempty"`    // 플러그인 설명
+	SourceRepo  string         `gorm:"size:500" json:"source_repo,omitempty"`     // Git 저장소 URL (optional)
+	Status      string         `gorm:"size:50;default:active" json:"status"`      // active, inactive, deprecated
+	CreatedBy   string         `gorm:"size:36" json:"created_by,omitempty"`       // 등록한 사용자
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+
+	// Relations
+	Stages []PluginStage `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
+}
+
+// TableName 테이블 이름
+func (Plugin) TableName() string {
+	return "plugins"
+}
+
+// PluginStage 플러그인이 제공하는 Stage 모델
+// 플러그인 하나가 여러 Stage를 제공할 수 있음
+type PluginStage struct {
+	ID           string    `gorm:"primaryKey;size:36" json:"id"`
+	PluginID     string    `gorm:"size:36;not null;index" json:"plugin_id"`         // 플러그인 FK
+	StageType    string    `gorm:"size:100;not null;uniqueIndex" json:"stage_type"` // Stage 타입 (예: ml-anomaly)
+	Category     string    `gorm:"size:50" json:"category,omitempty"`               // 카테고리 (transform, enrich, filter 등)
+	DisplayName  string    `gorm:"size:255" json:"display_name,omitempty"`          // UI 표시명 (예: ML 이상치 탐지)
+	Description  string    `gorm:"type:text" json:"description,omitempty"`          // 상세 설명
+	ConfigSchema string    `gorm:"type:text;not null" json:"config_schema"`         // JSON Schema for UI form generation
+	UISchema     string    `gorm:"type:text" json:"ui_schema,omitempty"`            // UI Schema for react-jsonschema-form
+	Icon         string    `gorm:"size:100" json:"icon,omitempty"`                  // 아이콘 이름
+	Color        string    `gorm:"size:20" json:"color,omitempty"`                  // 색상 코드 (예: #4CAF50)
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+
+	// Relations
+	Plugin *Plugin `gorm:"foreignKey:PluginID" json:"plugin,omitempty"`
+}
+
+// TableName 테이블 이름
+func (PluginStage) TableName() string {
+	return "plugin_stages"
 }

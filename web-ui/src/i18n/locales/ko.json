@@ -51,7 +51,8 @@
     "history": "실행 이력",
     "schedules": "스케줄",
     "settings": "설정",
-    "users": "사용자"
+    "users": "사용자",
+    "plugins": "플러그인"
   },
   "dashboard": {
     "title": "대시보드",
@@ -1200,5 +1201,50 @@
     "httpUrlHelp": "위반 레코드가 POST될 엔드포인트",
     "httpHeaders": "Headers (JSON)",
     "httpHeadersHelp": "HTTP 요청에 포함할 헤더 (JSON 형식)"
+  },
+  "plugin": {
+    "title": "플러그인",
+    "name": "플러그인명",
+    "version": "버전",
+    "image": "컨테이너 이미지",
+    "sourceRepo": "소스 저장소",
+    "stages": "Stage",
+    "stageType": "Stage 타입",
+    "stageDisplayName": "표시명",
+    "stageCategory": "카테고리",
+    "register": "플러그인 등록",
+    "edit": "플러그인 수정",
+    "totalPlugins": "전체 플러그인",
+    "activePlugins": "활성 플러그인",
+    "totalStages": "전체 Stage",
+    "registeredStages": "등록된 Stage",
+    "addStage": "Stage 추가",
+    "noStagesHint": "이 플러그인이 제공하는 Stage를 하나 이상 추가하세요.",
+    "status": {
+      "active": "활성",
+      "inactive": "비활성",
+      "deprecated": "폐기됨"
+    },
+    "loadError": "플러그인 목록을 불러오는데 실패했습니다",
+    "createSuccess": "플러그인이 등록되었습니다",
+    "createError": "플러그인 등록에 실패했습니다",
+    "updateSuccess": "플러그인이 수정되었습니다",
+    "updateError": "플러그인 수정에 실패했습니다",
+    "deleteSuccess": "플러그인이 삭제되었습니다",
+    "deleteError": "플러그인 삭제에 실패했습니다",
+    "deleteConfirm": "플러그인 삭제",
+    "deleteMessage": "'{{name}}' 플러그인을 삭제하시겠습니까? 연관된 모든 Stage도 함께 삭제됩니다.",
+    "schemaLoadError": "Stage 스키마를 불러오는데 실패했습니다",
+    "noSchema": "이 Stage 타입에 대한 설정 스키마가 없습니다.",
+    "arrayFieldHelp": "쉼표로 구분하여 입력"
+  },
+  "executionMode": {
+    "title": "실행 모드",
+    "batch": "배치",
+    "streaming": "스트리밍",
+    "hybrid": "하이브리드",
+    "batchDesc": "K8s Job/CronJob으로 일회성 또는 스케줄 배치 처리",
+    "streamingDesc": "K8s Deployment로 지속적인 실시간 처리",
+    "hybridDesc": "스케줄 배치와 실시간 스트리밍의 조합"
   }
 }

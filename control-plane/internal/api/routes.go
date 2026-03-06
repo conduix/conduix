@@ -37,6 +37,7 @@ type Server struct {
 	pipelineLinkHandler *handlers.PipelineLinkHandler
 	stageHandler        *handlers.StageHandler
 	previewHandler      *handlers.PreviewHandler
+	pluginHandler       *handlers.PluginHandler
 	startTime           time.Time
 	version             string
 }
@@ -81,8 +82,9 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		utilsHandler:        handlers.NewUtilsHandler(),
 		checkpointHandler:   handlers.NewCheckpointHandler(db),
 		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),
-		stageHandler:        handlers.NewStageHandler(),
+		stageHandler:        handlers.NewStageHandler(db),
 		previewHandler:      handlers.NewPreviewHandler(),
+		pluginHandler:       handlers.NewPluginHandler(db),
 		startTime:           time.Now(),
 		version:             Version,
 	}
@@ -139,6 +141,12 @@ func (s *Server) setupRoutes() {
 		{
 			internalAgents.POST("/register", s.agentHandler.RegisterAgent)
 			internalAgents.POST("/:id/heartbeat", s.agentHandler.Heartbeat)
+		}
+
+		// 플러그인 등록 내부 API (Helm hook에서 호출 - 클러스터 내부 통신)
+		internalPlugins := v1.Group("/plugins")
+		{
+			internalPlugins.POST("", s.pluginHandler.CreatePlugin)
 		}
 
 		// 인증 필요한 라우트
@@ -299,11 +307,23 @@ func (s *Server) setupRoutes() {
 			// Stage 스키마 (GUI 자동 생성용)
 			stages := authenticated.Group("/stages")
 			{
-				stages.GET("/schemas", s.stageHandler.GetAllSchemas)
-				stages.GET("/schemas/:type", s.stageHandler.GetSchema)
+				stages.GET("", s.stageHandler.ListAllStages)               // 빌트인 + 플러그인 Stage 목록
+				stages.GET("/:type/schema", s.stageHandler.GetStageSchema) // 개별 Stage 스키마 (빌트인 + 플러그인)
+				stages.GET("/schemas", s.stageHandler.GetAllSchemas)       // 빌트인만 (하위 호환성)
+				stages.GET("/schemas/:type", s.stageHandler.GetSchema)     // 빌트인만 (하위 호환성)
 				stages.GET("/categories", s.stageHandler.GetCategories)
 				stages.GET("/categories/:category/schemas", s.stageHandler.GetSchemasByCategory)
 				stages.GET("/field-types", s.stageHandler.GetFieldTypes)
+			}
+
+			// 플러그인 (커스텀 Stage 관리)
+			plugins := authenticated.Group("/plugins")
+			{
+				plugins.GET("", s.pluginHandler.ListPlugins)
+				plugins.GET("/:name", s.pluginHandler.GetPlugin)
+				plugins.GET("/:name/stages", s.pluginHandler.GetPluginStages)
+				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
+				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)
 			}
 
 			// 미리보기
@@ -368,6 +388,8 @@ func (s *Server) index(c *gin.Context) {
 			"clusters":   "/api/v1/clusters",
 			"data-types": "/api/v1/data-types",
 			"projects":   "/api/v1/projects",
+			"plugins":    "/api/v1/plugins",
+			"stages":     "/api/v1/stages",
 		},
 	}
 

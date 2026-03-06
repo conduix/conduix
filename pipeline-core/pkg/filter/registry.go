@@ -332,9 +332,9 @@ func (r *FilterRegistry) ToTypeScript() string {
 	sb.WriteString("export type Operator =\n")
 	for i, id := range r.order {
 		if i == len(r.order)-1 {
-			sb.WriteString(fmt.Sprintf("  | '%s';\n\n", id))
+			fmt.Fprintf(&sb, "  | '%s';\n\n", id)
 		} else {
-			sb.WriteString(fmt.Sprintf("  | '%s'\n", id))
+			fmt.Fprintf(&sb, "  | '%s'\n", id)
 		}
 	}
 
@@ -356,8 +356,8 @@ func (r *FilterRegistry) ToTypeScript() string {
 			if op.ValueType != "" {
 				valueType = fmt.Sprintf(", valueType: '%s'", op.ValueType)
 			}
-			sb.WriteString(fmt.Sprintf("  { id: '%s', label: '%s', description: '%s', needsValue: %v%s, category: '%s' },\n",
-				op.ID, op.Label, op.Description, op.NeedsValue, valueType, op.Category))
+			fmt.Fprintf(&sb, "  { id: '%s', label: '%s', description: '%s', needsValue: %v%s, category: '%s' },\n",
+				op.ID, op.Label, op.Description, op.NeedsValue, valueType, op.Category)
 		}
 	}
 	sb.WriteString("];\n\n")
@@ -367,9 +367,9 @@ func (r *FilterRegistry) ToTypeScript() string {
 	categories := r.Categories()
 	for i, cat := range categories {
 		if i == len(categories)-1 {
-			sb.WriteString(fmt.Sprintf("  | '%s';\n", cat))
+			fmt.Fprintf(&sb, "  | '%s';\n", cat)
 		} else {
-			sb.WriteString(fmt.Sprintf("  | '%s'\n", cat))
+			fmt.Fprintf(&sb, "  | '%s'\n", cat)
 		}
 	}
 

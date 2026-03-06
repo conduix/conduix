@@ -51,7 +51,8 @@
     "history": "History",
     "schedules": "Schedules",
     "settings": "Settings",
-    "users": "Users"
+    "users": "Users",
+    "plugins": "Plugins"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -1187,5 +1188,50 @@
     "httpUrlHelp": "Endpoint where violated records will be POSTed",
     "httpHeaders": "Headers (JSON)",
     "httpHeadersHelp": "Headers to include in HTTP requests (JSON format)"
+  },
+  "plugin": {
+    "title": "Plugins",
+    "name": "Plugin Name",
+    "version": "Version",
+    "image": "Container Image",
+    "sourceRepo": "Source Repository",
+    "stages": "Stages",
+    "stageType": "Stage Type",
+    "stageDisplayName": "Display Name",
+    "stageCategory": "Category",
+    "register": "Register Plugin",
+    "edit": "Edit Plugin",
+    "totalPlugins": "Total Plugins",
+    "activePlugins": "Active Plugins",
+    "totalStages": "Total Stages",
+    "registeredStages": "Registered Stages",
+    "addStage": "Add Stage",
+    "noStagesHint": "Add at least one Stage that this plugin provides.",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive",
+      "deprecated": "Deprecated"
+    },
+    "loadError": "Failed to load plugins",
+    "createSuccess": "Plugin registered successfully",
+    "createError": "Failed to register plugin",
+    "updateSuccess": "Plugin updated successfully",
+    "updateError": "Failed to update plugin",
+    "deleteSuccess": "Plugin deleted successfully",
+    "deleteError": "Failed to delete plugin",
+    "deleteConfirm": "Delete Plugin",
+    "deleteMessage": "Are you sure you want to delete plugin '{{name}}'? All associated stages will also be removed.",
+    "schemaLoadError": "Failed to load stage schema",
+    "noSchema": "No configuration schema available for this stage type.",
+    "arrayFieldHelp": "Separate values with commas"
+  },
+  "executionMode": {
+    "title": "Execution Mode",
+    "batch": "Batch",
+    "streaming": "Streaming",
+    "hybrid": "Hybrid",
+    "batchDesc": "One-time or scheduled batch processing via K8s Job/CronJob",
+    "streamingDesc": "Continuous real-time processing via K8s Deployment",
+    "hybridDesc": "Combination of scheduled batch and real-time streaming"
   }
 }

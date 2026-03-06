@@ -9,13 +9,13 @@ pre-commit:
       run: cd web-ui && npm run lint
     lint-control-plane:
       glob: "control-plane/**/*.go"
-      run: cd control-plane && golangci-lint run --fix
+      run: cd control-plane && golangci-lint run --fix --allow-parallel-runners
     lint-pipeline-agent:
       glob: "pipeline-agent/**/*.go"
-      run: cd pipeline-agent && golangci-lint run --fix
+      run: cd pipeline-agent && golangci-lint run --fix --allow-parallel-runners
     lint-pipeline-core:
       glob: "pipeline-core/**/*.go"
-      run: cd pipeline-core && golangci-lint run --fix
+      run: cd pipeline-core && golangci-lint run --fix --allow-parallel-runners
 
 pre-push:
   commands:

@@ -274,7 +274,7 @@ func (p *SQLProvisioner) createTable(ctx context.Context, config *SQLProvisionin
 func (p *SQLProvisioner) buildCreateTableSQL(config *SQLProvisioningConfig) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n", config.TableName))
+	fmt.Fprintf(&sb, "CREATE TABLE IF NOT EXISTS %s (\n", config.TableName)
 
 	var primaryKeys []string
 	columnDefs := make([]string, 0, len(config.Columns))
@@ -304,14 +304,14 @@ func (p *SQLProvisioner) buildCreateTableSQL(config *SQLProvisioningConfig) stri
 	sb.WriteString(strings.Join(columnDefs, ",\n"))
 
 	if len(primaryKeys) > 0 {
-		sb.WriteString(fmt.Sprintf(",\n  PRIMARY KEY (%s)", strings.Join(primaryKeys, ", ")))
+		fmt.Fprintf(&sb, ",\n  PRIMARY KEY (%s)", strings.Join(primaryKeys, ", "))
 	}
 
 	sb.WriteString("\n)")
 
 	// MySQL 엔진 및 문자셋
 	if config.Driver == "mysql" {
-		sb.WriteString(fmt.Sprintf(" ENGINE=InnoDB DEFAULT CHARSET=%s", config.Charset))
+		fmt.Fprintf(&sb, " ENGINE=InnoDB DEFAULT CHARSET=%s", config.Charset)
 	}
 
 	return sb.String()

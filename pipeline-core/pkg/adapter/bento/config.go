@@ -313,7 +313,7 @@ func joinStrings(strs []string) string {
 		if i > 0 {
 			result.WriteString(", ")
 		}
-		result.WriteString(fmt.Sprintf(`"%s"`, s))
+		fmt.Fprintf(&result, `"%s"`, s)
 	}
 	return result.String()
 }

@@ -1,0 +1,153 @@
+// Copyright 2026 Conduix Authors
+// gRPC Plugin Service Definition for External Stage Implementations
+
+syntax = "proto3";
+
+package conduix.plugin.v1;
+
+option go_package = "github.com/conduix/conduix/pipeline-core/pkg/plugin/pluginpb";
+
+// StagePlugin defines the gRPC service for external stage plugins.
+// Plugins can implement custom stage logic in any language (Python, Node.js, etc.)
+service StagePlugin {
+  // Process handles a single record
+  rpc Process(ProcessRequest) returns (ProcessResponse);
+
+  // ProcessBatch handles multiple records for better throughput
+  rpc ProcessBatch(ProcessBatchRequest) returns (ProcessBatchResponse);
+
+  // GetInfo returns plugin metadata and supported stages
+  rpc GetInfo(GetInfoRequest) returns (PluginInfo);
+
+  // HealthCheck checks plugin health status
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Record represents a single data record in the pipeline
+message Record {
+  // JSON-serialized data (map[string]any)
+  bytes data = 1;
+
+  // Record metadata
+  RecordMetadata metadata = 2;
+
+  // Timestamp in Unix nanoseconds
+  int64 timestamp_unix_nano = 3;
+}
+
+// RecordMetadata contains metadata about the record
+message RecordMetadata {
+  string source = 1;
+  int32 partition = 2;
+  int64 offset = 3;
+  string key = 4;
+}
+
+// StageConfig contains stage configuration
+message StageConfig {
+  // Stage type identifier (e.g., "ml-anomaly", "custom-filter")
+  string stage_type = 1;
+
+  // Stage name (unique identifier within pipeline)
+  string stage_name = 2;
+
+  // JSON-serialized config (map[string]any)
+  bytes config = 3;
+}
+
+// ProcessRequest is the request for single record processing
+message ProcessRequest {
+  Record record = 1;
+  StageConfig config = 2;
+}
+
+// ProcessResponse is the response for single record processing
+message ProcessResponse {
+  oneof result {
+    // Processed record
+    Record record = 1;
+
+    // Record was filtered out (should not be passed downstream)
+    bool filtered = 2;
+
+    // Processing error message
+    string error = 3;
+  }
+}
+
+// ProcessBatchRequest is the request for batch processing
+message ProcessBatchRequest {
+  repeated Record records = 1;
+  StageConfig config = 2;
+}
+
+// ProcessResult represents the result for a single record in batch
+message ProcessResult {
+  oneof result {
+    Record record = 1;
+    bool filtered = 2;
+    string error = 3;
+  }
+}
+
+// ProcessBatchResponse is the response for batch processing
+message ProcessBatchResponse {
+  repeated ProcessResult results = 1;
+}
+
+// GetInfoRequest is the request for getting plugin info
+message GetInfoRequest {}
+
+// PluginInfo contains plugin metadata
+message PluginInfo {
+  // Plugin name
+  string name = 1;
+
+  // Plugin version (semver)
+  string version = 2;
+
+  // Plugin description
+  string description = 3;
+
+  // Supported stage types with their schemas
+  repeated StageInfo stages = 4;
+}
+
+// StageInfo contains information about a single stage type
+message StageInfo {
+  // Stage type identifier
+  string type = 1;
+
+  // Display name for UI
+  string display_name = 2;
+
+  // Stage description
+  string description = 3;
+
+  // Category (transform, validation, output, control)
+  string category = 4;
+
+  // Icon name (Material UI)
+  string icon = 5;
+
+  // Theme color (hex)
+  string color = 6;
+
+  // JSON-serialized schema fields
+  bytes fields_json = 7;
+}
+
+// HealthCheckRequest is the request for health checking
+message HealthCheckRequest {}
+
+// HealthCheckResponse is the response for health checking
+message HealthCheckResponse {
+  // Plugin is healthy and ready to process
+  bool healthy = 1;
+
+  // Optional status message
+  string message = 2;
+
+  // Per-stage health status
+  map<string, bool> stage_health = 3;
+}

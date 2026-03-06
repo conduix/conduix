@@ -33,6 +33,7 @@ import {
   ChevronLeft as ChevronLeftIcon,
   Group as TeamIcon,
   Folder as ProjectIcon,
+  Extension as PluginIcon,
   Language as LanguageIcon,
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
@@ -89,6 +90,11 @@ export default function MainLayout() {
       key: '/history',
       icon: <HistoryIcon />,
       label: t('nav.history'),
+    },
+    {
+      key: '/plugins',
+      icon: <PluginIcon />,
+      label: t('nav.plugins'),
     },
   ]
 

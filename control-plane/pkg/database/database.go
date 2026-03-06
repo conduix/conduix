@@ -66,6 +66,7 @@ func (db *DB) Migrate() error {
 		&models.Schedule{},
 		&models.User{},
 		&models.Agent{},
+		&models.Cluster{},
 		&models.Session{},
 		&models.AuditLog{},
 		&models.ProvisioningRequest{},
@@ -84,6 +85,12 @@ func (db *DB) Migrate() error {
 		&models.DataTypePrework{},
 		&models.DeleteStrategyPreset{},
 		&models.Connection{},
+		// 플러그인 시스템
+		&models.Plugin{},
+		&models.PluginStage{},
+		// 파이프라인 링크
+		&models.PipelineLink{},
+		&models.InputCheckpoint{},
 	)
 }
 

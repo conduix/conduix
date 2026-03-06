@@ -77,6 +77,12 @@ spec:
           value: "${NAVER_CLIENT_ID}"
 
         # ===========================================
+        # Image Pull Secrets (GHCR)
+        # ===========================================
+        - name: global.imagePullSecrets[0].name
+          value: "ghcr-secret"
+
+        # ===========================================
         # Image Tags
         # ===========================================
         - name: controlPlane.image.tag

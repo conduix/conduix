@@ -23,11 +23,14 @@
 - [x] DB 마이그레이션 (AutoMigrate에 추가)
 - [ ] OCI Registry 구현 (oras-go) — 추후 구현
 
-## Phase 4: Pipeline Runner 연동 ⬜
-- [ ] go-plugin 기반 Plugin 로더
-- [ ] gRPC 클라이언트 (ProcessBatch 호출)
-- [ ] 바이너리 캐싱 (로컬 파일시스템)
-- [ ] 프로세스 라이프사이클 (시작/중지/재시작)
+## Phase 4: Pipeline Runner 연동 ✅
+- [x] PluginStage — go-plugin 기반 Stage 구현 (plugin_stage.go)
+- [x] stream.Record ↔ sdk.Record 변환
+- [x] 배치 처리 지원 (ProcessBatch, configurable batch_size)
+- [x] 바이너리 캐싱 (CacheBinary — 로컬 파일시스템)
+- [x] 프로세스 라이프사이클 (Start/Close, mutex 보호)
+- [x] NewStage factory에 "plugin" 타입 등록
+- [x] 테스트 6/6 통과
 
 ## Phase 5: Control Plane API ✅
 - [x] POST /api/v1/plugins/build (빌드 요청 — 비동기)

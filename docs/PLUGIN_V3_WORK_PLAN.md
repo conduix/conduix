@@ -41,8 +41,12 @@
 - [x] 기존 CRUD API 호환 유지
 - [ ] GET /api/v1/plugins/builds/:id/logs (SSE 스트리밍) — 추후 구현
 
-## Phase 6: Web UI ⬜
-- [ ] Monaco Editor (Go 언어)
-- [ ] go.mod 편집기
-- [ ] 빌드 로그 실시간 표시 (SSE)
-- [ ] Plugin 관리 페이지 개선
+## Phase 6: Web UI ✅
+- [x] Monaco Editor (Go 언어 - main.go 편집)
+- [x] go.mod 편집기 (탭 전환)
+- [x] 빌드 로그 표시 (폴링 방식, SSE는 추후)
+- [x] Plugin 목록 페이지에 "Build Plugin" 버튼 추가
+- [x] 소스코드 검증 (Validate 버튼)
+- [x] 빌드 상태 표시 (progress, status chip, duration)
+- [x] i18n 한/영 지원
+- [x] TypeScript 컴파일 + Vite 빌드 통과

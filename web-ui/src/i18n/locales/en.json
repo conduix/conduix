@@ -1225,6 +1225,20 @@
     "noSchema": "No configuration schema available for this stage type.",
     "arrayFieldHelp": "Separate values with commas"
   },
+  "pluginBuilder": {
+    "title": "Plugin Builder",
+    "validate": "Validate",
+    "buildAndRegister": "Build & Register",
+    "building": "Building...",
+    "buildLog": "Build Log",
+    "buildStarted": "Build started. Waiting for result...",
+    "buildSuccess": "Build completed successfully!",
+    "buildFailed": "Build failed. Check the build log.",
+    "validationPassed": "Source code validation passed. Imports:",
+    "validationFailed": "Source code validation failed.",
+    "nameRequired": "Plugin name is required.",
+    "buildPlugin": "Build Plugin"
+  },
   "executionMode": {
     "title": "Execution Mode",
     "batch": "Batch",

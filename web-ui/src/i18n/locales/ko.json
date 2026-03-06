@@ -1238,6 +1238,20 @@
     "noSchema": "이 Stage 타입에 대한 설정 스키마가 없습니다.",
     "arrayFieldHelp": "쉼표로 구분하여 입력"
   },
+  "pluginBuilder": {
+    "title": "플러그인 빌더",
+    "validate": "검증",
+    "buildAndRegister": "빌드 & 등록",
+    "building": "빌드 중...",
+    "buildLog": "빌드 로그",
+    "buildStarted": "빌드가 시작되었습니다. 결과를 기다리는 중...",
+    "buildSuccess": "빌드가 성공적으로 완료되었습니다!",
+    "buildFailed": "빌드에 실패했습니다. 빌드 로그를 확인하세요.",
+    "validationPassed": "소스코드 검증 통과. Import 목록:",
+    "validationFailed": "소스코드 검증에 실패했습니다.",
+    "nameRequired": "플러그인 이름은 필수입니다.",
+    "buildPlugin": "플러그인 빌드"
+  },
   "executionMode": {
     "title": "실행 모드",
     "batch": "배치",

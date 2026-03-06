@@ -29,8 +29,10 @@ import {
   Edit as EditIcon,
   CheckCircle as ActiveIcon,
   Category as CategoryIcon,
+  Build as BuildIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { useSnackbar } from '../hooks/useSnackbar'
 import type { Plugin, PluginCreateRequest, PluginStageCreate } from '../types/plugin'
 import { getPlugins, createPlugin, updatePlugin, deletePlugin } from '../services/pluginApi'
@@ -88,6 +90,7 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
 
 export default function PluginsPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { showSuccess, showError } = useSnackbar()
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [loading, setLoading] = useState(true)
@@ -296,9 +299,14 @@ export default function PluginsPage() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5">{t('plugin.title')}</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
-          {t('plugin.register')}
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="outlined" startIcon={<BuildIcon />} onClick={() => navigate('/plugins/build')}>
+            {t('pluginBuilder.buildPlugin')}
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
+            {t('plugin.register')}
+          </Button>
+        </Box>
       </Box>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>

@@ -26,6 +26,7 @@ import SourceEditorPage from './pages/SourceEditor'
 import DataModelsPage from './pages/DataModels'
 import DataModelDetailPage from './pages/DataModelDetail'
 import PluginsPage from './pages/Plugins'
+import PluginBuilderPage from './pages/PluginBuilder'
 import 'dayjs/locale/ko'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -108,6 +109,7 @@ function App() {
               <Route path="data-models" element={<DataModelsPage />} />
               <Route path="data-models/:id" element={<DataModelDetailPage />} />
               <Route path="plugins" element={<PluginsPage />} />
+              <Route path="plugins/build" element={<PluginBuilderPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -39,11 +39,12 @@ import { usePipelineEditor } from './PipelineEditorContext'
 import type { RateLimitConfig } from '../../types/pipeline'
 
 // Input 타입 정의
-type InputType = 'rest_api' | 'kafka' | 'cdc' | 'sql' | 'file' | 'sql_event' | 'kubernetes'
+type InputType = 'rest_api' | 'kafka' | 'cdc' | 'sql' | 'file' | 'sql_event' | 'kubernetes' | 'partitioned_http'
 
 // Input 타입별 설정
 const inputTypeConfig: Record<InputType, { color: string; icon: React.ReactNode; label: string }> = {
   rest_api: { color: '#1976d2', icon: <ApiIcon fontSize="small" />, label: 'REST API' },
+  partitioned_http: { color: '#0d47a1', icon: <ApiIcon fontSize="small" />, label: 'Partitioned HTTP' },
   kafka: { color: '#4caf50', icon: <BoltIcon fontSize="small" />, label: 'Kafka' },
   cdc: { color: '#9c27b0', icon: <SyncIcon fontSize="small" />, label: 'CDC' },
   sql: { color: '#ff9800', icon: <StorageIcon fontSize="small" />, label: 'SQL' },
@@ -54,7 +55,7 @@ const inputTypeConfig: Record<InputType, { color: string; icon: React.ReactNode;
 
 // 워크플로우 타입별 사용 가능한 Input 타입
 const inputTypesByWorkflow: Record<'batch' | 'realtime', InputType[]> = {
-  batch: ['rest_api', 'sql', 'file'],
+  batch: ['rest_api', 'partitioned_http', 'sql', 'file'],
   realtime: ['rest_api', 'kafka', 'cdc', 'sql_event', 'kubernetes'],
 }
 

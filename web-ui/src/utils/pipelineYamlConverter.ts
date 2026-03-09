@@ -26,7 +26,7 @@ export interface ValidationResult {
 }
 
 // Input 타입 목록
-const INPUT_TYPES = ['kafka', 'rest_api', 'sql', 'cdc', 'file', 'sql_event', 'kubernetes'] as const
+const INPUT_TYPES = ['kafka', 'rest_api', 'sql', 'cdc', 'file', 'sql_event', 'kubernetes', 'partitioned_http'] as const
 type InputType = (typeof INPUT_TYPES)[number]
 
 // Stage 타입 목록
@@ -102,6 +102,14 @@ function inputToYamlObject(input: WorkflowInput): Record<string, unknown> {
 
   if (input.rate_limit?.enabled) {
     result.rate_limit = input.rate_limit
+  }
+
+  if (input.partition && Object.keys(input.partition).length > 0) {
+    result.partition = input.partition
+  }
+
+  if (input.pagination && Object.keys(input.pagination).length > 0) {
+    result.pagination = input.pagination
   }
 
   return removeEmptyFields(result)
@@ -220,6 +228,8 @@ function parseInput(inputObj: unknown): WorkflowInput | undefined {
     name: (obj.name as string) || '',
     config: (obj.config as Record<string, unknown>) || {},
     rate_limit: obj.rate_limit as WorkflowInput['rate_limit'],
+    partition: obj.partition as Record<string, unknown> | undefined,
+    pagination: obj.pagination as Record<string, unknown> | undefined,
   }
 }
 

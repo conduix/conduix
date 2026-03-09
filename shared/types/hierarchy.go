@@ -149,10 +149,12 @@ type PartitionConfig struct {
 // WorkflowInput 워크플로우 내 입력 소스 설정
 // Input 타입: kafka, cdc, rest_api, sql, file, sql_event
 type WorkflowInput struct {
-	Type       string            `json:"type"`                  // kafka, cdc, rest_api, sql, file, sql_event
+	Type       string            `json:"type"`                  // kafka, cdc, rest_api, sql, file, sql_event, partitioned_http
 	Name       string            `json:"name"`                  // 입력 소스 식별자
 	Config     map[string]any    `json:"config"`                // 소스별 설정
 	Partitions []PartitionConfig `json:"partitions,omitempty"`  // 파티션 설정 (병렬 처리용)
+	Partition  map[string]any    `json:"partition,omitempty"`   // 파티션 디스커버리 설정 (partitioned_http용)
+	Pagination map[string]any    `json:"pagination,omitempty"`  // 페이지네이션 설정
 	JSONSchema string            `json:"json_schema,omitempty"` // JSON Schema for input data validation
 	RateLimit  *RateLimitConfig  `json:"rate_limit,omitempty"`  // 입력 레벨 rate limiting
 }

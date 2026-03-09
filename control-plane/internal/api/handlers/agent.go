@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -64,6 +65,20 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 	// 클러스터 이름 캐시 (DB 조회 최소화)
 	clusterNames := make(map[string]string)
 
+	// DB에서 agent 등록 시간 조회 (uptime 계산용)
+	agentIDs := make([]string, 0, len(heartbeats))
+	for id := range heartbeats {
+		agentIDs = append(agentIDs, id)
+	}
+	registeredAtMap := make(map[string]time.Time)
+	if len(agentIDs) > 0 {
+		var dbAgents []models.Agent
+		h.db.Select("id, registered_at").Where("id IN ?", agentIDs).Find(&dbAgents)
+		for _, a := range dbAgents {
+			registeredAtMap[a.ID] = a.RegisteredAt
+		}
+	}
+
 	now := time.Now()
 	agentsWithHeartbeat := make([]AgentWithHeartbeat, 0, len(heartbeats))
 
@@ -86,7 +101,7 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 				Hostname:      heartbeat.Hostname,
 				Status:        status,
 				LastHeartbeat: &heartbeat.Timestamp,
-				RegisteredAt:  heartbeat.Timestamp, // 첫 하트비트 시간을 등록 시간으로 사용
+				RegisteredAt:  registeredAtMap[agentID], // DB에서 조회한 실제 등록 시간
 				ClusterID:     heartbeat.ClusterID,
 			},
 			CPUUsage:      heartbeat.CPUUsage,
@@ -110,9 +125,9 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 			}
 		}
 
-		// Uptime 계산 (하트비트 타임스탬프 기준)
-		if heartbeat.Timestamp.Before(now) {
-			agent.Uptime = formatDuration(now.Sub(heartbeat.Timestamp))
+		// Uptime 계산 (DB 등록 시간 기준)
+		if regAt, ok := registeredAtMap[agentID]; ok && regAt.Before(now) {
+			agent.Uptime = formatDuration(now.Sub(regAt))
 		}
 
 		agentsWithHeartbeat = append(agentsWithHeartbeat, agent)
@@ -197,10 +212,7 @@ func formatDuration(d time.Duration) string {
 }
 
 func formatInt(value int) string {
-	if value < 10 {
-		return "0" + string(rune('0'+value))
-	}
-	return string(rune('0'+value/10)) + string(rune('0'+value%10))
+	return fmt.Sprintf("%02d", value)
 }
 
 // RegisterAgentRequest 에이전트 등록 요청

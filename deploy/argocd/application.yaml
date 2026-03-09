@@ -8,6 +8,13 @@ metadata:
 spec:
   project: default
 
+  # HPA/운영툴에서 변경한 replicas를 ArgoCD가 덮어쓰지 않도록 설정
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
   source:
     repoURL: https://github.com/conduix/conduix.git
     targetRevision: main

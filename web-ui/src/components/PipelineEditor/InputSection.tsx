@@ -39,12 +39,13 @@ import { usePipelineEditor } from './PipelineEditorContext'
 import type { RateLimitConfig } from '../../types/pipeline'
 
 // Input 타입 정의
-type InputType = 'rest_api' | 'kafka' | 'cdc' | 'sql' | 'file' | 'sql_event' | 'kubernetes' | 'partitioned_http'
+type InputType = 'rest_api' | 'kafka' | 'cdc' | 'sql' | 'file' | 'sql_event' | 'kubernetes' | 'partitioned_http' | 'partitioned_sql'
 
 // Input 타입별 설정
 const inputTypeConfig: Record<InputType, { color: string; icon: React.ReactNode; label: string }> = {
   rest_api: { color: '#1976d2', icon: <ApiIcon fontSize="small" />, label: 'REST API' },
   partitioned_http: { color: '#0d47a1', icon: <ApiIcon fontSize="small" />, label: 'Partitioned HTTP' },
+  partitioned_sql: { color: '#e65100', icon: <StorageIcon fontSize="small" />, label: 'Partitioned SQL' },
   kafka: { color: '#4caf50', icon: <BoltIcon fontSize="small" />, label: 'Kafka' },
   cdc: { color: '#9c27b0', icon: <SyncIcon fontSize="small" />, label: 'CDC' },
   sql: { color: '#ff9800', icon: <StorageIcon fontSize="small" />, label: 'SQL' },
@@ -55,7 +56,7 @@ const inputTypeConfig: Record<InputType, { color: string; icon: React.ReactNode;
 
 // 워크플로우 타입별 사용 가능한 Input 타입
 const inputTypesByWorkflow: Record<'batch' | 'realtime', InputType[]> = {
-  batch: ['rest_api', 'partitioned_http', 'sql', 'file'],
+  batch: ['rest_api', 'partitioned_http', 'partitioned_sql', 'sql', 'file'],
   realtime: ['rest_api', 'kafka', 'cdc', 'sql_event', 'kubernetes'],
 }
 
@@ -71,6 +72,8 @@ export function InputSection() {
   const handleTypeChange = (newType: string) => {
     const defaultConfigs: Record<string, Record<string, unknown>> = {
       rest_api: { url: '', method: 'GET', headers: {} },
+      partitioned_http: { method: 'GET' },
+      partitioned_sql: { driver: 'mysql', dsn: '' },
       kafka: { brokers: '', topic: '', group_id: '', offset: 'latest' },
       cdc: { connection_string: '', database: '', table: '', slot_name: '' },
       sql: { connection_string: '', query: '', fetch_size: 1000 },
@@ -79,10 +82,21 @@ export function InputSection() {
       kubernetes: { namespace: '', pod_selector: '', container_name: '', follow: true, tail_lines: 100 },
     }
 
+    const defaultPartitions: Record<string, Record<string, unknown>> = {
+      partitioned_http: { discovery_url: '', partition_list_path: 'partitions', partition_id_field: 'url', url_template: '${partition}', parallelism: 4 },
+      partitioned_sql: { discovery_query: '', query_template: '', parallelism: 4 },
+    }
+
+    const defaultPaginations: Record<string, Record<string, unknown>> = {
+      partitioned_http: { type: 'next_url', url_path: '', data_field: '', max_pages: 10000 },
+    }
+
     updateInput({
       type: newType,
       name: input.name || `${newType}_source`,
       config: defaultConfigs[newType] || {},
+      partition: defaultPartitions[newType],
+      pagination: defaultPaginations[newType],
     })
   }
 
@@ -90,6 +104,20 @@ export function InputSection() {
   const handleConfigChange = (field: string, value: unknown) => {
     updateInput({
       config: { ...input.config, [field]: value },
+    })
+  }
+
+  // Partition 필드 업데이트 핸들러
+  const handlePartitionChange = (field: string, value: unknown) => {
+    updateInput({
+      partition: { ...(input.partition || {}), [field]: value },
+    })
+  }
+
+  // Pagination 필드 업데이트 핸들러
+  const handlePaginationChange = (field: string, value: unknown) => {
+    updateInput({
+      pagination: { ...(input.pagination || {}), [field]: value },
     })
   }
 
@@ -376,6 +404,52 @@ export function InputSection() {
           </Stack>
         )
 
+      case 'partitioned_http':
+        return (
+          <Stack spacing={2}>
+            <FormControl sx={{ width: 120 }}>
+              <InputLabel>{t('pipelineEditor.input.method')}</InputLabel>
+              <Select
+                value={config.method || 'GET'}
+                onChange={(e) => handleConfigChange('method', e.target.value)}
+                label={t('pipelineEditor.input.method')}
+              >
+                <MenuItem value="GET">GET</MenuItem>
+                <MenuItem value="POST">POST</MenuItem>
+              </Select>
+            </FormControl>
+            {renderPartitionSection()}
+            {renderPaginationSection()}
+          </Stack>
+        )
+
+      case 'partitioned_sql':
+        return (
+          <Stack spacing={2}>
+            <FormControl sx={{ width: 150 }}>
+              <InputLabel>{t('pipelineEditor.input.driver', 'Driver')}</InputLabel>
+              <Select
+                value={config.driver || 'mysql'}
+                onChange={(e) => handleConfigChange('driver', e.target.value)}
+                label={t('pipelineEditor.input.driver', 'Driver')}
+              >
+                <MenuItem value="mysql">MySQL</MenuItem>
+                <MenuItem value="postgres">PostgreSQL</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              label={t('pipelineEditor.input.dsn', 'DSN')}
+              type="password"
+              value={config.dsn || ''}
+              onChange={(e) => handleConfigChange('dsn', e.target.value)}
+              placeholder="user:password@tcp(host:3306)/dbname"
+              fullWidth
+              required
+            />
+            {renderPartitionSection()}
+          </Stack>
+        )
+
       default:
         return (
           <Typography color="text.secondary">
@@ -383,6 +457,136 @@ export function InputSection() {
           </Typography>
         )
     }
+  }
+
+  // Partition 설정 렌더링
+  const renderPartitionSection = () => {
+    const partition = input.partition || {}
+    const isHTTP = input.type === 'partitioned_http'
+
+    return (
+      <>
+        <Divider sx={{ my: 1 }}>{t('pipelineEditor.input.partitionConfig', 'Partition Discovery')}</Divider>
+        {isHTTP ? (
+          <Stack spacing={2}>
+            <TextField
+              label={t('pipelineEditor.input.discoveryUrl', 'Discovery URL')}
+              value={partition.discovery_url || ''}
+              onChange={(e) => handlePartitionChange('discovery_url', e.target.value)}
+              placeholder="https://api.example.com/_partitions"
+              fullWidth
+              required
+            />
+            <Stack direction="row" spacing={2}>
+              <TextField
+                label={t('pipelineEditor.input.partitionListPath', 'List Path')}
+                value={partition.partition_list_path || ''}
+                onChange={(e) => handlePartitionChange('partition_list_path', e.target.value)}
+                placeholder="partitions"
+                helperText="JSON response path"
+              />
+              <TextField
+                label={t('pipelineEditor.input.partitionIdField', 'ID Field')}
+                value={partition.partition_id_field || ''}
+                onChange={(e) => handlePartitionChange('partition_id_field', e.target.value)}
+                placeholder="url"
+              />
+            </Stack>
+            <TextField
+              label={t('pipelineEditor.input.urlTemplate', 'URL Template')}
+              value={partition.url_template || ''}
+              onChange={(e) => handlePartitionChange('url_template', e.target.value)}
+              placeholder="${partition}"
+              helperText="${partition} is replaced with partition ID"
+              fullWidth
+            />
+          </Stack>
+        ) : (
+          <Stack spacing={2}>
+            <TextField
+              label={t('pipelineEditor.input.discoveryQuery', 'Discovery Query')}
+              value={partition.discovery_query || ''}
+              onChange={(e) => handlePartitionChange('discovery_query', e.target.value)}
+              placeholder="SELECT PARTITION_NAME FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'my_table'"
+              multiline
+              rows={2}
+              fullWidth
+              required
+            />
+            <TextField
+              label={t('pipelineEditor.input.queryTemplate', 'Query Template')}
+              value={partition.query_template || ''}
+              onChange={(e) => handlePartitionChange('query_template', e.target.value)}
+              placeholder="SELECT * FROM my_table PARTITION (${partition})"
+              helperText="${partition} is replaced with partition name"
+              multiline
+              rows={2}
+              fullWidth
+              required
+            />
+          </Stack>
+        )}
+        <TextField
+          label={t('pipelineEditor.input.parallelism', 'Parallelism')}
+          type="number"
+          value={partition.parallelism || 4}
+          onChange={(e) => handlePartitionChange('parallelism', Number(e.target.value))}
+          inputProps={{ min: 1, max: 32 }}
+          sx={{ width: 120 }}
+        />
+      </>
+    )
+  }
+
+  // Pagination 설정 렌더링 (HTTP only)
+  const renderPaginationSection = () => {
+    const pagination = input.pagination || {}
+
+    return (
+      <>
+        <Divider sx={{ my: 1 }}>{t('pipelineEditor.input.paginationConfig', 'Pagination')}</Divider>
+        <Stack spacing={2}>
+          <FormControl sx={{ width: 200 }}>
+            <InputLabel>{t('pipelineEditor.input.paginationType', 'Type')}</InputLabel>
+            <Select
+              value={pagination.type || 'next_url'}
+              onChange={(e) => handlePaginationChange('type', e.target.value)}
+              label={t('pipelineEditor.input.paginationType', 'Type')}
+            >
+              <MenuItem value="next_url">Next URL</MenuItem>
+              <MenuItem value="page_increment">Page Increment</MenuItem>
+              <MenuItem value="next_offset">Next Offset</MenuItem>
+            </Select>
+          </FormControl>
+          {pagination.type === 'next_url' && (
+            <Stack direction="row" spacing={2}>
+              <TextField
+                label={t('pipelineEditor.input.urlPath', 'URL Path')}
+                value={pagination.url_path || ''}
+                onChange={(e) => handlePaginationChange('url_path', e.target.value)}
+                placeholder="nextUrl"
+                helperText="JSON path to next URL"
+              />
+              <TextField
+                label={t('pipelineEditor.input.dataField', 'Data Field')}
+                value={pagination.data_field || ''}
+                onChange={(e) => handlePaginationChange('data_field', e.target.value)}
+                placeholder="objects"
+                helperText="JSON path to data array"
+              />
+            </Stack>
+          )}
+          <TextField
+            label={t('pipelineEditor.input.maxPages', 'Max Pages')}
+            type="number"
+            value={pagination.max_pages || 10000}
+            onChange={(e) => handlePaginationChange('max_pages', Number(e.target.value))}
+            inputProps={{ min: 1 }}
+            sx={{ width: 150 }}
+          />
+        </Stack>
+      </>
+    )
   }
 
   // Rate Limit 설정 렌더링

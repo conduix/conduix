@@ -65,10 +65,12 @@ export type PaginationConfig =
 // Input 설정 (데이터 입력 소스)
 // Input 타입: kafka, cdc, rest_api, sql, file, sql_event
 export interface WorkflowInput {
-  type: string // kafka, cdc, rest_api, sql, file, sql_event
+  type: string // kafka, cdc, rest_api, sql, file, sql_event, partitioned_http
   name: string
   config: Record<string, unknown>
   rate_limit?: RateLimitConfig  // 입력 레벨 rate limiting
+  partition?: Record<string, unknown>   // 파티션 디스커버리 설정
+  pagination?: Record<string, unknown>  // 페이지네이션 설정
 }
 
 // WorkflowSource는 WorkflowInput의 별칭 (하위 호환성)

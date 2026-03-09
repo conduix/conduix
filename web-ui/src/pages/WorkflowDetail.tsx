@@ -1794,6 +1794,26 @@ export default function WorkflowDetailPage() {
                                       </pre>
                                     </TableCell>
                                   </TableRow>
+                                  {pipeline.source?.partition && (
+                                    <TableRow>
+                                      <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('source.partition', 'Partition')}</TableCell>
+                                      <TableCell>
+                                        <pre style={{ margin: 0, fontSize: 11, maxHeight: 200, overflow: 'auto', background: '#f5f5f5', padding: 8, borderRadius: 4 }}>
+                                          {JSON.stringify(pipeline.source.partition, null, 2)}
+                                        </pre>
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                  {pipeline.source?.pagination && (
+                                    <TableRow>
+                                      <TableCell component="th" sx={{ bgcolor: 'grey.50' }}>{t('source.pagination', 'Pagination')}</TableCell>
+                                      <TableCell>
+                                        <pre style={{ margin: 0, fontSize: 11, maxHeight: 200, overflow: 'auto', background: '#f5f5f5', padding: 8, borderRadius: 4 }}>
+                                          {JSON.stringify(pipeline.source.pagination, null, 2)}
+                                        </pre>
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
                                 </TableBody>
                               </Table>
                             </TableContainer>

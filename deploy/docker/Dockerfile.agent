@@ -1,19 +1,21 @@
 # Build stage
-FROM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+
+ARG TARGETOS TARGETARCH
 
 WORKDIR /app
 
 # 의존성 설치
 RUN apk add --no-cache git
 
-# Go 모듈 복사 및 다운로드
+# Go 모듈 복사 및 다운로드 (캐시 마운트)
 COPY shared/go.mod shared/go.sum ./shared/
 COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
 COPY plugin-sdk/go.mod plugin-sdk/go.sum ./plugin-sdk/
 COPY pipeline-agent/go.mod pipeline-agent/go.sum ./pipeline-agent/
 
 WORKDIR /app/pipeline-agent
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 # 소스 코드 복사
 WORKDIR /app
@@ -22,9 +24,12 @@ COPY pipeline-core ./pipeline-core
 COPY plugin-sdk ./plugin-sdk
 COPY pipeline-agent ./pipeline-agent
 
-# 빌드
+# 빌드 (네이티브 크로스 컴파일 + 캐시 마운트)
 WORKDIR /app/pipeline-agent
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/agent ./cmd/agent
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w" -o /app/agent ./cmd/agent
 
 # Runtime stage
 FROM alpine:3.19

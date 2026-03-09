@@ -84,10 +84,13 @@ jobs:
         include:
           - service: control-plane
             dockerfile: deploy/docker/Dockerfile.control-plane
+            platforms: linux/amd64,linux/arm64
           - service: agent
             dockerfile: deploy/docker/Dockerfile.agent
+            platforms: linux/amd64,linux/arm64
           - service: web-ui
             dockerfile: deploy/docker/Dockerfile.web-ui
+            platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -120,7 +123,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platforms }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

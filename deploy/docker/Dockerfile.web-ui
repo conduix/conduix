@@ -1,5 +1,5 @@
-# Build stage
-FROM node:18-alpine AS builder
+# Build stage (Node.js 빌드는 아키텍처 무관 → 네이티브 빌드)
+FROM --platform=$BUILDPLATFORM node:18-alpine AS builder
 
 WORKDIR /app
 

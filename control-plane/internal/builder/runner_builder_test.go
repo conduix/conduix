@@ -169,4 +169,11 @@ func TestDefaultRunnerBuilderConfig(t *testing.T) {
 	}
 }
 
-// contains is defined in builder_test.go — reuse it
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

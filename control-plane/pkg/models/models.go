@@ -611,9 +611,8 @@ type Plugin struct {
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relations
-	Stages        []PluginStage  `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
-	Binaries      []PluginBinary `gorm:"foreignKey:PluginID" json:"binaries,omitempty"`
-	Builds        []PluginBuild  `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
+	Stages []PluginStage `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
+	Builds []PluginBuild `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
 	RunnerVersion *RunnerVersion `gorm:"foreignKey:RunnerVersionID" json:"runner_version,omitempty"`
 }
 
@@ -672,27 +671,6 @@ type PluginBuild struct {
 // TableName 테이블 이름
 func (PluginBuild) TableName() string {
 	return "plugin_builds"
-}
-
-// PluginBinary 빌드된 플러그인 바이너리 (MySQL BLOB 저장)
-type PluginBinary struct {
-	ID         string    `gorm:"primaryKey;size:36" json:"id"`
-	PluginID   string    `gorm:"size:36;not null;index" json:"plugin_id"`
-	Version    string    `gorm:"size:50;not null" json:"version"`
-	Platform   string    `gorm:"size:20;not null;default:linux/arm64" json:"platform"` // GOOS/GOARCH
-	BinaryData []byte    `gorm:"type:longblob;not null" json:"-"`                      // 빌드된 바이너리 (응답에서 제외)
-	Checksum   string    `gorm:"size:64;not null" json:"checksum"`                     // SHA256
-	SizeBytes  int64     `json:"size_bytes"`
-	BuildID    string    `gorm:"size:36" json:"build_id,omitempty"` // 빌드 FK
-	CreatedAt  time.Time `json:"created_at"`
-
-	// Relations
-	Plugin *Plugin `gorm:"foreignKey:PluginID" json:"plugin,omitempty"`
-}
-
-// TableName 테이블 이름
-func (PluginBinary) TableName() string {
-	return "plugin_binaries"
 }
 
 // RunnerVersion pipeline-runner 이미지 빌드 버전

@@ -401,8 +401,6 @@ func NewStage(cfg StageConfig) (Stage, error) {
 		return NewStreamJoinStageFromConfig(cfg.Name, cfg.Config)
 	case "sub_pipeline":
 		return NewSubPipelineStage(cfg.Name, cfg.Config)
-	case "plugin":
-		return NewPluginStageFromConfig(cfg.Name, cfg.Config)
 	case "script":
 		return NewScriptStage(cfg.Name, cfg.Config)
 	default:

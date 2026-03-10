@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+docs/
+*.md
+LICENSE
+
+# IDE
+.vscode/
+.idea/
+
+# CI/CD
+.github/
+
+# Node
+web-ui/node_modules/
+web-ui/dist/
+
+# Go build artifacts
+**/bin/
+**/tmp/
+
+# Docker
+docker-compose*.yml
+
+# Tests and configs
+**/.*test*
+**/*_test.go
+config/
+images/

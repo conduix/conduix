@@ -135,6 +135,7 @@ Conduix uses a **Unix Pipe-inspired linear pipeline** design with **DataType-bas
 | **aggregate** | Window-based aggregation | Time-window stats |
 | **enrich** | Add external data | Lookup join |
 | **sub_pipeline** | Trigger child pipeline | Pipeline chaining |
+| **script** | Starlark scripting | Custom transformation logic |
 
 #### Output Types (Storage/Delivery)
 

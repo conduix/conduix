@@ -11,7 +11,7 @@ RUN apk add --no-cache git
 # Go 모듈 복사 및 다운로드 (캐시 마운트)
 COPY shared/go.mod shared/go.sum ./shared/
 COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
-COPY plugin-sdk/go.mod plugin-sdk/go.sum ./plugin-sdk/
+COPY plugin-sdk/go.mod ./plugin-sdk/
 COPY pipeline-agent/go.mod pipeline-agent/go.sum ./pipeline-agent/
 
 WORKDIR /app/pipeline-agent

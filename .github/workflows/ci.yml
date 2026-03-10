@@ -16,13 +16,10 @@ permissions:
 
 jobs:
   # ============================================================
-  # Go 테스트 (모듈별 병렬 실행)
+  # Go 테스트 (단일 job, 모듈 병렬 실행)
   # ============================================================
   test-go:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        package: [shared, plugin-sdk, pipeline-core, pipeline-agent, control-plane]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -30,8 +27,18 @@ jobs:
           go-version: "1.26"
           cache: true
           cache-dependency-path: "**/go.sum"
-      - name: Test ${{ matrix.package }}
-        run: cd ${{ matrix.package }} && go test -p 4 -parallel 8 ./...
+      - name: Test all Go modules
+        run: |
+          pids=()
+          for mod in shared plugin-sdk pipeline-core pipeline-agent control-plane; do
+            (cd "$mod" && go test -p 4 -parallel 8 ./...) &
+            pids+=($!)
+          done
+          fail=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || fail=1
+          done
+          exit $fail
 
   # ============================================================
   # Web UI 빌드 (tsc는 build에 포함)

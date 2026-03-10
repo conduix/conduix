@@ -925,7 +925,7 @@ export default function WorkflowDetailPage() {
                     <TableHead>
                       <TableRow>
                         <TableCell>{t('pipeline.name')}</TableCell>
-                        <TableCell sx={{ width: 120 }}>{t('pipeline.source')}</TableCell>
+                        <TableCell sx={{ width: 120 }}>{t('pipeline.input')}</TableCell>
                         <TableCell sx={{ width: 120 }}>{t('pipeline.output')}</TableCell>
                         <TableCell sx={{ width: 80 }}>{t('pipeline.priority')}</TableCell>
                         <TableCell sx={{ width: 200 }}>{t('common.actions')}</TableCell>
@@ -963,7 +963,7 @@ export default function WorkflowDetailPage() {
                             <TableCell>
                               <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                                 {pipelineOutputs.slice(0, 2).map((output, i) => (
-                                  <Chip key={i} label={output.name || output.type} size="small" />
+                                  <Chip key={i} label={output.type} size="small" />
                                 ))}
                                 {pipelineOutputs.length > 2 && <Chip label={`+${pipelineOutputs.length - 2}`} size="small" />}
                                 {pipelineOutputs.length === 0 && <Chip label="-" size="small" variant="outlined" />}

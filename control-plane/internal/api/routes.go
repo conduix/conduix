@@ -322,6 +322,7 @@ func (s *Server) setupRoutes() {
 				plugins.GET("", s.pluginHandler.ListPlugins)
 				plugins.POST("/build", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.pluginHandler.BuildPlugin)
 				plugins.POST("/validate", s.pluginHandler.ValidatePluginSource)
+				plugins.POST("/test-script", s.pluginHandler.TestScript)
 				plugins.GET("/builds/:id", s.pluginHandler.GetBuild)
 				plugins.GET("/:name", s.pluginHandler.GetPlugin)
 				plugins.GET("/:name/stages", s.pluginHandler.GetPluginStages)

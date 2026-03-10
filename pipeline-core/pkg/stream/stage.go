@@ -403,6 +403,8 @@ func NewStage(cfg StageConfig) (Stage, error) {
 		return NewSubPipelineStage(cfg.Name, cfg.Config)
 	case "plugin":
 		return NewPluginStageFromConfig(cfg.Name, cfg.Config)
+	case "script":
+		return NewScriptStage(cfg.Name, cfg.Config)
 	default:
 		return nil, fmt.Errorf("unknown stage type: %s", cfg.Type)
 	}

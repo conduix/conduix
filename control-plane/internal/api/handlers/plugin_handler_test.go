@@ -41,6 +41,7 @@ func setupTestRouter(h *PluginHandler) *gin.Engine {
 	{
 		plugins.GET("", h.ListPlugins)
 		plugins.POST("", h.CreatePlugin)
+		plugins.POST("/test-script", h.TestScript)
 		plugins.GET("/:name", h.GetPlugin)
 		plugins.PUT("/:name", h.UpdatePlugin)
 		plugins.DELETE("/:name", h.DeletePlugin)
@@ -382,6 +383,101 @@ func TestGetPluginStages(t *testing.T) {
 
 	assert.True(t, response.Success)
 	assert.Len(t, response.Data, 2)
+}
+
+func TestTestScript_Success(t *testing.T) {
+	db := setupTestDB(t)
+	handler := NewPluginHandler(db)
+	router := setupTestRouter(handler)
+
+	reqBody := TestScriptRequest{
+		Code: `
+def process(record):
+    record["greeting"] = "hello " + record.get("name", "")
+    return record
+`,
+		SampleData: map[string]any{
+			"name": "world",
+		},
+	}
+
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/plugins/test-script", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response struct {
+		Success bool               `json:"success"`
+		Data    TestScriptResponse `json:"data"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Data.Success)
+	assert.False(t, response.Data.Dropped)
+	assert.Equal(t, "hello world", response.Data.Output["greeting"])
+}
+
+func TestTestScript_Drop(t *testing.T) {
+	db := setupTestDB(t)
+	handler := NewPluginHandler(db)
+	router := setupTestRouter(handler)
+
+	reqBody := TestScriptRequest{
+		Code: `
+def process(record):
+    return None
+`,
+		SampleData: map[string]any{"key": "value"},
+	}
+
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/plugins/test-script", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response struct {
+		Data TestScriptResponse `json:"data"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.True(t, response.Data.Success)
+	assert.True(t, response.Data.Dropped)
+}
+
+func TestTestScript_CompileError(t *testing.T) {
+	db := setupTestDB(t)
+	handler := NewPluginHandler(db)
+	router := setupTestRouter(handler)
+
+	reqBody := TestScriptRequest{
+		Code:       `def process(record)  return record`,
+		SampleData: map[string]any{"key": "value"},
+	}
+
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/plugins/test-script", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response struct {
+		Data TestScriptResponse `json:"data"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.False(t, response.Data.Success)
+	assert.NotEmpty(t, response.Data.Error)
 }
 
 func TestUpdatePlugin(t *testing.T) {

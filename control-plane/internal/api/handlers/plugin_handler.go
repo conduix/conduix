@@ -14,6 +14,7 @@ import (
 	"github.com/conduix/conduix/control-plane/internal/builder"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
+	"github.com/conduix/conduix/pipeline-core/pkg/stream"
 	"github.com/conduix/conduix/shared/types"
 )
 
@@ -686,6 +687,83 @@ func (h *PluginHandler) ValidatePluginSource(c *gin.Context) {
 		"valid":   true,
 		"imports": imports,
 	})
+}
+
+// TestScriptRequest Script 테스트 요청
+type TestScriptRequest struct {
+	Code       string         `json:"code" binding:"required"`
+	Timeout    string         `json:"timeout,omitempty"`
+	SampleData map[string]any `json:"sample_data" binding:"required"`
+}
+
+// TestScriptResponse Script 테스트 결과
+type TestScriptResponse struct {
+	Success bool           `json:"success"`
+	Output  map[string]any `json:"output,omitempty"`
+	Dropped bool           `json:"dropped"`
+	Error   string         `json:"error,omitempty"`
+	Elapsed string         `json:"elapsed"`
+}
+
+// TestScript POST /api/v1/plugins/test-script
+// @Summary Starlark 스크립트 테스트 실행
+// @Tags plugins
+// @Accept json
+// @Produce json
+// @Param request body TestScriptRequest true "Script Test Request"
+// @Success 200 {object} types.APIResponse[TestScriptResponse]
+// @Router /plugins/test-script [post]
+func (h *PluginHandler) TestScript(c *gin.Context) {
+	var req TestScriptRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
+	// ScriptStage 생성 (컴파일 검증 포함)
+	config := map[string]any{"code": req.Code}
+	if req.Timeout != "" {
+		config["timeout"] = req.Timeout
+	}
+
+	stage, err := stream.NewScriptStage("test", config)
+	if err != nil {
+		middleware.SuccessResponse(c, TestScriptResponse{
+			Success: false,
+			Error:   err.Error(),
+			Elapsed: "0s",
+		})
+		return
+	}
+
+	// 샘플 데이터로 실행
+	record := &stream.Record{
+		Data: req.SampleData,
+	}
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	result, err := stage.Process(ctx, record)
+	elapsed := time.Since(start)
+
+	resp := TestScriptResponse{
+		Elapsed: elapsed.String(),
+	}
+
+	if err != nil {
+		resp.Success = false
+		resp.Error = err.Error()
+	} else if result == nil {
+		resp.Success = true
+		resp.Dropped = true
+	} else {
+		resp.Success = true
+		resp.Output = result.Data
+	}
+
+	middleware.SuccessResponse(c, resp)
 }
 
 // GetPluginStages GET /api/v1/plugins/:name/stages

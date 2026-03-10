@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   # ============================================================
-  # Go 테스트 (단일 job, 모듈 병렬 실행)
+  # Go 테스트 (단일 job, 순차 실행 — 캐시 공유로 순차가 더 빠름)
   # ============================================================
   test-go:
     runs-on: ubuntu-latest
@@ -27,18 +27,16 @@ jobs:
           go-version: "1.26"
           cache: true
           cache-dependency-path: "**/go.sum"
-      - name: Test all Go modules
-        run: |
-          pids=()
-          for mod in shared plugin-sdk pipeline-core pipeline-agent control-plane; do
-            (cd "$mod" && go test -p 4 -parallel 8 ./...) &
-            pids+=($!)
-          done
-          fail=0
-          for pid in "${pids[@]}"; do
-            wait "$pid" || fail=1
-          done
-          exit $fail
+      - name: Test shared
+        run: cd shared && go test ./...
+      - name: Test plugin-sdk
+        run: cd plugin-sdk && go test ./...
+      - name: Test pipeline-core
+        run: cd pipeline-core && go test ./...
+      - name: Test pipeline-agent
+        run: cd pipeline-agent && go test ./...
+      - name: Test control-plane
+        run: cd control-plane && go test ./...
 
   # ============================================================
   # Web UI 빌드 (tsc는 build에 포함)

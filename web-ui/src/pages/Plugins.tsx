@@ -30,12 +30,13 @@ import {
   CheckCircle as ActiveIcon,
   Category as CategoryIcon,
   Build as BuildIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useSnackbar } from '../hooks/useSnackbar'
-import type { Plugin, PluginCreateRequest, PluginStageCreate } from '../types/plugin'
-import { getPlugins, createPlugin, updatePlugin, deletePlugin } from '../services/pluginApi'
+import type { Plugin, PluginCreateRequest, PluginStageCreate, RunnerStatusResponse } from '../types/plugin'
+import { getPlugins, createPlugin, updatePlugin, deletePlugin, getRunnerStatus, startRunnerBuild } from '../services/pluginApi'
 
 interface PluginFormData {
   name: string
@@ -99,18 +100,38 @@ export default function PluginsPage() {
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null)
   const [formData, setFormData] = useState<PluginFormData>(initialFormData)
   const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
+  const [runnerStatus, setRunnerStatus] = useState<RunnerStatusResponse | null>(null)
+  const [building, setBuilding] = useState(false)
 
   const loadPlugins = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getPlugins()
+      const [data, status] = await Promise.all([
+        getPlugins(),
+        getRunnerStatus().catch(() => null),
+      ])
       setPlugins(data)
+      if (status) setRunnerStatus(status)
     } catch {
       showError(t('plugin.loadError'))
     } finally {
       setLoading(false)
     }
   }, [t, showError])
+
+  const handleRunnerBuild = async () => {
+    setBuilding(true)
+    try {
+      await startRunnerBuild()
+      showSuccess('Runner build started')
+      // 3초 후 상태 갱신
+      setTimeout(() => loadPlugins(), 3000)
+    } catch {
+      showError('Failed to start runner build')
+    } finally {
+      setBuilding(false)
+    }
+  }
 
   useEffect(() => {
     loadPlugins()
@@ -231,20 +252,37 @@ export default function PluginsPage() {
       minWidth: 150,
     },
     {
+      field: 'type',
+      headerName: 'Type',
+      width: 90,
+      renderCell: (params: GridRenderCellParams) => (
+        <Chip
+          size="small"
+          label={params.value || 'native'}
+          color={params.value === 'script' ? 'info' : 'default'}
+          variant="outlined"
+        />
+      ),
+    },
+    {
       field: 'version',
       headerName: t('plugin.version'),
       width: 100,
     },
     {
-      field: 'image',
-      headerName: t('plugin.image'),
-      flex: 1.5,
-      minWidth: 200,
-      renderCell: (params: GridRenderCellParams) => (
-        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
-          {params.value}
-        </Typography>
-      ),
+      field: 'deploy_status',
+      headerName: 'Deploy',
+      width: 100,
+      renderCell: (params: GridRenderCellParams) => {
+        const plugin = params.row as Plugin
+        if (plugin.type === 'script') {
+          return <Chip size="small" label="Instant" color="success" variant="outlined" />
+        }
+        const needsBuild = plugin.source_hash && plugin.source_hash !== plugin.deployed_hash
+        return needsBuild
+          ? <Chip size="small" label="Build needed" color="warning" variant="outlined" />
+          : <Chip size="small" label="Deployed" color="success" variant="outlined" />
+      },
     },
     {
       field: 'status',
@@ -335,6 +373,48 @@ export default function PluginsPage() {
           />
         </Grid>
       </Grid>
+
+      {/* Runner Status Panel */}
+      {runnerStatus && runnerStatus.plugins.length > 0 && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <BuildIcon fontSize="small" />
+                <Typography variant="subtitle2">Runner Image</Typography>
+                {runnerStatus.latest_ready_version && (
+                  <Chip
+                    size="small"
+                    label={runnerStatus.latest_ready_version.id}
+                    variant="outlined"
+                    sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}
+                  />
+                )}
+              </Box>
+              <Button
+                variant={runnerStatus.needs_build ? 'contained' : 'outlined'}
+                size="small"
+                startIcon={runnerStatus.needs_build ? <WarningIcon /> : <BuildIcon />}
+                onClick={handleRunnerBuild}
+                disabled={building}
+                color={runnerStatus.needs_build ? 'warning' : 'primary'}
+              >
+                {building ? 'Building...' : runnerStatus.needs_build ? 'Build Required' : 'Rebuild'}
+              </Button>
+            </Box>
+            {runnerStatus.needs_build && (
+              <Alert severity="warning" sx={{ mt: 1 }} icon={<WarningIcon />}>
+                {runnerStatus.plugins.filter(p => p.needs_build).map(p => p.name).join(', ')} — source modified, rebuild needed
+              </Alert>
+            )}
+            {!runnerStatus.needs_build && runnerStatus.latest_ready_version && (
+              <Alert severity="success" sx={{ mt: 1 }}>
+                All native stages deployed ({runnerStatus.latest_ready_version.id})
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent>

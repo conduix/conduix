@@ -3,9 +3,15 @@
 export interface Plugin {
   id: string
   name: string
+  type?: 'script' | 'native'
   version: string
   image: string
   description?: string
+  source_code?: string
+  go_mod?: string
+  source_hash?: string
+  deployed_hash?: string
+  runner_version_id?: string
   source_repo?: string
   status: 'active' | 'inactive' | 'deprecated'
   created_by?: string
@@ -130,6 +136,40 @@ export interface BuildPluginRequest {
 export interface ValidateSourceResponse {
   valid: boolean
   imports: string[]
+}
+
+// V4 Runner Version types
+export interface RunnerVersion {
+  id: string
+  build_number: number
+  status: 'pending' | 'building' | 'ready' | 'failed'
+  image_tag?: string
+  image_digest?: string
+  source_hash: string
+  plugin_ids?: string
+  plugin_hashes?: string
+  build_log?: string
+  error?: string
+  duration_ms?: number
+  created_by?: string
+  started_at?: string
+  finished_at?: string
+  created_at: string
+}
+
+export interface RunnerStatusResponse {
+  success: boolean
+  needs_build: boolean
+  plugins: RunnerPluginStatus[]
+  latest_ready_version?: RunnerVersion
+}
+
+export interface RunnerPluginStatus {
+  id: string
+  name: string
+  source_hash: string
+  deployed_hash: string
+  needs_build: boolean
 }
 
 export interface ClusterAgent {

@@ -37,8 +37,17 @@
 - 메모리 제한: `thread.SetMaxAllocs` 미지원 → 타임아웃으로 대체
 - Schema에서 CustomEditor="ScriptStageEditor" 사용 (Fields 비움, 에디터가 전체 폼 담당)
 
-## Phase 2-5: 미구현
-- Phase 2: RunnerVersion 관리
-- Phase 3: Native build system
-- Phase 4: GUI 플러그인 관리
-- Phase 5: go-plugin cleanup
+## Phase 2: RunnerVersion + NativeStage — 완료
+- 상세: [WORK_PROGRESS_PHASE2.md](WORK_PROGRESS_PHASE2.md)
+
+## Phase 3: Runner 빌드 시스템 — 완료
+- 상세: [WORK_PROGRESS_PHASE3.md](WORK_PROGRESS_PHASE3.md)
+
+## Phase 4: GUI 통합 — 완료
+- 상세: [WORK_PROGRESS_PHASE4.md](WORK_PROGRESS_PHASE4.md)
+
+## Phase 5: go-plugin cleanup — 미구현
+- [ ] plugin_stage.go (gRPC 방식) 제거
+- [ ] plugin-sdk의 gRPC 관련 코드 제거 (NativeStage 인터페이스만 유지)
+- [ ] proto/ gRPC 정의 정리
+- [ ] PluginBinary DB 모델 제거

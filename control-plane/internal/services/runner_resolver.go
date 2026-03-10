@@ -17,8 +17,8 @@ const DefaultRunnerImage = "ghcr.io/conduix/pipeline-runner:latest"
 type BuildRequiredError struct {
 	PendingPlugins     []models.Plugin `json:"pending_plugins"`
 	LatestReadyVersion string          `json:"latest_ready_version,omitempty"`
-	LatestReadySeq     int             `json:"latest_ready_seq"`  // 최신 ready runner의 revision seq
-	LatestSeq          int             `json:"latest_seq"`        // 현재 최신 revision seq
+	LatestReadySeq     int             `json:"latest_ready_seq"` // 최신 ready runner의 revision seq
+	LatestSeq          int             `json:"latest_seq"`       // 현재 최신 revision seq
 }
 
 func (e *BuildRequiredError) Error() string {

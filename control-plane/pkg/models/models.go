@@ -722,15 +722,15 @@ type RunnerVersion struct {
 // Plugin 추가/수정/삭제 시 자동으로 생성되며, 소스 스냅샷을 zstd 압축하여 저장
 type StageRevision struct {
 	ID          string    `gorm:"primaryKey;size:36" json:"id"`
-	Seq         int       `gorm:"autoIncrement;uniqueIndex" json:"seq"`        // 글로벌 순번
-	PluginID    string    `gorm:"size:36;not null;index" json:"plugin_id"`     // 변경된 plugin FK
-	PluginName  string    `gorm:"size:255" json:"plugin_name"`                 // 조회 편의
-	Action      string    `gorm:"size:20;not null" json:"action"`              // "create" | "update" | "delete"
-	SourceData  []byte    `gorm:"type:mediumblob" json:"-"`                    // zstd 압축된 소스 스냅샷
-	GoModData   []byte    `gorm:"type:blob" json:"-"`                          // zstd 압축된 go.mod (nullable)
-	SourceHash  string    `gorm:"size:64" json:"source_hash"`                  // 변경 시점 소스 해시
-	DiffSummary string    `gorm:"size:500" json:"diff_summary,omitempty"`      // "+12 -3 lines" 등
-	Message     string    `gorm:"size:500" json:"message,omitempty"`           // 사용자 메모 (optional)
+	Seq         int       `gorm:"autoIncrement;uniqueIndex" json:"seq"`    // 글로벌 순번
+	PluginID    string    `gorm:"size:36;not null;index" json:"plugin_id"` // 변경된 plugin FK
+	PluginName  string    `gorm:"size:255" json:"plugin_name"`             // 조회 편의
+	Action      string    `gorm:"size:20;not null" json:"action"`          // "create" | "update" | "delete"
+	SourceData  []byte    `gorm:"type:mediumblob" json:"-"`                // zstd 압축된 소스 스냅샷
+	GoModData   []byte    `gorm:"type:blob" json:"-"`                      // zstd 압축된 go.mod (nullable)
+	SourceHash  string    `gorm:"size:64" json:"source_hash"`              // 변경 시점 소스 해시
+	DiffSummary string    `gorm:"size:500" json:"diff_summary,omitempty"`  // "+12 -3 lines" 등
+	Message     string    `gorm:"size:500" json:"message,omitempty"`       // 사용자 메모 (optional)
 	CreatedBy   string    `gorm:"size:36" json:"created_by,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }

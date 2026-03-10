@@ -16,60 +16,37 @@ permissions:
 
 jobs:
   # ============================================================
-  # Go 테스트 (control-plane, pipeline-core, pipeline-agent, plugin-sdk)
+  # Go 테스트 (모듈별 병렬 실행)
   # ============================================================
   test-go:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [shared, plugin-sdk, pipeline-core, pipeline-agent, control-plane]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache-dependency-path: |
-            shared/go.sum
-            pipeline-core/go.sum
-            pipeline-agent/go.sum
-            control-plane/go.sum
-            plugin-sdk/go.sum
-
-      - name: Test shared
-        run: cd shared && go test -p 4 -parallel 8 ./...
-
-      - name: Test plugin-sdk
-        run: cd plugin-sdk && go test -p 4 -parallel 8 ./...
-
-      - name: Test pipeline-core
-        run: cd pipeline-core && go test -p 4 -parallel 8 ./...
-
-      - name: Test pipeline-agent
-        run: cd pipeline-agent && go test -p 4 -parallel 8 ./...
-
-      - name: Test control-plane
-        run: cd control-plane && go test -p 4 -parallel 8 ./...
+          cache: true
+          cache-dependency-path: "**/go.sum"
+      - name: Test ${{ matrix.package }}
+        run: cd ${{ matrix.package }} && go test -p 4 -parallel 8 ./...
 
   # ============================================================
-  # Web UI 테스트 + 빌드
+  # Web UI 빌드 (tsc는 build에 포함)
   # ============================================================
   test-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "18"
           cache: "npm"
           cache-dependency-path: web-ui/package-lock.json
-
-      - name: Install dependencies
-        run: cd web-ui && npm ci
-
-      - name: Type check
-        run: cd web-ui && npx tsc --noEmit
-
-      - name: Build
-        run: cd web-ui && npm run build
+      - run: cd web-ui && npm ci
+      - run: cd web-ui && npm run build
 
   # ============================================================
   # Docker 이미지 빌드 + GHCR Push (main branch only)
@@ -84,13 +61,10 @@ jobs:
         include:
           - service: control-plane
             dockerfile: deploy/docker/Dockerfile.control-plane
-            platforms: linux/amd64,linux/arm64
           - service: agent
             dockerfile: deploy/docker/Dockerfile.agent
-            platforms: linux/amd64,linux/arm64
           - service: web-ui
             dockerfile: deploy/docker/Dockerfile.web-ui
-            platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -113,7 +87,6 @@ jobs:
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
           tags: |
-            type=ref,event=branch
             type=sha,prefix=
             type=raw,value=latest
 
@@ -123,7 +96,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
-          platforms: ${{ matrix.platforms }}
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

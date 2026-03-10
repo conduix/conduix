@@ -98,27 +98,43 @@ Conduix uses a **Unix Pipe-inspired linear pipeline** design with **DataType-bas
 |------|-------------|-------------|
 | **kafka** | Kafka consumer | Event streaming |
 | **rest_api** | REST API polling | External API |
+| **partitioned_http** | Partitioned REST API | Parallel API collection |
 | **sql** | SQL database | MySQL, PostgreSQL |
-| **cdc** | Change Data Capture | DB replication |
+| **partitioned_sql** | Partitioned SQL | Parallel DB collection |
+| **cdc** | Change Data Capture | MySQL/PostgreSQL replication |
+| **mongodb_cdc** | MongoDB Change Stream | MongoDB replication |
 | **file** | File source | CSV, JSON files |
 | **k8s_logs** | Kubernetes logs | Container logs |
+| **websocket** | WebSocket connection | Real-time data |
+| **mqtt** | MQTT subscriber | IoT devices (wildcard support) |
+| **sse** | Server-Sent Events | Event streams |
+| **sqs** | AWS SQS | Message queue |
+| **rabbitmq** | RabbitMQ (AMQP) | Message queue |
+| **pubsub** | Google Cloud Pub/Sub | GCP messaging |
+| **redis_stream** | Redis Stream | Redis messaging |
 
 #### Stage Types (Transformation/Processing)
 
 | Type | Description | Example Use |
 |------|-------------|-------------|
 | **filter** | Filter records by condition | Remove invalid data |
-| **remap** | Transform/rename fields | JSON field mapping |
+| **remap** | Transform/rename fields (Bloblang) | JSON field mapping |
 | **drop** | Drop specific fields | Remove sensitive data |
 | **merge** | Merge multiple fields | Combine name fields |
 | **split** | Split field by regex | Parse log lines |
-| **encrypt** | Encrypt fields | PII protection |
+| **encrypt** | Encrypt/mask fields | PII protection (AES256, SHA, mask) |
 | **dedupe** | Remove duplicates | Deduplication |
 | **default** | Set default values | Fill nulls |
 | **cast** | Type conversion | String to int |
 | **timestamp** | Timestamp handling | Add/convert timestamps |
 | **throttle** | Rate limiting | API rate limit |
-| **validate** | Schema validation | Data quality |
+| **sample** | Record sampling | Data sampling |
+| **validate** | JSON Schema validation | Data quality |
+| **contract** | Data Contract validation | Business rules |
+| **route** | Event routing | CDC event routing |
+| **aggregate** | Window-based aggregation | Time-window stats |
+| **enrich** | Add external data | Lookup join |
+| **sub_pipeline** | Trigger child pipeline | Pipeline chaining |
 
 #### Output Types (Storage/Delivery)
 
@@ -129,6 +145,8 @@ Conduix uses a **Unix Pipe-inspired linear pipeline** design with **DataType-bas
 | **kafka** | Kafka topic | Event streaming |
 | **mongodb** | MongoDB | Document storage |
 | **s3** | S3 storage | Data lake |
+| **gcs** | Google Cloud Storage | GCP storage |
+| **bigquery** | Google BigQuery | Data warehouse |
 | **rest_api** | REST API | External API call |
 | **file** | File output | Local/remote file |
 
@@ -277,6 +295,7 @@ conduix/
 ├── control-plane/     # Operations tool backend API
 ├── web-ui/            # Operations tool frontend
 ├── shared/            # Shared types/constants
+├── plugin-sdk/        # Plugin SDK for custom stages
 └── deploy/            # Deployment (Docker, Helm, scripts)
 ```
 
@@ -289,7 +308,7 @@ conduix/
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.26+
 - Node.js 18+
 - Docker & Docker Compose
 - MySQL 8.0

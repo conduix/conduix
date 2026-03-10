@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -343,12 +344,20 @@ type PartitionConfig struct {
 	Parallelism int `yaml:"parallelism,omitempty" json:"parallelism,omitempty"` // 동시 처리 파티션 수 (기본: 4)
 
 	// HTTP 파티션 디스커버리
-	DiscoveryURL      string            `yaml:"discovery_url,omitempty" json:"discovery_url,omitempty"`             // 파티션 목록 조회 URL
-	DiscoveryMethod   string            `yaml:"discovery_method,omitempty" json:"discovery_method,omitempty"`       // HTTP 메서드 (기본: GET)
-	DiscoveryHeaders  map[string]string `yaml:"discovery_headers,omitempty" json:"discovery_headers,omitempty"`     // 추가 헤더
-	DiscoveryAuth     *AuthConfig       `yaml:"discovery_auth,omitempty" json:"discovery_auth,omitempty"`           // 인증 (없으면 소스 auth 사용)
-	PartitionListPath string            `yaml:"partition_list_path,omitempty" json:"partition_list_path,omitempty"` // 응답에서 파티션 목록 경로 (예: "partitions", "data.partitions")
-	PartitionIDField  string            `yaml:"partition_id_field,omitempty" json:"partition_id_field,omitempty"`   // 파티션 ID 필드 (기본: 배열 요소 자체)
+	DiscoveryURL     string            `yaml:"discovery_url,omitempty" json:"discovery_url,omitempty"`         // 파티션 목록 조회 URL
+	DiscoveryMethod  string            `yaml:"discovery_method,omitempty" json:"discovery_method,omitempty"`   // HTTP 메서드 (기본: GET)
+	DiscoveryHeaders map[string]string `yaml:"discovery_headers,omitempty" json:"discovery_headers,omitempty"` // 추가 헤더
+	DiscoveryAuth    *AuthConfig       `yaml:"discovery_auth,omitempty" json:"discovery_auth,omitempty"`       // 인증 (없으면 소스 auth 사용)
+
+	// 파티션 ID 경로 (JSONPath-like)
+	// 예: "partitions.[*].url" → partitions 배열의 각 요소에서 url 필드 추출
+	// 예: "data.items" → data.items 배열 요소 자체가 파티션 ID
+	// 예: "[*].name" → 루트 배열의 각 요소에서 name 필드 추출
+	PartitionIDPath string `yaml:"partition_id_path,omitempty" json:"partition_id_path,omitempty"`
+
+	// Deprecated: partition_id_path로 대체됨 (하위 호환성 유지)
+	PartitionListPath string `yaml:"partition_list_path,omitempty" json:"partition_list_path,omitempty"`
+	PartitionIDField  string `yaml:"partition_id_field,omitempty" json:"partition_id_field,omitempty"`
 
 	// SQL 파티션 디스커버리
 	DiscoveryQuery string `yaml:"discovery_query,omitempty" json:"discovery_query,omitempty"` // 파티션 목록 조회 쿼리
@@ -359,6 +368,67 @@ type PartitionConfig struct {
 
 	// 정적 파티션 목록 (디스커버리 대신 직접 지정)
 	StaticPartitions []string `yaml:"static_partitions,omitempty" json:"static_partitions,omitempty"`
+}
+
+// GetPartitionListPath 하위 호환성: partition_id_path에서 list path 부분 추출
+// "partitions.[*].url" → "partitions"
+// "data.items" → "data.items"
+// "[*].name" → "" (루트 배열)
+func (c *PartitionConfig) GetPartitionListPath() string {
+	if c.PartitionIDPath != "" {
+		return parseListPath(c.PartitionIDPath)
+	}
+	// 하위 호환성: 기존 필드 사용
+	if c.PartitionListPath != "" {
+		return c.PartitionListPath
+	}
+	return "partitions"
+}
+
+// GetPartitionIDField 하위 호환성: partition_id_path에서 ID field 부분 추출
+// "partitions.[*].url" → "url"
+// "data.items" → "" (배열 요소 자체)
+// "[*].name" → "name"
+func (c *PartitionConfig) GetPartitionIDField() string {
+	if c.PartitionIDPath != "" {
+		return parseIDField(c.PartitionIDPath)
+	}
+	// 하위 호환성: 기존 필드 사용
+	return c.PartitionIDField
+}
+
+// parseListPath "[*]" 앞부분을 list path로 추출
+// "partitions.[*].url" → "partitions"
+// "data.items.[*].id" → "data.items"
+// "data.items" → "data.items" ([*] 없으면 전체가 list path)
+// "[*].name" → "" (루트 배열)
+func parseListPath(idPath string) string {
+	idx := strings.Index(idPath, ".[*]")
+	if idx >= 0 {
+		return idPath[:idx]
+	}
+	if strings.HasPrefix(idPath, "[*]") {
+		return ""
+	}
+	// [*]가 없으면 전체가 list path (배열 요소 자체가 ID)
+	return idPath
+}
+
+// parseIDField "[*]" 뒷부분을 ID field로 추출
+// "partitions.[*].url" → "url"
+// "data.items.[*].nested.id" → "nested.id"
+// "data.items" → "" (배열 요소 자체)
+// "[*].name" → "name"
+func parseIDField(idPath string) string {
+	idx := strings.Index(idPath, "[*]")
+	if idx < 0 {
+		return ""
+	}
+	after := idPath[idx+3:]
+	if strings.HasPrefix(after, ".") {
+		return after[1:]
+	}
+	return ""
 }
 
 // RealtimeConfig 실시간 파이프라인 설정

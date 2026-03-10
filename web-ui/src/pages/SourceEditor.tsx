@@ -148,8 +148,7 @@ interface FormState {
   partition_mode: 'discovery' | 'static'
   partition_discovery_url: string
   partition_discovery_query: string
-  partition_list_path: string
-  partition_id_field: string
+  partition_id_path: string
   partition_url_template: string
   partition_query_template: string
   partition_static_list: string  // 쉼표로 구분된 파티션 ID 목록
@@ -215,8 +214,7 @@ const initialFormState: FormState = {
   partition_mode: 'static',
   partition_discovery_url: '',
   partition_discovery_query: '',
-  partition_list_path: 'partitions',
-  partition_id_field: '',
+  partition_id_path: 'partitions',
   partition_url_template: '',
   partition_query_template: '',
   partition_static_list: '',
@@ -344,8 +342,14 @@ export default function SourceEditorPage() {
                 } else if (partition.discovery_url) {
                   newFormState.partition_mode = 'discovery'
                   newFormState.partition_discovery_url = partition.discovery_url as string || ''
-                  newFormState.partition_list_path = partition.partition_list_path as string || 'partitions'
-                  newFormState.partition_id_field = partition.partition_id_field as string || ''
+                  // partition_id_path 또는 하위 호환: partition_list_path + partition_id_field
+                  if (partition.partition_id_path) {
+                    newFormState.partition_id_path = partition.partition_id_path as string
+                  } else {
+                    const listPath = (partition.partition_list_path as string) || 'partitions'
+                    const idField = partition.partition_id_field as string
+                    newFormState.partition_id_path = idField ? `${listPath}.[*].${idField}` : listPath
+                  }
                 }
                 newFormState.partition_url_template = partition.url_template as string || ''
               }
@@ -688,8 +692,7 @@ export default function SourceEditorPage() {
             partition.static_partitions = formState.partition_static_list.split(',').map(s => s.trim()).filter(Boolean)
           } else if (formState.partition_mode === 'discovery' && formState.partition_discovery_url) {
             partition.discovery_url = formState.partition_discovery_url
-            if (formState.partition_list_path) partition.partition_list_path = formState.partition_list_path
-            if (formState.partition_id_field) partition.partition_id_field = formState.partition_id_field
+            if (formState.partition_id_path) partition.partition_id_path = formState.partition_id_path
           }
           if (formState.partition_url_template) {
             partition.url_template = formState.partition_url_template
@@ -1203,20 +1206,12 @@ export default function SourceEditorPage() {
                             fullWidth
                           />
                           <TextField
-                            label={t('source.partition.listPath')}
-                            value={formState.partition_list_path}
-                            onChange={(e) => updateFormField('partition_list_path', e.target.value)}
-                            helperText={t('source.partition.listPathHelp')}
-                            placeholder="partitions"
-                            sx={{ width: 200 }}
-                          />
-                          <TextField
-                            label={t('source.partition.idField')}
-                            value={formState.partition_id_field}
-                            onChange={(e) => updateFormField('partition_id_field', e.target.value)}
-                            helperText={t('source.partition.idFieldHelp')}
-                            placeholder="id"
-                            sx={{ width: 200 }}
+                            label={t('source.partition.idPath', 'Partition ID Path')}
+                            value={formState.partition_id_path}
+                            onChange={(e) => updateFormField('partition_id_path', e.target.value)}
+                            helperText="JSONPath-like: path.[*].field (e.g. partitions.[*].url)"
+                            placeholder="partitions.[*].url"
+                            fullWidth
                           />
                         </>
                       )}

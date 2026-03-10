@@ -936,8 +936,7 @@ export default function WorkflowDetailPage() {
                         const depth = getPipelineDepth(pipeline)
                         const targetDataType = dataTypes.find(dt => dt.id === pipeline.target_data_type_id)
                         const hasChildren = pipelines.some(p => p.parent_pipeline_id === pipeline.id)
-                        const outputTypes = ['sql', 'elasticsearch', 'kafka', 'mongodb', 's3', 'rest_api', 'file']
-                        const outputStages = pipeline.stages?.filter(s => outputTypes.includes(s.type)) || []
+                        const pipelineOutputs = pipeline.outputs || []
                         return (
                           <TableRow key={pipeline.id}>
                             <TableCell>
@@ -963,11 +962,11 @@ export default function WorkflowDetailPage() {
                             </TableCell>
                             <TableCell>
                               <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                                {outputStages.slice(0, 2).map((stage, i) => (
-                                  <Chip key={i} label={stage.type} size="small" />
+                                {pipelineOutputs.slice(0, 2).map((output, i) => (
+                                  <Chip key={i} label={output.name || output.type} size="small" />
                                 ))}
-                                {outputStages.length > 2 && <Chip label={`+${outputStages.length - 2}`} size="small" />}
-                                {outputStages.length === 0 && <Chip label="-" size="small" variant="outlined" />}
+                                {pipelineOutputs.length > 2 && <Chip label={`+${pipelineOutputs.length - 2}`} size="small" />}
+                                {pipelineOutputs.length === 0 && <Chip label="-" size="small" variant="outlined" />}
                               </Box>
                             </TableCell>
                             <TableCell>{pipeline.priority}</TableCell>

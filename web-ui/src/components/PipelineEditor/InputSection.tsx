@@ -83,7 +83,7 @@ export function InputSection() {
     }
 
     const defaultPartitions: Record<string, Record<string, unknown>> = {
-      partitioned_http: { discovery_url: '', partition_list_path: 'partitions', partition_id_field: 'url', url_template: '${partition}', parallelism: 4 },
+      partitioned_http: { discovery_url: '', partition_id_path: 'partitions.[*].url', url_template: '${partition}', parallelism: 4 },
       partitioned_sql: { discovery_query: '', query_template: '', parallelism: 4 },
     }
 
@@ -477,21 +477,14 @@ export function InputSection() {
               fullWidth
               required
             />
-            <Stack direction="row" spacing={2}>
-              <TextField
-                label={t('pipelineEditor.input.partitionListPath', 'List Path')}
-                value={partition.partition_list_path || ''}
-                onChange={(e) => handlePartitionChange('partition_list_path', e.target.value)}
-                placeholder="partitions"
-                helperText="JSON response path"
-              />
-              <TextField
-                label={t('pipelineEditor.input.partitionIdField', 'ID Field')}
-                value={partition.partition_id_field || ''}
-                onChange={(e) => handlePartitionChange('partition_id_field', e.target.value)}
-                placeholder="url"
-              />
-            </Stack>
+            <TextField
+              label={t('pipelineEditor.input.partitionIdPath', 'Partition ID Path')}
+              value={partition.partition_id_path || ''}
+              onChange={(e) => handlePartitionChange('partition_id_path', e.target.value)}
+              placeholder="partitions.[*].url"
+              helperText="JSONPath-like: path.[*].field (e.g. data.items.[*].id)"
+              fullWidth
+            />
             <TextField
               label={t('pipelineEditor.input.urlTemplate', 'URL Template')}
               value={partition.url_template || ''}

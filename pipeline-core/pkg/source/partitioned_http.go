@@ -127,7 +127,11 @@ func (s *PartitionedHTTPSource) discoverPartitions(ctx context.Context) ([]strin
 }
 
 // extractPartitions 응답에서 파티션 목록 추출
+// partition_id_path (새 방식) 또는 partition_list_path + partition_id_field (하위 호환) 지원
 func (s *PartitionedHTTPSource) extractPartitions(response any) ([]string, error) {
+	listPath := s.partition.GetPartitionListPath()
+	idField := s.partition.GetPartitionIDField()
+
 	var partitionList []any
 
 	// 응답이 직접 배열인 경우
@@ -135,11 +139,6 @@ func (s *PartitionedHTTPSource) extractPartitions(response any) ([]string, error
 		partitionList = arr
 	} else if obj, ok := response.(map[string]any); ok {
 		// 객체에서 파티션 목록 경로로 추출
-		listPath := s.partition.PartitionListPath
-		if listPath == "" {
-			listPath = "partitions" // 기본값
-		}
-
 		value := getNestedValue(obj, listPath)
 		if value == nil {
 			return nil, fmt.Errorf("partition list not found at path: %s", listPath)
@@ -159,11 +158,18 @@ func (s *PartitionedHTTPSource) extractPartitions(response any) ([]string, error
 	for _, item := range partitionList {
 		var partitionID string
 
-		if s.partition.PartitionIDField != "" {
-			// 객체에서 특정 필드 추출
+		if idField != "" {
+			// 객체에서 특정 필드 추출 (중첩 경로 지원)
 			if obj, ok := item.(map[string]any); ok {
-				if id, ok := obj[s.partition.PartitionIDField]; ok {
-					partitionID = fmt.Sprintf("%v", id)
+				if strings.Contains(idField, ".") {
+					// 중첩 경로: getNestedValue 사용
+					if id := getNestedValue(obj, idField); id != nil {
+						partitionID = fmt.Sprintf("%v", id)
+					}
+				} else {
+					if id, ok := obj[idField]; ok {
+						partitionID = fmt.Sprintf("%v", id)
+					}
 				}
 			}
 		} else {

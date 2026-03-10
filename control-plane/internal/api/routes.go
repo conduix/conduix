@@ -38,6 +38,7 @@ type Server struct {
 	stageHandler        *handlers.StageHandler
 	previewHandler      *handlers.PreviewHandler
 	pluginHandler       *handlers.PluginHandler
+	runnerHandler       *handlers.RunnerHandler
 	startTime           time.Time
 	version             string
 }
@@ -85,6 +86,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		stageHandler:        handlers.NewStageHandler(db),
 		previewHandler:      handlers.NewPreviewHandler(),
 		pluginHandler:       handlers.NewPluginHandler(db),
+		runnerHandler:       handlers.NewRunnerHandler(db),
 		startTime:           time.Now(),
 		version:             Version,
 	}
@@ -330,6 +332,15 @@ func (s *Server) setupRoutes() {
 				plugins.GET("/:name/binary", s.pluginHandler.GetBinary)
 				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
 				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)
+			}
+
+			// Runner (Native Plugin 빌드/버전 관리)
+			runner := authenticated.Group("/runner")
+			{
+				runner.GET("/versions", s.runnerHandler.ListVersions)
+				runner.GET("/versions/:id", s.runnerHandler.GetVersion)
+				runner.GET("/status", s.runnerHandler.CheckStatus)
+				runner.POST("/resolve", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.ResolveImage)
 			}
 
 			// 미리보기

@@ -406,6 +406,10 @@ func NewStage(cfg StageConfig) (Stage, error) {
 	case "script":
 		return NewScriptStage(cfg.Name, cfg.Config)
 	default:
+		// 커스텀 스테이지 레지스트리에서 검색 (native plugin)
+		if factory, ok := GetCustomStageFactory(cfg.Type); ok {
+			return factory(cfg.Name, cfg.Config)
+		}
 		return nil, fmt.Errorf("unknown stage type: %s", cfg.Type)
 	}
 }

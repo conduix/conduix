@@ -86,6 +86,7 @@ func (db *DB) Migrate() error {
 		&models.DeleteStrategyPreset{},
 		&models.Connection{},
 		// 플러그인 시스템
+		&models.RunnerVersion{},
 		&models.Plugin{},
 		&models.PluginStage{},
 		&models.PluginBuild{},

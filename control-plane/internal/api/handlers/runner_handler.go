@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -16,17 +17,19 @@ import (
 
 // RunnerHandler Runner 빌드/버전 관리 핸들러
 type RunnerHandler struct {
-	db       *database.DB
-	resolver *services.RunnerResolver
-	builder  *builder.RunnerBuilder
+	db              *database.DB
+	resolver        *services.RunnerResolver
+	builder         *builder.RunnerBuilder
+	revisionService *services.RevisionService
 }
 
 // NewRunnerHandler RunnerHandler 생성
 func NewRunnerHandler(db *database.DB) *RunnerHandler {
 	return &RunnerHandler{
-		db:       db,
-		resolver: services.NewRunnerResolver(db.DB),
-		builder:  builder.NewRunnerBuilder(db.DB, nil),
+		db:              db,
+		resolver:        services.NewRunnerResolver(db.DB),
+		builder:         builder.NewRunnerBuilder(db.DB, nil),
+		revisionService: services.NewRevisionService(db.DB),
 	}
 }
 
@@ -125,6 +128,9 @@ func (h *RunnerHandler) CheckStatus(c *gin.Context) {
 func (h *RunnerHandler) StartBuild(c *gin.Context) {
 	userID := c.GetString("user_id")
 
+	// 현재 최신 revision seq 가져오기
+	latestSeq, _ := h.revisionService.GetLatestSeq()
+
 	// 비동기 빌드 시작 (HTTP context와 분리)
 	go func() {
 		result, err := h.builder.Build(context.Background(), userID)
@@ -136,7 +142,14 @@ func (h *RunnerHandler) StartBuild(c *gin.Context) {
 			slog.Error("runner build failed", "error", err, "version_id", versionID)
 			return
 		}
-		slog.Info("runner build completed", "version_id", result.VersionID, "status", result.Status, "duration", result.Duration)
+
+		// revision_seq, trigger 업데이트
+		h.db.Model(&models.RunnerVersion{}).Where("id = ?", result.VersionID).Updates(map[string]any{
+			"revision_seq": latestSeq,
+			"trigger":      "manual",
+		})
+
+		slog.Info("runner build completed", "version_id", result.VersionID, "status", result.Status, "duration", result.Duration, "revision_seq", latestSeq)
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{
@@ -170,9 +183,11 @@ func (h *RunnerHandler) ResolveImage(c *gin.Context) {
 		if buildErr, ok := err.(*services.BuildRequiredError); ok {
 			c.JSON(http.StatusConflict, gin.H{
 				"error":                "runner_build_required",
-				"message":              "커스텀 stage가 수정되었습니다. 빌드가 필요합니다.",
+				"message":              buildErr.Error(),
 				"pending_plugins":      buildErr.PendingPlugins,
 				"latest_ready_version": buildErr.LatestReadyVersion,
+				"latest_ready_seq":     buildErr.LatestReadySeq,
+				"latest_seq":           buildErr.LatestSeq,
 				"action":               "build",
 			})
 			return
@@ -184,5 +199,57 @@ func (h *RunnerHandler) ResolveImage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"image":   image,
+	})
+}
+
+// RebuildVersion POST /api/v1/runner/rebuild/:id — 기존 버전 기반 재빌드
+func (h *RunnerHandler) RebuildVersion(c *gin.Context) {
+	parentID := c.Param("id")
+	userID := c.GetString("user_id")
+
+	// 원본 버전 확인
+	var parentVersion models.RunnerVersion
+	if err := h.db.First(&parentVersion, "id = ?", parentID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "runner version not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 현재 최신 revision seq 가져오기
+	latestSeq, _ := h.revisionService.GetLatestSeq()
+
+	// 비동기 재빌드 시작
+	go func() {
+		result, err := h.builder.Build(context.Background(), userID)
+		if err != nil {
+			versionID := ""
+			if result != nil {
+				versionID = result.VersionID
+			}
+			slog.Error("runner rebuild failed", "error", err, "parent_id", parentID, "version_id", versionID)
+			return
+		}
+
+		// revision_seq, trigger, parent_id 업데이트
+		h.db.Model(&models.RunnerVersion{}).Where("id = ?", result.VersionID).Updates(map[string]any{
+			"revision_seq": latestSeq,
+			"trigger":      "rebuild",
+			"parent_id":    parentID,
+		})
+
+		slog.Info("runner rebuild completed",
+			"version_id", result.VersionID,
+			"parent_id", parentID,
+			"revision_seq", latestSeq,
+		)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"success":   true,
+		"message":   fmt.Sprintf("rebuild started (parent: %s)", parentID),
+		"parent_id": parentID,
 	})
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/builder"
+	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/pipeline-core/pkg/stream"
@@ -20,17 +21,19 @@ import (
 
 // PluginHandler 플러그인 API 핸들러
 type PluginHandler struct {
-	db      *database.DB
-	builder *builder.Builder
-	logger  *slog.Logger
+	db              *database.DB
+	builder         *builder.Builder
+	revisionService *services.RevisionService
+	logger          *slog.Logger
 }
 
 // NewPluginHandler 플러그인 핸들러 생성
 func NewPluginHandler(db *database.DB) *PluginHandler {
 	return &PluginHandler{
-		db:      db,
-		builder: builder.New(builder.DefaultConfig()),
-		logger:  slog.Default(),
+		db:              db,
+		builder:         builder.New(builder.DefaultConfig()),
+		revisionService: services.NewRevisionService(db.DB),
+		logger:          slog.Default(),
 	}
 }
 
@@ -237,6 +240,11 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 	// Stages와 함께 다시 조회
 	h.db.Preload("Stages").First(&plugin, "id = ?", plugin.ID)
 
+	// Revision 생성 (native plugin인 경우)
+	if plugin.Type == "native" && plugin.SourceCode != "" {
+		h.createRevision(plugin.ID, plugin.Name, "create", plugin.SourceCode, plugin.GoMod, plugin.SourceHash, "", "", userIDStr)
+	}
+
 	h.logger.Info("Plugin created", "request_id", requestID, "plugin_id", plugin.ID, "plugin_name", plugin.Name, "stage_count", len(req.Stages))
 	c.JSON(http.StatusCreated, types.APIResponse[models.Plugin]{
 		Success: true,
@@ -333,6 +341,10 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 		return
 	}
 
+	// revision용 이전 소스 저장
+	oldSource := plugin.SourceCode
+	oldSourceHash := plugin.SourceHash
+
 	var req UpdatePluginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Error("Invalid request body", "request_id", requestID, "error", err)
@@ -366,6 +378,12 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 
 	// Stages와 함께 다시 조회
 	h.db.Preload("Stages").First(&plugin, "id = ?", plugin.ID)
+
+	// 소스가 변경된 경우 revision 생성
+	userID := c.GetString("user_id")
+	if plugin.Type == "native" && plugin.SourceHash != "" && plugin.SourceHash != oldSourceHash {
+		h.createRevision(plugin.ID, plugin.Name, "update", plugin.SourceCode, plugin.GoMod, plugin.SourceHash, oldSource, "", userID)
+	}
 
 	h.logger.Info("Plugin updated", "request_id", requestID, "plugin_id", plugin.ID)
 	middleware.SuccessResponse(c, plugin)
@@ -410,6 +428,12 @@ func (h *PluginHandler) DeletePlugin(c *gin.Context) {
 	}
 
 	tx.Commit()
+
+	// 삭제 revision 생성 (native plugin인 경우)
+	userID := c.GetString("user_id")
+	if plugin.Type == "native" {
+		h.createRevision(plugin.ID, plugin.Name, "delete", "", "", plugin.SourceHash, plugin.SourceCode, "", userID)
+	}
 
 	h.logger.Info("Plugin deleted", "request_id", requestID, "plugin_id", plugin.ID, "plugin_name", pluginName)
 	c.JSON(http.StatusOK, types.APIResponse[any]{
@@ -793,4 +817,58 @@ func (h *PluginHandler) GetPluginStages(c *gin.Context) {
 	}
 
 	middleware.SuccessResponse(c, stages)
+}
+
+// ListRevisions GET /api/v1/plugins/:name/revisions — plugin revision 히스토리 조회
+func (h *PluginHandler) ListRevisions(c *gin.Context) {
+	pluginName := c.Param("name")
+
+	var plugin models.Plugin
+	if err := h.db.First(&plugin, "name = ?", pluginName).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Plugin not found")
+		return
+	}
+
+	revisions, err := h.revisionService.ListRevisions(plugin.ID, 50)
+	if err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch revisions")
+		return
+	}
+
+	middleware.SuccessResponse(c, revisions)
+}
+
+// GetRevision GET /api/v1/plugins/revisions/:revisionId — revision 상세 조회 (소스 해제)
+func (h *PluginHandler) GetRevision(c *gin.Context) {
+	revisionID := c.Param("revisionId")
+
+	revision, sourceCode, goMod, err := h.revisionService.GetRevision(revisionID)
+	if err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Revision not found")
+		return
+	}
+
+	middleware.SuccessResponse(c, gin.H{
+		"revision":    revision,
+		"source_code": sourceCode,
+		"go_mod":      goMod,
+	})
+}
+
+// createRevision revision 생성 헬퍼 (실패해도 메인 플로우에 영향 없음)
+func (h *PluginHandler) createRevision(pluginID, pluginName, action, sourceCode, goMod, sourceHash, oldSource, message, createdBy string) {
+	_, err := h.revisionService.CreateRevision(&services.CreateRevisionParams{
+		PluginID:   pluginID,
+		PluginName: pluginName,
+		Action:     action,
+		SourceCode: sourceCode,
+		GoMod:      goMod,
+		SourceHash: sourceHash,
+		OldSource:  oldSource,
+		Message:    message,
+		CreatedBy:  createdBy,
+	})
+	if err != nil {
+		h.logger.Error("Failed to create revision", "plugin_id", pluginID, "action", action, "error", err)
+	}
 }

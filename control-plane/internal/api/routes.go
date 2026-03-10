@@ -326,10 +326,12 @@ func (s *Server) setupRoutes() {
 				plugins.POST("/validate", s.pluginHandler.ValidatePluginSource)
 				plugins.POST("/test-script", s.pluginHandler.TestScript)
 				plugins.GET("/builds/:id", s.pluginHandler.GetBuild)
+				plugins.GET("/revisions/:revisionId", s.pluginHandler.GetRevision)
 				plugins.GET("/:name", s.pluginHandler.GetPlugin)
 				plugins.GET("/:name/stages", s.pluginHandler.GetPluginStages)
 				plugins.GET("/:name/builds", s.pluginHandler.ListBuilds)
 				plugins.GET("/:name/binary", s.pluginHandler.GetBinary)
+				plugins.GET("/:name/revisions", s.pluginHandler.ListRevisions)
 				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
 				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)
 			}
@@ -342,6 +344,7 @@ func (s *Server) setupRoutes() {
 				runner.GET("/status", s.runnerHandler.CheckStatus)
 				runner.POST("/build", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.StartBuild)
 				runner.POST("/resolve", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.ResolveImage)
+				runner.POST("/rebuild/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.RebuildVersion)
 			}
 
 			// 미리보기

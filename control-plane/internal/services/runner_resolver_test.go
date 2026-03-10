@@ -83,10 +83,16 @@ func TestExtractStageTypes_Dedup(t *testing.T) {
 func TestBuildRequiredError_Message(t *testing.T) {
 	err := &BuildRequiredError{
 		PendingPlugins: nil,
+		LatestReadySeq: 5,
+		LatestSeq:      7,
 	}
 	msg := err.Error()
 	if msg == "" {
 		t.Error("expected non-empty error message")
+	}
+	// seq 정보가 포함되어야 함
+	if !contains(msg, "seq #7") || !contains(msg, "seq #5") {
+		t.Errorf("error message should contain seq info, got: %s", msg)
 	}
 }
 
@@ -94,4 +100,52 @@ func TestDefaultRunnerImage(t *testing.T) {
 	if DefaultRunnerImage == "" {
 		t.Error("DefaultRunnerImage should not be empty")
 	}
+}
+
+func TestExtractStageTypesPerPipeline_Basic(t *testing.T) {
+	config := `[
+		{
+			"stages": [{"type": "filter"}, {"type": "crm-enrichment"}],
+			"outputs": [{"pre_stages": [{"type": "score-classifier"}]}]
+		},
+		{
+			"stages": [{"type": "remap"}],
+			"outputs": []
+		}
+	]`
+
+	result := extractStageTypesPerPipeline(config)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 pipelines, got %d", len(result))
+	}
+
+	// 첫 번째 pipeline: filter, crm-enrichment, score-classifier
+	if len(result[0]) != 3 {
+		t.Errorf("pipeline 0: expected 3 stage types, got %d: %v", len(result[0]), result[0])
+	}
+
+	// 두 번째 pipeline: remap
+	if len(result[1]) != 1 || result[1][0] != "remap" {
+		t.Errorf("pipeline 1: expected [remap], got %v", result[1])
+	}
+}
+
+func TestExtractStageTypesPerPipeline_Empty(t *testing.T) {
+	result := extractStageTypesPerPipeline("")
+	if result != nil {
+		t.Errorf("expected nil for empty input, got %v", result)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

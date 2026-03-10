@@ -10,6 +10,8 @@ import type {
   ClusterAgent,
   RunnerVersion,
   RunnerStatusResponse,
+  StageRevision,
+  StageRevisionDetail,
 } from '../types/plugin'
 
 // Plugin API
@@ -119,6 +121,23 @@ export async function getRunnerVersion(id: string): Promise<RunnerVersion> {
 export async function startRunnerBuild(): Promise<{ success: boolean; message: string }> {
   const resp = await api.post<{ success: boolean; message: string }>('/runner/build')
   return resp.data
+}
+
+export async function rebuildRunnerVersion(id: string): Promise<{ success: boolean; message: string }> {
+  const resp = await api.post<{ success: boolean; message: string }>(`/runner/rebuild/${id}`)
+  return resp.data
+}
+
+// Revision API
+
+export async function getPluginRevisions(name: string): Promise<StageRevision[]> {
+  const resp = await api.get<{ success: boolean; data: StageRevision[] }>(`/plugins/${name}/revisions`)
+  return resp.data?.data || []
+}
+
+export async function getRevisionDetail(revisionId: string): Promise<StageRevisionDetail> {
+  const resp = await api.get<{ success: boolean; data: StageRevisionDetail }>(`/plugins/revisions/${revisionId}`)
+  return resp.data.data
 }
 
 // Cluster Agent API

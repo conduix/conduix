@@ -46,7 +46,10 @@
 ## Phase 4: GUI 통합 — 완료
 - 상세: [WORK_PROGRESS_PHASE4.md](WORK_PROGRESS_PHASE4.md)
 
-## Phase 5: go-plugin cleanup — 미구현
+## Phase 5: Stage Revision + Build History — 완료
+- 상세: [WORK_PROGRESS_PHASE5.md](WORK_PROGRESS_PHASE5.md)
+
+## Phase 6: go-plugin cleanup — 미구현
 - [ ] plugin_stage.go (gRPC 방식) 제거
 - [ ] plugin-sdk의 gRPC 관련 코드 제거 (NativeStage 인터페이스만 유지)
 - [ ] proto/ gRPC 정의 정리

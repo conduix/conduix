@@ -706,6 +706,9 @@ type RunnerVersion struct {
 	SourceHash   string     `gorm:"size:64;not null" json:"source_hash"`            // 모든 native stage 소스의 결합 해시
 	PluginIDs    string     `gorm:"type:text" json:"plugin_ids,omitempty"`          // JSON: 포함된 native stage ID 목록
 	PluginHashes string     `gorm:"type:text" json:"plugin_hashes,omitempty"`       // JSON: plugin_id → source_hash 스냅샷
+	RevisionSeq  int        `gorm:"default:0" json:"revision_seq"`                  // 빌드 시점 최신 revision seq (여기까지 포함)
+	Trigger      string     `gorm:"size:20;default:manual" json:"trigger"`          // "manual" | "auto" | "rebuild"
+	ParentID     string     `gorm:"size:36" json:"parent_id,omitempty"`             // 재빌드 시 원본 버전 ID
 	BuildLog     string     `gorm:"type:mediumtext" json:"build_log,omitempty"`
 	Error        string     `gorm:"type:text" json:"error,omitempty"`
 	DurationMs   int        `json:"duration_ms,omitempty"`
@@ -715,7 +718,29 @@ type RunnerVersion struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
+// StageRevision stage 변경 히스토리 (글로벌 seq 순번)
+// Plugin 추가/수정/삭제 시 자동으로 생성되며, 소스 스냅샷을 zstd 압축하여 저장
+type StageRevision struct {
+	ID          string    `gorm:"primaryKey;size:36" json:"id"`
+	Seq         int       `gorm:"autoIncrement;uniqueIndex" json:"seq"`        // 글로벌 순번
+	PluginID    string    `gorm:"size:36;not null;index" json:"plugin_id"`     // 변경된 plugin FK
+	PluginName  string    `gorm:"size:255" json:"plugin_name"`                 // 조회 편의
+	Action      string    `gorm:"size:20;not null" json:"action"`              // "create" | "update" | "delete"
+	SourceData  []byte    `gorm:"type:mediumblob" json:"-"`                    // zstd 압축된 소스 스냅샷
+	GoModData   []byte    `gorm:"type:blob" json:"-"`                          // zstd 압축된 go.mod (nullable)
+	SourceHash  string    `gorm:"size:64" json:"source_hash"`                  // 변경 시점 소스 해시
+	DiffSummary string    `gorm:"size:500" json:"diff_summary,omitempty"`      // "+12 -3 lines" 등
+	Message     string    `gorm:"size:500" json:"message,omitempty"`           // 사용자 메모 (optional)
+	CreatedBy   string    `gorm:"size:36" json:"created_by,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // TableName 테이블 이름
 func (RunnerVersion) TableName() string {
 	return "runner_versions"
+}
+
+// TableName 테이블 이름
+func (StageRevision) TableName() string {
+	return "stage_revisions"
 }

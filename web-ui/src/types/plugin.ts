@@ -148,6 +148,9 @@ export interface RunnerVersion {
   source_hash: string
   plugin_ids?: string
   plugin_hashes?: string
+  revision_seq?: number
+  trigger?: 'manual' | 'auto' | 'rebuild'
+  parent_id?: string
   build_log?: string
   error?: string
   duration_ms?: number
@@ -155,6 +158,27 @@ export interface RunnerVersion {
   started_at?: string
   finished_at?: string
   created_at: string
+}
+
+// Stage Revision (변경 히스토리)
+export interface StageRevision {
+  id: string
+  seq: number
+  plugin_id: string
+  plugin_name: string
+  action: 'create' | 'update' | 'delete'
+  source_hash: string
+  diff_summary?: string
+  message?: string
+  created_by?: string
+  created_at: string
+}
+
+// Revision 상세 (소스코드 포함)
+export interface StageRevisionDetail {
+  revision: StageRevision
+  source_code: string
+  go_mod?: string
 }
 
 export interface RunnerStatusResponse {

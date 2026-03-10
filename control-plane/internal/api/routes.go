@@ -340,6 +340,7 @@ func (s *Server) setupRoutes() {
 				runner.GET("/versions", s.runnerHandler.ListVersions)
 				runner.GET("/versions/:id", s.runnerHandler.GetVersion)
 				runner.GET("/status", s.runnerHandler.CheckStatus)
+				runner.POST("/build", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.StartBuild)
 				runner.POST("/resolve", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.ResolveImage)
 			}
 

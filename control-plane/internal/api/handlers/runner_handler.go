@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/conduix/conduix/control-plane/internal/builder"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -15,6 +18,7 @@ import (
 type RunnerHandler struct {
 	db       *database.DB
 	resolver *services.RunnerResolver
+	builder  *builder.RunnerBuilder
 }
 
 // NewRunnerHandler RunnerHandler 생성
@@ -22,6 +26,7 @@ func NewRunnerHandler(db *database.DB) *RunnerHandler {
 	return &RunnerHandler{
 		db:       db,
 		resolver: services.NewRunnerResolver(db.DB),
+		builder:  builder.NewRunnerBuilder(db.DB, nil),
 	}
 }
 
@@ -113,6 +118,30 @@ func (h *RunnerHandler) CheckStatus(c *gin.Context) {
 		"needs_build":          needsBuild,
 		"plugins":              statuses,
 		"latest_ready_version": latestReady,
+	})
+}
+
+// StartBuild POST /api/v1/runner/build — Runner 빌드 시작 (비동기)
+func (h *RunnerHandler) StartBuild(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	// 비동기 빌드 시작 (HTTP context와 분리)
+	go func() {
+		result, err := h.builder.Build(context.Background(), userID)
+		if err != nil {
+			versionID := ""
+			if result != nil {
+				versionID = result.VersionID
+			}
+			slog.Error("runner build failed", "error", err, "version_id", versionID)
+			return
+		}
+		slog.Info("runner build completed", "version_id", result.VersionID, "status", result.Status, "duration", result.Duration)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"success": true,
+		"message": "build started",
 	})
 }
 

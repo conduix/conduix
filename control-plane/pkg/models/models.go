@@ -592,29 +592,29 @@ func (PipelineLink) TableName() string {
 // Plugin 플러그인 모델
 // 커스텀 Stage 플러그인 (script: Starlark, native: Go 네이티브 빌드)
 type Plugin struct {
-	ID          string         `gorm:"primaryKey;size:36" json:"id"`
-	Name        string         `gorm:"size:255;not null;uniqueIndex" json:"name"` // 플러그인 이름 (예: my-company-plugins)
-	Type        string         `gorm:"size:20;not null;default:native" json:"type"` // "script" | "native"
-	Version     string         `gorm:"size:50;not null" json:"version"`             // 버전 (예: v1.0.0)
-	Image       string         `gorm:"size:500" json:"image,omitempty"`             // 컨테이너 이미지 (V2 호환, V3에서는 optional)
-	Description string         `gorm:"type:text" json:"description,omitempty"`      // 플러그인 설명
-	SourceCode  string         `gorm:"type:mediumtext" json:"source_code,omitempty"` // Go 소스 또는 Starlark 스크립트
-	GoMod       string         `gorm:"type:text" json:"go_mod,omitempty"`            // native만: go.mod 내용
-	SourceHash  string         `gorm:"size:64" json:"source_hash,omitempty"`         // 현재 소스의 SHA256
-	DeployedHash string       `gorm:"size:64" json:"deployed_hash,omitempty"`        // 최신 ready 이미지에 포함된 소스 해시
-	RunnerVersionID string    `gorm:"size:36" json:"runner_version_id,omitempty"`    // 이 stage가 포함된 최신 ready 버전 ID
-	SourceRepo  string         `gorm:"size:500" json:"source_repo,omitempty"`        // Git 저장소 URL (optional)
-	Status      string         `gorm:"size:50;default:active" json:"status"`         // active, inactive, deprecated
-	CreatedBy   string         `gorm:"size:36" json:"created_by,omitempty"`          // 등록한 사용자
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	ID              string         `gorm:"primaryKey;size:36" json:"id"`
+	Name            string         `gorm:"size:255;not null;uniqueIndex" json:"name"`    // 플러그인 이름 (예: my-company-plugins)
+	Type            string         `gorm:"size:20;not null;default:native" json:"type"`  // "script" | "native"
+	Version         string         `gorm:"size:50;not null" json:"version"`              // 버전 (예: v1.0.0)
+	Image           string         `gorm:"size:500" json:"image,omitempty"`              // 컨테이너 이미지 (V2 호환, V3에서는 optional)
+	Description     string         `gorm:"type:text" json:"description,omitempty"`       // 플러그인 설명
+	SourceCode      string         `gorm:"type:mediumtext" json:"source_code,omitempty"` // Go 소스 또는 Starlark 스크립트
+	GoMod           string         `gorm:"type:text" json:"go_mod,omitempty"`            // native만: go.mod 내용
+	SourceHash      string         `gorm:"size:64" json:"source_hash,omitempty"`         // 현재 소스의 SHA256
+	DeployedHash    string         `gorm:"size:64" json:"deployed_hash,omitempty"`       // 최신 ready 이미지에 포함된 소스 해시
+	RunnerVersionID string         `gorm:"size:36" json:"runner_version_id,omitempty"`   // 이 stage가 포함된 최신 ready 버전 ID
+	SourceRepo      string         `gorm:"size:500" json:"source_repo,omitempty"`        // Git 저장소 URL (optional)
+	Status          string         `gorm:"size:50;default:active" json:"status"`         // active, inactive, deprecated
+	CreatedBy       string         `gorm:"size:36" json:"created_by,omitempty"`          // 등록한 사용자
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relations
-	Stages        []PluginStage   `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
-	Binaries      []PluginBinary  `gorm:"foreignKey:PluginID" json:"binaries,omitempty"`
-	Builds        []PluginBuild   `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
-	RunnerVersion *RunnerVersion  `gorm:"foreignKey:RunnerVersionID" json:"runner_version,omitempty"`
+	Stages        []PluginStage  `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
+	Binaries      []PluginBinary `gorm:"foreignKey:PluginID" json:"binaries,omitempty"`
+	Builds        []PluginBuild  `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
+	RunnerVersion *RunnerVersion `gorm:"foreignKey:RunnerVersionID" json:"runner_version,omitempty"`
 }
 
 // TableName 테이블 이름
@@ -698,14 +698,14 @@ func (PluginBinary) TableName() string {
 // RunnerVersion pipeline-runner 이미지 빌드 버전
 // 모든 native stage를 포함하는 Runner 이미지의 빌드 기록
 type RunnerVersion struct {
-	ID           string     `gorm:"primaryKey;size:36" json:"id"`              // "rv-42"
-	BuildNumber  int        `gorm:"autoIncrement;uniqueIndex" json:"build_number"` // 자동 증가
+	ID           string     `gorm:"primaryKey;size:36" json:"id"`                   // "rv-42"
+	BuildNumber  int        `gorm:"autoIncrement;uniqueIndex" json:"build_number"`  // 자동 증가
 	Status       string     `gorm:"size:20;not null;default:pending" json:"status"` // pending → building → ready | failed
-	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`       // "ghcr.io/.../pipeline-runner:rv-42"
-	ImageDigest  string     `gorm:"size:100" json:"image_digest,omitempty"`    // sha256:... (이미지 무결성 검증)
-	SourceHash   string     `gorm:"size:64;not null" json:"source_hash"`       // 모든 native stage 소스의 결합 해시
-	PluginIDs    string     `gorm:"type:text" json:"plugin_ids,omitempty"`     // JSON: 포함된 native stage ID 목록
-	PluginHashes string     `gorm:"type:text" json:"plugin_hashes,omitempty"`  // JSON: plugin_id → source_hash 스냅샷
+	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-runner:rv-42"
+	ImageDigest  string     `gorm:"size:100" json:"image_digest,omitempty"`         // sha256:... (이미지 무결성 검증)
+	SourceHash   string     `gorm:"size:64;not null" json:"source_hash"`            // 모든 native stage 소스의 결합 해시
+	PluginIDs    string     `gorm:"type:text" json:"plugin_ids,omitempty"`          // JSON: 포함된 native stage ID 목록
+	PluginHashes string     `gorm:"type:text" json:"plugin_hashes,omitempty"`       // JSON: plugin_id → source_hash 스냅샷
 	BuildLog     string     `gorm:"type:mediumtext" json:"build_log,omitempty"`
 	Error        string     `gorm:"type:text" json:"error,omitempty"`
 	DurationMs   int        `json:"duration_ms,omitempty"`

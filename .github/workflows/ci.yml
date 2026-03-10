@@ -16,64 +16,67 @@ permissions:
 
 jobs:
   # ============================================================
-  # Go 테스트 (control-plane, pipeline-core, pipeline-agent, plugin-sdk)
+  # 1. Go 테스트 병렬화 (Matrix 전략)
+  # 패키지별로 독립된 러너에서 동시 실행하여 시간을 1/5로 단축
   # ============================================================
   test-go:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [shared, plugin-sdk, pipeline-core, pipeline-agent, control-plane]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache-dependency-path: |
-            shared/go.sum
-            pipeline-core/go.sum
-            pipeline-agent/go.sum
-            control-plane/go.sum
-            plugin-sdk/go.sum
+          cache: true
+          cache-dependency-path: "${{ matrix.package }}/go.sum"
 
-      - name: Test shared
-        run: cd shared && go test -p 4 -parallel 8 ./...
-
-      - name: Test plugin-sdk
-        run: cd plugin-sdk && go test -p 4 -parallel 8 ./...
-
-      - name: Test pipeline-core
-        run: cd pipeline-core && go test -p 4 -parallel 8 ./...
-
-      - name: Test pipeline-agent
-        run: cd pipeline-agent && go test -p 4 -parallel 8 ./...
-
-      - name: Test control-plane
-        run: cd control-plane && go test -p 4 -parallel 8 ./...
+      - name: Test ${{ matrix.package }}
+        run: cd ${{ matrix.package }} && go test -v -p 4 -parallel 8 ./...
 
   # ============================================================
-  # Web UI 빌드 (tsc는 build에 포함)
+  # 2. Web UI 고속 빌드 (node_modules 직접 캐싱)
+  # npm ci의 설치 시간(60s+)을 캐시 히트 시 0초로 만듦
   # ============================================================
   test-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Set up Node
+        id: setup-node
+        uses: actions/setup-node@v4
         with:
           node-version: "18"
 
       - name: Cache node_modules
-        id: cache-nm
+        id: cache-web
         uses: actions/cache@v4
         with:
           path: web-ui/node_modules
-          key: node-modules-${{ hashFiles('web-ui/package-lock.json') }}
+          # OS, Node 버전, lock 파일 해시를 조합한 정교한 키
+          key: ${{ runner.os }}-node-${{ steps.setup-node.outputs.node-version }}-${{ hashFiles('web-ui/package-lock.json') }}
+          # 일치하는 키가 없어도 가장 유사한 이전 캐시를 불러와서 델타 설치 유도
+          restore-keys: |
+            ${{ runner.os }}-node-${{ steps.setup-node.outputs.node-version }}-
 
       - name: Install dependencies
-        if: steps.cache-nm.outputs.cache-hit != 'true'
-        run: cd web-ui && npm ci
+        # 캐시가 완벽히 일치하면 60~70초 걸리는 설치 과정을 통째로 건너뜀
+        if: steps.cache-web.outputs.cache-hit != 'true'
+        run: |
+          cd web-ui
+          npm ci --prefer-offline --no-audit
 
-      - run: cd web-ui && npm run build
+      - name: Build
+        run: cd web-ui && npm run build
 
   # ============================================================
-  # Docker 이미지 빌드 + GHCR Push (main branch only)
+  # 3. Docker 이미지 빌드 + GHCR Push
+  # 모든 테스트 통과 시 멀티 서비스 병렬 빌드 시작
   # ============================================================
   build-and-push:
     needs: [test-go, test-web]
@@ -97,7 +100,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.CR_PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -120,5 +123,6 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Docker 레이어 캐시를 GitHub Actions 전용 저장소에 보관 (공유 극대화)
           cache-from: type=gha
           cache-to: type=gha,mode=max

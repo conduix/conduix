@@ -63,6 +63,27 @@ export function getPluginBinaryUrl(name: string, version?: string): string {
   return version ? `${base}?version=${version}` : base
 }
 
+// Script Test API
+
+export interface TestScriptRequest {
+  code: string
+  timeout?: string
+  sample_data: Record<string, unknown>
+}
+
+export interface TestScriptResponse {
+  success: boolean
+  output?: Record<string, unknown>
+  dropped: boolean
+  error?: string
+  elapsed: string
+}
+
+export async function testScript(req: TestScriptRequest): Promise<TestScriptResponse> {
+  const resp = await api.post<{ success: boolean; data: TestScriptResponse }>('/plugins/test-script', req)
+  return resp.data.data
+}
+
 // Stage API
 
 export async function getStages(): Promise<StageListResponse> {

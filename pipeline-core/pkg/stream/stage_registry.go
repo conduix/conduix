@@ -992,33 +992,14 @@ func FileOutputStageSchema() types.StageSchema {
 // ScriptStageSchema Script Stage 스키마 (Starlark 스크립팅)
 func ScriptStageSchema() types.StageSchema {
 	return types.StageSchema{
-		Type:        "script",
-		DisplayName: "Script",
-		Description: "Starlark 스크립트로 레코드 변환 (샌드박스 실행)",
-		Category:    types.CategoryTransform,
-		Icon:        "Code",
-		Color:       "#ff6f00",
-		Fields: []types.StageFieldSchema{
-			{
-				Name:        "code",
-				Type:        types.FieldTypeCode,
-				DisplayName: "Starlark 코드",
-				Description: "def process(record) 함수를 정의하세요. record는 dict이며, dict 반환 시 변환, None 반환 시 드롭됩니다.",
-				Required:    true,
-				Placeholder: "def process(record):\n    record[\"processed\"] = True\n    return record",
-				Multiline:   true,
-				Rows:        15,
-				MonoSpace:   true,
-			},
-			{
-				Name:        "timeout",
-				Type:        types.FieldTypeDuration,
-				DisplayName: "타임아웃",
-				Description: "레코드당 최대 실행 시간",
-				Default:     "1s",
-				Placeholder: "1s",
-			},
-		},
+		Type:         "script",
+		DisplayName:  "Script",
+		Description:  "Starlark 스크립트로 레코드 변환 (샌드박스 실행)",
+		Category:     types.CategoryTransform,
+		Icon:         "Code",
+		Color:        "#ff6f00",
+		CustomEditor: "ScriptStageEditor",
+		Fields:       []types.StageFieldSchema{}, // CustomEditor가 전체 폼 담당
 	}
 }
 

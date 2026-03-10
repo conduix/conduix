@@ -139,7 +139,7 @@ func (s *ScriptStage) Process(ctx context.Context, record *Record) (*Record, err
 		s.incrementError()
 		return record, fmt.Errorf("script stage %q: execution timeout (%v)", s.name, s.timeout)
 	case <-ctx.Done():
-		env.thread.Cancel("context cancelled")
+		env.thread.Cancel("context canceled")
 		<-done
 		return nil, ctx.Err()
 	}
@@ -172,17 +172,17 @@ func (s *ScriptStage) Process(ctx context.Context, record *Record) (*Record, err
 // builtinFunctions returns predeclared Starlark built-in functions.
 func (s *ScriptStage) builtinFunctions() starlark.StringDict {
 	return starlark.StringDict{
-		"hash_sha256": starlark.NewBuiltin("hash_sha256", builtinHashSHA256),
-		"base64_encode": starlark.NewBuiltin("base64_encode", builtinBase64Encode),
-		"base64_decode": starlark.NewBuiltin("base64_decode", builtinBase64Decode),
-		"json_encode": starlark.NewBuiltin("json_encode", builtinJSONEncode),
-		"json_decode": starlark.NewBuiltin("json_decode", builtinJSONDecode),
-		"regex_match": starlark.NewBuiltin("regex_match", builtinRegexMatch),
-		"regex_replace": starlark.NewBuiltin("regex_replace", builtinRegexReplace),
-		"timestamp_now": starlark.NewBuiltin("timestamp_now", builtinTimestampNow),
+		"hash_sha256":     starlark.NewBuiltin("hash_sha256", builtinHashSHA256),
+		"base64_encode":   starlark.NewBuiltin("base64_encode", builtinBase64Encode),
+		"base64_decode":   starlark.NewBuiltin("base64_decode", builtinBase64Decode),
+		"json_encode":     starlark.NewBuiltin("json_encode", builtinJSONEncode),
+		"json_decode":     starlark.NewBuiltin("json_decode", builtinJSONDecode),
+		"regex_match":     starlark.NewBuiltin("regex_match", builtinRegexMatch),
+		"regex_replace":   starlark.NewBuiltin("regex_replace", builtinRegexReplace),
+		"timestamp_now":   starlark.NewBuiltin("timestamp_now", builtinTimestampNow),
 		"timestamp_parse": starlark.NewBuiltin("timestamp_parse", builtinTimestampParse),
-		"log": starlark.NewBuiltin("log", builtinLog),
-		"struct": starlark.NewBuiltin("struct", starlarkstruct.Make),
+		"log":             starlark.NewBuiltin("log", builtinLog),
+		"struct":          starlark.NewBuiltin("struct", starlarkstruct.Make),
 	}
 }
 

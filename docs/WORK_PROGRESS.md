@@ -1,6 +1,6 @@
 # Plugin V4 구현 진행 상황
 
-## Phase 1: Script Stage (Tier 1)
+## Phase 1: Script Stage (Tier 1) — 완료
 
 ### 작업 항목
 - [x] `go.starlark.net` 의존성 추가 (pipeline-core/go.mod)
@@ -13,25 +13,32 @@
 - [x] `pipeline-core/pkg/stream/stage_registry.go` init()에 ScriptStageSchema 등록
 - [x] `pipeline-core/pkg/stream/script_stage_test.go` — 16개 단위 테스트 (전부 PASS)
 - [x] control-plane: `POST /api/v1/plugins/test-script` Script 테스트 API (3개 테스트 PASS)
-- [ ] web-ui: Script Stage 에디터 (Monaco + Python 하이라이트 + 테스트 UI)
+- [x] web-ui: ScriptStageEditor (Monaco + Python 하이라이트 + 테스트 UI)
 
-### 테스트 커버리지
+### 구현 파일
 
-**pipeline-core (16 tests, all PASS)**
-- BasicProcess, NoneDropsRecord, Timeout, CompileError
-- MissingProcessFunc, MissingCode, RuntimeError (passthrough)
-- BuiltinHashSHA256, BuiltinBase64, BuiltinJSON, BuiltinRegex, BuiltinTimestamp
-- ContextCancellation, Stats, NewStageFactory, RegistryHasScript
+**Backend (Go)**
+- `pipeline-core/pkg/stream/script_stage.go` — Starlark 실행 엔진
+- `pipeline-core/pkg/stream/script_stage_test.go` — 16개 테스트
+- `pipeline-core/pkg/stream/stage.go` — NewStage() "script" case
+- `pipeline-core/pkg/stream/stage_registry.go` — ScriptStageSchema (CustomEditor)
+- `control-plane/internal/api/handlers/plugin_handler.go` — TestScript API
+- `control-plane/internal/api/handlers/plugin_handler_test.go` — 3개 테스트
+- `control-plane/internal/api/routes.go` — POST /plugins/test-script
 
-**control-plane (3 tests, all PASS)**
-- TestTestScript_Success, TestTestScript_Drop, TestTestScript_CompileError
+**Frontend (React)**
+- `web-ui/src/components/ScriptStageEditor/ScriptStageEditor.tsx` — 전용 에디터
+- `web-ui/src/components/StageSchemaForm/StageSchemaForm.tsx` — customEditors 등록
+- `web-ui/src/services/pluginApi.ts` — testScript API 함수
 
 ### 주요 구현 노트
 - Starlark `ExecFileOptions`에 `&syntax.FileOptions{}` 전달 필수 (nil → panic)
 - Starlark에서 `**` 연산자 미지원 (Python과 다름)
 - 메모리 제한: `thread.SetMaxAllocs` 미지원 → 타임아웃으로 대체
+- Schema에서 CustomEditor="ScriptStageEditor" 사용 (Fields 비움, 에디터가 전체 폼 담당)
 
-### API 엔드포인트
-- `POST /api/v1/plugins/test-script` — Starlark 스크립트 테스트 실행
-  - Request: `{ code, timeout?, sample_data }`
-  - Response: `{ success, output?, dropped, error?, elapsed }`
+## Phase 2-5: 미구현
+- Phase 2: RunnerVersion 관리
+- Phase 3: Native build system
+- Phase 4: GUI 플러그인 관리
+- Phase 5: go-plugin cleanup

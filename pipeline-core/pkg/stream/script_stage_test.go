@@ -420,7 +420,7 @@ func TestScriptStage_RegistryHasScript(t *testing.T) {
 	if schema.DisplayName != "Script" {
 		t.Errorf("expected DisplayName=Script, got %s", schema.DisplayName)
 	}
-	if len(schema.Fields) < 2 {
-		t.Errorf("expected at least 2 fields (code, timeout), got %d", len(schema.Fields))
+	if schema.CustomEditor != "ScriptStageEditor" {
+		t.Errorf("expected CustomEditor=ScriptStageEditor, got %s", schema.CustomEditor)
 	}
 }

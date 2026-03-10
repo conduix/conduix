@@ -13,8 +13,7 @@ import { SchemaField } from './SchemaField'
 // 커스텀 에디터 동적 임포트
 const customEditors: Record<string, React.LazyExoticComponent<React.ComponentType<CustomEditorProps>>> = {
   ContractStageEditor: lazy(() => import('../ContractStageEditor/ContractStageEditor')),
-  // 추가 커스텀 에디터들
-  // RouteRuleEditor: lazy(() => import('../RouteRuleEditor/RouteRuleEditor')),
+  ScriptStageEditor: lazy(() => import('../ScriptStageEditor/ScriptStageEditor')),
 }
 
 interface CustomEditorProps {

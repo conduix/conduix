@@ -829,6 +829,126 @@ POST /api/v1/workflows/:id/start
 
 ---
 
+## 빌드 캐시 최적화
+
+Runner 이미지 빌드는 stage 수정마다 발생하므로, **캐시 히트율이 빌드 시간을 결정**한다.
+CI 운영 경험에서 확인된 교훈:
+- Docker layer cache 키 변경 → 전체 재빌드 (6초 → 2분+)
+- Go module cache miss → 의존성 재다운로드 (11초 → 3분+)
+
+### Dockerfile 레이어 설계
+
+**핵심 원칙: 변경 빈도가 낮은 것부터 위에, 높은 것을 아래에 배치**
+
+```dockerfile
+# 1. Base image — 거의 안 바뀜 (CACHED)
+FROM golang:1.26-alpine AS builder
+
+# 2. 시스템 의존성 — 거의 안 바뀜 (CACHED)
+RUN apk add --no-cache git
+
+# 3. Go module 다운로드 — go.mod 변경 시만 재실행
+#    ⚠ builtin go.mod와 plugin go.mod를 분리하여 COPY
+COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
+COPY shared/go.mod shared/go.sum ./shared/
+COPY plugin-sdk/go.mod plugin-sdk/go.sum ./plugin-sdk/
+# plugin go.mod는 별도 레이어 — plugin 의존성 추가 시에만 cache miss
+COPY plugins/go.mod plugins/go.sum ./plugins/
+RUN go mod download
+
+# 4. Builtin 소스 — builtin 수정 시에만 재빌드 (대부분 CACHED)
+COPY pipeline-core/ ./pipeline-core/
+COPY shared/ ./shared/
+COPY plugin-sdk/ ./plugin-sdk/
+
+# 5. Plugin 소스 — stage 수정 시 여기만 cache miss
+COPY plugins/ ./plugins/
+
+# 6. 빌드 — plugin 소스만 바뀌면 incremental build
+RUN CGO_ENABLED=0 go build -o /pipeline-runner ./cmd/runner
+```
+
+### 레이어별 캐시 영향
+
+| 레이어 | 변경 빈도 | Cache miss 시 영향 | 대응 |
+|--------|----------|-------------------|------|
+| Base image | 거의 없음 | 전체 재빌드 (~3분) | Go 버전 업데이트 시에만 |
+| go.mod (builtin) | 드묾 | module 재다운로드 (~1분) | builtin 의존성과 plugin 의존성 분리 |
+| go.mod (plugin) | plugin 의존성 추가 시 | plugin module만 재다운로드 | builtin과 별도 레이어 |
+| Builtin 소스 | CI 릴리스 시 | builtin 재컴파일 (~2분) | base 이미지에 포함하여 회피 |
+| **Plugin 소스** | **자주 (개발 중)** | **incremental compile (~10초)** | **이 레이어만 변경되도록 설계** |
+| go build | 위 변경 시 | Go incremental build | build cache mount 활용 |
+
+### Go Build Cache 활용
+
+```dockerfile
+# Docker BuildKit cache mount — 빌드 간 Go 컴파일 캐시 유지
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -o /pipeline-runner ./cmd/runner
+```
+
+⚠ **주의**: `--mount=type=cache`는 **같은 빌드 서버에서만 유효**.
+- K8s Job (Builder Pod) → Job마다 새 Pod이면 cache 없음
+- 해결: Builder Pod에 PVC mount 또는 특정 노드에 고정 (nodeSelector)
+- GitHub Actions → `cache-from: type=gha`로 layer cache만 활용 가능
+
+### Base 이미지 전략
+
+```
+pipeline-runner:base (CI에서 빌드)
+├── Alpine + Go runtime
+├── builtin input/stage/output 컴파일 완료
+└── Starlark 인터프리터 내장
+
+pipeline-runner:rv-N (Builder Service에서 빌드)
+├── FROM pipeline-runner:base  ← builtin 레이어 CACHED
+├── COPY plugins/ (native stage 소스만 추가)
+└── go build (incremental — plugin 코드만 컴파일)
+```
+
+**효과**: native stage만 수정하면 base 이미지 위에 plugin 레이어만 추가되어
+**전체 빌드 3분 → incremental 빌드 10~20초**로 단축.
+
+### 소스 결합 해시 기반 빌드 스킵
+
+```
+빌드 요청 시:
+1. 모든 native plugin의 SourceHash를 결합하여 combinedHash 계산
+2. 기존 ready RunnerVersion 중 동일한 combinedHash가 있으면 빌드 스킵
+3. 해당 버전 재사용 → DeployedHash 갱신만 수행
+```
+
+이로써 **동일 소스로 반복 빌드하는 낭비를 방지**.
+
+### Builder Pod 캐시 최적화
+
+```yaml
+# Builder Job 예시 — PVC로 Go cache 영속화
+apiVersion: batch/v1
+kind: Job
+spec:
+  template:
+    spec:
+      containers:
+        - name: builder
+          image: golang:1.26-alpine
+          volumeMounts:
+            - name: go-cache
+              mountPath: /root/.cache/go-build
+            - name: mod-cache
+              mountPath: /go/pkg/mod
+      volumes:
+        - name: go-cache
+          persistentVolumeClaim:
+            claimName: builder-go-cache    # 빌드 간 Go 컴파일 캐시 유지
+        - name: mod-cache
+          persistentVolumeClaim:
+            claimName: builder-mod-cache   # module 다운로드 캐시 유지
+```
+
+---
+
 ## 마이그레이션 (V3 → V4)
 
 1. 기존 플러그인 소스 코드는 그대로 사용 가능 (인터페이스 유사)

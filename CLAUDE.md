@@ -260,7 +260,7 @@ Agent automatically switches modes when Redis becomes unavailable.
 
 ### Start Colima
 ```bash
-colima start --arch arm64 --kubernetes
+colima start --arch x86_64 --kubernetes
 ```
 
 ### Deploy Order (ArgoCD Applications)

@@ -1193,7 +1193,6 @@
     "title": "Plugins",
     "name": "Plugin Name",
     "version": "Version",
-    "image": "Container Image",
     "sourceRepo": "Source Repository",
     "stages": "Stages",
     "stageType": "Stage Type",

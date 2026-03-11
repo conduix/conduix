@@ -1206,7 +1206,6 @@
     "title": "플러그인",
     "name": "플러그인명",
     "version": "버전",
-    "image": "컨테이너 이미지",
     "sourceRepo": "소스 저장소",
     "stages": "Stage",
     "stageType": "Stage 타입",

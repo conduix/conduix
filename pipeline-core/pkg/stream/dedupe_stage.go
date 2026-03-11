@@ -10,8 +10,8 @@ import (
 
 // dedupeEntry tracks a seen key with its timestamp
 type dedupeEntry struct {
-	seenAt    time.Time
-	recordTS  time.Time // keep_latest 전략용 (레코드의 타임스탬프)
+	seenAt   time.Time
+	recordTS time.Time // keep_latest 전략용 (레코드의 타임스탬프)
 }
 
 // DedupeStage removes duplicate records based on key fields

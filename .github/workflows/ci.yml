@@ -75,16 +75,18 @@ jobs:
         run: cd web-ui && npm run build
 
   # ============================================================
-  # 3. Docker 이미지 빌드 + GHCR Push
-  # 모든 테스트 통과 시 멀티 서비스 병렬 빌드 시작
+  # 3. Docker 이미지 빌드 (아키텍처별 병렬 빌드)
+  # 서비스 × 아키텍처 = 6개 runner에서 동시 실행 → 빌드시간 증가 없음
   # ============================================================
-  build-and-push:
+  build:
     needs: [test-go, test-web]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        service: [control-plane, agent, web-ui]
+        platform: [linux/amd64, linux/arm64]
         include:
           - service: control-plane
             dockerfile: deploy/docker/Dockerfile.control-plane
@@ -102,6 +104,67 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Platform pair slug
+        id: platform
+        run: echo "slug=$(echo '${{ matrix.platform }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.service }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ steps.platform.outputs.slug }}
+          cache-to: type=gha,scope=${{ matrix.service }}-${{ steps.platform.outputs.slug }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests/${{ matrix.service }}
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${{ matrix.service }}/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.service }}-${{ steps.platform.outputs.slug }}
+          path: /tmp/digests/${{ matrix.service }}/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ============================================================
+  # 4. Manifest Merge + Tag Push
+  # 아키텍처별 digest를 멀티 플랫폼 manifest로 합침
+  # ============================================================
+  merge-and-push:
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [control-plane, agent, web-ui]
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.service }}-*
+          merge-multiple: true
+          path: /tmp/digests
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -113,16 +176,11 @@ jobs:
           tags: |
             type=sha,prefix=
             type=raw,value=latest
+            type=raw,value=main
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # Docker 레이어 캐시를 GitHub Actions 전용 저장소에 보관 (공유 극대화)
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf '${{ env.IMAGE_PREFIX }}/${{ matrix.service }}@sha256:%s ' *)

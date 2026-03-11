@@ -20,14 +20,6 @@ import {
   ListItem,
   ListItemText,
   ListItemIcon,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Tab,
-  Tabs,
 } from '@mui/material'
 import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
@@ -37,16 +29,11 @@ import {
   Edit as EditIcon,
   CheckCircle as ActiveIcon,
   Category as CategoryIcon,
-  Build as BuildIcon,
-  Warning as WarningIcon,
-  History as HistoryIcon,
-  Replay as ReplayIcon,
-  Description as LogIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useSnackbar } from '../hooks/useSnackbar'
-import type { Plugin, PluginCreateRequest, PluginStageCreate, RunnerStatusResponse, RunnerVersion, StageRevision } from '../types/plugin'
-import { getPlugins, createPlugin, updatePlugin, deletePlugin, getRunnerStatus, startRunnerBuild, getRunnerVersions, rebuildRunnerVersion, getPluginRevisions } from '../services/pluginApi'
+import type { Plugin, PluginCreateRequest, PluginStageCreate } from '../types/plugin'
+import { getPlugins, createPlugin, updatePlugin, deletePlugin } from '../services/pluginApi'
 
 interface PluginFormData {
   name: string
@@ -105,64 +92,18 @@ export default function PluginsPage() {
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null)
   const [formData, setFormData] = useState<PluginFormData>(initialFormData)
   const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
-  const [runnerStatus, setRunnerStatus] = useState<RunnerStatusResponse | null>(null)
-  const [building, setBuilding] = useState(false)
-  const [runnerVersions, setRunnerVersions] = useState<RunnerVersion[]>([])
-  const [revisions, setRevisions] = useState<StageRevision[]>([])
-  const [selectedRevisionPlugin, setSelectedRevisionPlugin] = useState<string | null>(null)
-  const [buildLogDialog, setBuildLogDialog] = useState<{ open: boolean; log: string; title: string }>({ open: false, log: '', title: '' })
-  const [bottomTab, setBottomTab] = useState(0)
 
   const loadPlugins = useCallback(async () => {
     setLoading(true)
     try {
-      const [data, status, versions] = await Promise.all([
-        getPlugins(),
-        getRunnerStatus().catch(() => null),
-        getRunnerVersions().catch(() => []),
-      ])
+      const data = await getPlugins()
       setPlugins(data)
-      if (status) setRunnerStatus(status)
-      setRunnerVersions(versions)
     } catch {
       showError(t('plugin.loadError'))
     } finally {
       setLoading(false)
     }
   }, [t, showError])
-
-  const handleRunnerBuild = async () => {
-    setBuilding(true)
-    try {
-      await startRunnerBuild()
-      showSuccess('Runner build started')
-      setTimeout(() => loadPlugins(), 3000)
-    } catch {
-      showError('Failed to start runner build')
-    } finally {
-      setBuilding(false)
-    }
-  }
-
-  const handleRebuild = async (versionId: string) => {
-    try {
-      await rebuildRunnerVersion(versionId)
-      showSuccess('Rebuild started')
-      setTimeout(() => loadPlugins(), 3000)
-    } catch {
-      showError('Failed to start rebuild')
-    }
-  }
-
-  const loadRevisions = async (pluginName: string) => {
-    try {
-      const data = await getPluginRevisions(pluginName)
-      setRevisions(data)
-      setSelectedRevisionPlugin(pluginName)
-    } catch {
-      showError('Failed to load revisions')
-    }
-  }
 
   useEffect(() => {
     loadPlugins()
@@ -279,34 +220,6 @@ export default function PluginsPage() {
       minWidth: 150,
     },
     {
-      field: 'type',
-      headerName: 'Type',
-      width: 90,
-      renderCell: (params: GridRenderCellParams) => (
-        <Chip
-          size="small"
-          label={params.value || 'native'}
-          color={params.value === 'script' ? 'info' : 'default'}
-          variant="outlined"
-        />
-      ),
-    },
-    {
-      field: 'deploy_status',
-      headerName: 'Deploy',
-      width: 100,
-      renderCell: (params: GridRenderCellParams) => {
-        const plugin = params.row as Plugin
-        if (plugin.type === 'script') {
-          return <Chip size="small" label="Instant" color="success" variant="outlined" />
-        }
-        const needsBuild = plugin.source_hash && plugin.source_hash !== plugin.deployed_hash
-        return needsBuild
-          ? <Chip size="small" label="Build needed" color="warning" variant="outlined" />
-          : <Chip size="small" label="Deployed" color="success" variant="outlined" />
-      },
-    },
-    {
       field: 'status',
       headerName: t('common.status'),
       width: 100,
@@ -327,6 +240,20 @@ export default function PluginsPage() {
       ),
     },
     {
+      field: 'source_repo',
+      headerName: t('plugin.sourceRepo'),
+      flex: 1,
+      minWidth: 150,
+      renderCell: (params: GridRenderCellParams) =>
+        params.value ? (
+          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+            {params.value}
+          </Typography>
+        ) : (
+          '-'
+        ),
+    },
+    {
       field: 'created_at',
       headerName: t('common.createdAt'),
       width: 160,
@@ -336,17 +263,10 @@ export default function PluginsPage() {
     {
       field: 'actions',
       headerName: t('common.actions'),
-      width: 120,
+      width: 100,
       sortable: false,
       renderCell: (params: GridRenderCellParams) => (
         <Box>
-          {params.row.type === 'native' && (
-            <Tooltip title="Revision History">
-              <IconButton size="small" onClick={(e) => { e.stopPropagation(); loadRevisions(params.row.name); setBottomTab(1) }}>
-                <HistoryIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
           <Tooltip title={t('common.edit')}>
             <IconButton size="small" onClick={() => handleEdit(params.row)}>
               <EditIcon fontSize="small" />
@@ -397,51 +317,6 @@ export default function PluginsPage() {
           />
         </Grid>
       </Grid>
-
-      {/* Runner Status Panel */}
-      {runnerStatus && runnerStatus.plugins.length > 0 && (
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BuildIcon fontSize="small" />
-                <Typography variant="subtitle2">Runner Image</Typography>
-                {runnerStatus.latest_ready_version && (
-                  <Chip
-                    size="small"
-                    label={runnerStatus.latest_ready_version.id}
-                    variant="outlined"
-                    sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}
-                  />
-                )}
-              </Box>
-              <Button
-                variant={runnerStatus.needs_build ? 'contained' : 'outlined'}
-                size="small"
-                startIcon={runnerStatus.needs_build ? <WarningIcon /> : <BuildIcon />}
-                onClick={handleRunnerBuild}
-                disabled={building}
-                color={runnerStatus.needs_build ? 'warning' : 'primary'}
-              >
-                {building ? 'Building...' : runnerStatus.needs_build ? 'Build Required' : 'Rebuild'}
-              </Button>
-            </Box>
-            {runnerStatus.needs_build && (
-              <Alert severity="warning" sx={{ mt: 1 }} icon={<WarningIcon />}>
-                {runnerStatus.plugins.filter(p => p.needs_build).map(p => p.name).join(', ')} — source modified, rebuild needed
-              </Alert>
-            )}
-            {!runnerStatus.needs_build && runnerStatus.latest_ready_version && (
-              <Alert severity="success" sx={{ mt: 1 }}>
-                All native stages deployed ({runnerStatus.latest_ready_version.id})
-                {runnerStatus.latest_ready_version.revision_seq != null && (
-                  <> &mdash; revision seq #{runnerStatus.latest_ready_version.revision_seq}</>
-                )}
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       <Card>
         <CardContent>
@@ -494,189 +369,6 @@ export default function PluginsPage() {
           )}
         </CardContent>
       </Card>
-
-      {/* Build History + Revision History Tabs */}
-      <Card sx={{ mt: 3 }}>
-        <Tabs value={bottomTab} onChange={(_, v) => setBottomTab(v)} sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}>
-          <Tab icon={<BuildIcon fontSize="small" />} iconPosition="start" label="Build History" />
-          <Tab icon={<HistoryIcon fontSize="small" />} iconPosition="start" label="Revision History" />
-        </Tabs>
-        <CardContent sx={{ p: 0 }}>
-          {/* Build History Tab */}
-          {bottomTab === 0 && (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>#</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Revision Seq</TableCell>
-                    <TableCell>Trigger</TableCell>
-                    <TableCell>Duration</TableCell>
-                    <TableCell>Created</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {runnerVersions.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                        No build history
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    runnerVersions.map((v) => (
-                      <TableRow key={v.id} hover>
-                        <TableCell>
-                          <Chip size="small" label={`#${v.build_number}`} variant="outlined" sx={{ fontFamily: 'monospace' }} />
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            size="small"
-                            label={v.status}
-                            color={v.status === 'ready' ? 'success' : v.status === 'failed' ? 'error' : v.status === 'building' ? 'warning' : 'default'}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {v.revision_seq ? (
-                            <Chip size="small" label={`seq #${v.revision_seq}`} variant="outlined" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }} />
-                          ) : '-'}
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            size="small"
-                            label={v.trigger || 'manual'}
-                            variant="outlined"
-                            color={v.trigger === 'rebuild' ? 'info' : 'default'}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {v.duration_ms ? `${(v.duration_ms / 1000).toFixed(1)}s` : '-'}
-                        </TableCell>
-                        <TableCell sx={{ fontSize: '0.8rem' }}>
-                          {new Date(v.created_at).toLocaleString()}
-                        </TableCell>
-                        <TableCell align="right">
-                          {v.build_log && (
-                            <Tooltip title="Build Log">
-                              <IconButton size="small" onClick={() => setBuildLogDialog({ open: true, log: v.build_log || '', title: `Build #${v.build_number} Log` })}>
-                                <LogIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                          <Tooltip title="Rebuild">
-                            <IconButton size="small" onClick={() => handleRebuild(v.id)} disabled={building}>
-                              <ReplayIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-
-          {/* Revision History Tab */}
-          {bottomTab === 1 && (
-            <Box>
-              {!selectedRevisionPlugin && (
-                <Box sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>
-                  <HistoryIcon sx={{ fontSize: 40, mb: 1, opacity: 0.5 }} />
-                  <Typography>Click the history button on a native plugin to view its revision history</Typography>
-                </Box>
-              )}
-              {selectedRevisionPlugin && (
-                <>
-                  <Box sx={{ px: 2, pt: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="subtitle2">Revisions for</Typography>
-                    <Chip size="small" label={selectedRevisionPlugin} color="primary" />
-                  </Box>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Seq</TableCell>
-                          <TableCell>Action</TableCell>
-                          <TableCell>Hash</TableCell>
-                          <TableCell>Diff</TableCell>
-                          <TableCell>Message</TableCell>
-                          <TableCell>Created</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {revisions.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={6} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                              No revisions
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          revisions.map((r) => (
-                            <TableRow key={r.id} hover>
-                              <TableCell>
-                                <Chip size="small" label={`#${r.seq}`} variant="outlined" sx={{ fontFamily: 'monospace' }} />
-                              </TableCell>
-                              <TableCell>
-                                <Chip
-                                  size="small"
-                                  label={r.action}
-                                  color={r.action === 'create' ? 'success' : r.action === 'delete' ? 'error' : 'warning'}
-                                  variant="outlined"
-                                />
-                              </TableCell>
-                              <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                {r.source_hash ? r.source_hash.substring(0, 8) + '...' : '-'}
-                              </TableCell>
-                              <TableCell sx={{ fontSize: '0.8rem' }}>
-                                {r.diff_summary || '-'}
-                              </TableCell>
-                              <TableCell sx={{ fontSize: '0.8rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {r.message || '-'}
-                              </TableCell>
-                              <TableCell sx={{ fontSize: '0.8rem' }}>
-                                {new Date(r.created_at).toLocaleString()}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </>
-              )}
-            </Box>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Build Log Dialog */}
-      <Dialog open={buildLogDialog.open} onClose={() => setBuildLogDialog({ open: false, log: '', title: '' })} maxWidth="md" fullWidth>
-        <DialogTitle>{buildLogDialog.title}</DialogTitle>
-        <DialogContent>
-          <Box
-            component="pre"
-            sx={{
-              bgcolor: '#1e1e1e',
-              color: '#d4d4d4',
-              p: 2,
-              borderRadius: 1,
-              overflow: 'auto',
-              maxHeight: 500,
-              fontSize: '0.8rem',
-              fontFamily: 'monospace',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-            }}
-          >
-            {buildLogDialog.log || 'No log available'}
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setBuildLogDialog({ open: false, log: '', title: '' })}>Close</Button>
-        </DialogActions>
-      </Dialog>
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>

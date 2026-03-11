@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -172,6 +173,7 @@ func (s *ScriptStage) Process(ctx context.Context, record *Record) (*Record, err
 // builtinFunctions returns predeclared Starlark built-in functions.
 func (s *ScriptStage) builtinFunctions() starlark.StringDict {
 	return starlark.StringDict{
+		"hash_sha1":       starlark.NewBuiltin("hash_sha1", builtinHashSHA1),
 		"hash_sha256":     starlark.NewBuiltin("hash_sha256", builtinHashSHA256),
 		"base64_encode":   starlark.NewBuiltin("base64_encode", builtinBase64Encode),
 		"base64_decode":   starlark.NewBuiltin("base64_decode", builtinBase64Decode),
@@ -187,6 +189,15 @@ func (s *ScriptStage) builtinFunctions() starlark.StringDict {
 }
 
 // --- Built-in function implementations ---
+
+func builtinHashSHA1(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
+	var s starlark.String
+	if err := starlark.UnpackPositionalArgs("hash_sha1", args, nil, 1, &s); err != nil {
+		return nil, err
+	}
+	h := sha1.Sum([]byte(string(s)))
+	return starlark.String(hex.EncodeToString(h[:])), nil
+}
 
 func builtinHashSHA256(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
 	var s starlark.String

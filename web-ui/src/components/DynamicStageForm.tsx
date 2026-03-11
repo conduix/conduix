@@ -10,7 +10,6 @@ import {
   Switch,
   FormControlLabel,
   Typography,
-  Chip,
   CircularProgress,
   Alert,
 } from '@mui/material'
@@ -95,15 +94,6 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      {schema.pluginImage && (
-        <Chip
-          size="small"
-          label={`Plugin: ${schema.pluginImage}`}
-          variant="outlined"
-          color="primary"
-          sx={{ alignSelf: 'flex-start' }}
-        />
-      )}
 
       {Object.entries(properties).map(([fieldName, prop]) => {
         const isRequired = required.includes(fieldName)

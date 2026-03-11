@@ -611,8 +611,8 @@ type Plugin struct {
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relations
-	Stages []PluginStage `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
-	Builds []PluginBuild `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
+	Stages        []PluginStage  `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
+	Builds        []PluginBuild  `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
 	RunnerVersion *RunnerVersion `gorm:"foreignKey:RunnerVersionID" json:"runner_version,omitempty"`
 }
 

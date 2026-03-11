@@ -44,15 +44,12 @@ import {
   Description as LogIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
 import { useSnackbar } from '../hooks/useSnackbar'
 import type { Plugin, PluginCreateRequest, PluginStageCreate, RunnerStatusResponse, RunnerVersion, StageRevision } from '../types/plugin'
 import { getPlugins, createPlugin, updatePlugin, deletePlugin, getRunnerStatus, startRunnerBuild, getRunnerVersions, rebuildRunnerVersion, getPluginRevisions } from '../services/pluginApi'
 
 interface PluginFormData {
   name: string
-  version: string
-  image: string
   description: string
   source_repo: string
   stages: PluginStageCreate[]
@@ -60,8 +57,6 @@ interface PluginFormData {
 
 const initialFormData: PluginFormData = {
   name: '',
-  version: '',
-  image: '',
   description: '',
   source_repo: '',
   stages: [],
@@ -102,7 +97,6 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
 
 export default function PluginsPage() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const { showSuccess, showError } = useSnackbar()
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [loading, setLoading] = useState(true)
@@ -187,8 +181,6 @@ export default function PluginsPage() {
     setSelectedPlugin(plugin)
     setFormData({
       name: plugin.name,
-      version: plugin.version,
-      image: plugin.image,
       description: plugin.description || '',
       source_repo: plugin.source_repo || '',
       stages:
@@ -221,12 +213,10 @@ export default function PluginsPage() {
   }
 
   const handleSubmit = async () => {
-    if (!formData.name || !formData.version || !formData.image) return
+    if (!formData.name) return
 
     const req: PluginCreateRequest = {
       name: formData.name,
-      version: formData.version,
-      image: formData.image,
       description: formData.description || undefined,
       source_repo: formData.source_repo || undefined,
       stages: formData.stages,
@@ -300,11 +290,6 @@ export default function PluginsPage() {
           variant="outlined"
         />
       ),
-    },
-    {
-      field: 'version',
-      headerName: t('plugin.version'),
-      width: 100,
     },
     {
       field: 'deploy_status',
@@ -381,14 +366,9 @@ export default function PluginsPage() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5">{t('plugin.title')}</Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button variant="outlined" startIcon={<BuildIcon />} onClick={() => navigate('/plugins/build')}>
-            {t('pluginBuilder.buildPlugin')}
-          </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
-            {t('plugin.register')}
-          </Button>
-        </Box>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
+          {t('plugin.register')}
+        </Button>
       </Box>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -713,23 +693,6 @@ export default function PluginsPage() {
               fullWidth
               disabled={!!selectedPlugin}
             />
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <TextField
-                label={t('plugin.version')}
-                value={formData.version}
-                onChange={(e) => setFormData((prev) => ({ ...prev, version: e.target.value }))}
-                required
-                sx={{ flex: 1 }}
-              />
-              <TextField
-                label={t('plugin.image')}
-                value={formData.image}
-                onChange={(e) => setFormData((prev) => ({ ...prev, image: e.target.value }))}
-                required
-                sx={{ flex: 2 }}
-                placeholder="myregistry/conduix-plugins:v1.0.0"
-              />
-            </Box>
             <TextField
               label={t('common.description')}
               value={formData.description}
@@ -815,7 +778,7 @@ export default function PluginsPage() {
           <Button
             variant="contained"
             onClick={handleSubmit}
-            disabled={!formData.name || !formData.version || !formData.image}
+            disabled={!formData.name}
           >
             {selectedPlugin ? t('common.save') : t('common.create')}
           </Button>

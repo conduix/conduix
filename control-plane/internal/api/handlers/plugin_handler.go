@@ -34,14 +34,14 @@ func NewPluginHandler(db *database.DB) *PluginHandler {
 	}
 }
 
-// CreatePluginRequest 플러그인 등록 요청 (Helm hook에서 호출)
+// CreatePluginRequest 플러그인 등록 요청
 type CreatePluginRequest struct {
 	Name        string               `json:"name" binding:"required"`
-	Version     string               `json:"version" binding:"required"`
-	Image       string               `json:"image" binding:"required"`
+	Version     string               `json:"version,omitempty"`
+	Image       string               `json:"image,omitempty"`
 	Description string               `json:"description,omitempty"`
 	SourceRepo  string               `json:"source_repo,omitempty"`
-	Stages      []CreateStageRequest `json:"stages" binding:"required,dive"`
+	Stages      []CreateStageRequest `json:"stages,omitempty"`
 }
 
 // CreateStageRequest Stage 등록 요청
@@ -174,10 +174,15 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 	// 트랜잭션으로 Plugin과 Stages 생성
 	tx := h.db.Begin()
 
+	version := req.Version
+	if version == "" {
+		version = "v0.0.0"
+	}
+
 	plugin := &models.Plugin{
 		ID:          uuid.New().String(),
 		Name:        req.Name,
-		Version:     req.Version,
+		Version:     version,
 		Image:       req.Image,
 		Description: req.Description,
 		SourceRepo:  req.SourceRepo,

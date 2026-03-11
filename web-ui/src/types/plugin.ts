@@ -50,21 +50,17 @@ export interface StageInfo {
 
 export interface PluginStageInfo extends StageInfo {
   pluginName: string
-  pluginImage: string
 }
 
 export interface StageSchemaResponse {
   type: string
   displayName: string
-  pluginImage?: string
   configSchema: Record<string, unknown>
   uiSchema?: Record<string, unknown>
 }
 
 export interface PluginCreateRequest {
   name: string
-  version: string
-  image: string
   description?: string
   source_repo?: string
   stages: PluginStageCreate[]
@@ -93,49 +89,6 @@ export interface ClusterMetrics {
   runner_deployments: number
   runner_pods: number
   collected_at: string
-}
-
-// V3 Plugin Build types
-export interface PluginBuild {
-  id: string
-  plugin_id: string
-  status: 'pending' | 'building' | 'success' | 'failed'
-  source_code: string
-  go_mod?: string
-  build_log?: string
-  error?: string
-  duration_ms?: number
-  version?: string
-  platform: string
-  created_by?: string
-  created_at: string
-  updated_at: string
-  started_at?: string
-  finished_at?: string
-}
-
-export interface PluginBinary {
-  id: string
-  plugin_id: string
-  version: string
-  platform: string
-  checksum: string
-  size_bytes: number
-  build_id?: string
-  created_at: string
-}
-
-export interface BuildPluginRequest {
-  name: string
-  version: string
-  source_code: string
-  go_mod?: string
-  platform?: string
-}
-
-export interface ValidateSourceResponse {
-  valid: boolean
-  imports: string[]
 }
 
 // V4 Runner Version types

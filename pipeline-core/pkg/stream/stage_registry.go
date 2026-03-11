@@ -78,8 +78,11 @@ func init() {
 	StageRegistry.Register(ValidateStageSchema())
 	StageRegistry.Register(ContractStageSchema())
 
+	// Encoding Stages
+	StageRegistry.Register(Base64StageSchema())
+
 	// Script Stages
-	StageRegistry.Register(ScriptStageSchema())
+	StageRegistry.Register(JSScriptStageSchema())
 
 	// Output Stages
 	StageRegistry.Register(SQLOutputStageSchema())
@@ -989,16 +992,52 @@ func FileOutputStageSchema() types.StageSchema {
 // Script Stage Schemas
 // =============================================================================
 
-// ScriptStageSchema Script Stage 스키마 (Starlark 스크립팅)
-func ScriptStageSchema() types.StageSchema {
+// =============================================================================
+// Encoding Stage Schemas
+// =============================================================================
+
+// Base64StageSchema Base64 Stage 스키마
+func Base64StageSchema() types.StageSchema {
 	return types.StageSchema{
-		Type:         "script",
-		DisplayName:  "Script",
-		Description:  "Starlark 스크립트로 레코드 변환 (샌드박스 실행)",
+		Type:        "base64",
+		DisplayName: "Base64",
+		Description: "Base64 인코딩/디코딩",
+		Category:    types.CategoryTransform,
+		Icon:        "Code",
+		Color:       "#795548",
+		Fields: []types.StageFieldSchema{
+			{
+				Name:        "fields",
+				Type:        types.FieldTypeArray,
+				DisplayName: "대상 필드",
+				Description: "인코딩/디코딩할 필드들 (쉼표로 구분)",
+				Required:    true,
+				Placeholder: "data, payload",
+			},
+			{
+				Name:        "action",
+				Type:        types.FieldTypeEnum,
+				DisplayName: "동작",
+				Default:     "encode",
+				Options: []types.FieldOption{
+					{Value: "encode", Label: "인코딩", Description: "문자열 → Base64"},
+					{Value: "decode", Label: "디코딩", Description: "Base64 → 문자열"},
+				},
+			},
+		},
+	}
+}
+
+// JSScriptStageSchema JavaScript Stage 스키마 (goja ES5.1+ES6)
+func JSScriptStageSchema() types.StageSchema {
+	return types.StageSchema{
+		Type:         "js_script",
+		DisplayName:  "JavaScript",
+		Description:  "JavaScript로 레코드 변환 (ES6, JSON/RegExp/Date/Math 내장)",
 		Category:     types.CategoryTransform,
-		Icon:         "Code",
-		Color:        "#ff6f00",
-		CustomEditor: "ScriptStageEditor",
+		Icon:         "Javascript",
+		Color:        "#f7df1e",
+		CustomEditor: "JSScriptStageEditor",
 		Fields:       []types.StageFieldSchema{}, // CustomEditor가 전체 폼 담당
 	}
 }

@@ -1,7 +1,10 @@
 /**
- * ScriptStageEditor - Starlark Script Stage 전용 에디터
+ * JSScriptStageEditor - JavaScript (goja) Script Stage 전용 에디터
  *
- * Monaco Editor(Python 하이라이팅) + 샘플 데이터 입력 + 테스트 실행 UI
+ * Monaco Editor(JavaScript 하이라이팅) + 샘플 데이터 입력 + 테스트 실행 UI
+ * goja 지원: ES5.1 완전 + ES6 부분 (let/const, arrow fn, template literal, destructuring, etc.)
+ * JS 표준 내장 객체 사용 가능: JSON, RegExp, Date, Math, String, Array, Object
+ * Go 등록 함수: console.log()만. hash/base64 등은 Go builtin stage 사용.
  */
 import { useState, useCallback } from 'react'
 import {
@@ -14,13 +17,9 @@ import {
   Chip,
   Paper,
   Divider,
-  Collapse,
   IconButton,
-  Tooltip,
 } from '@mui/material'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
-import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import ErrorIcon from '@mui/icons-material/Error'
 import RemoveCircleIcon from '@mui/icons-material/RemoveCircle'
@@ -29,10 +28,11 @@ import Editor from '@monaco-editor/react'
 import { testScript } from '../../services/pluginApi'
 import type { TestScriptResponse } from '../../services/pluginApi'
 
-const DEFAULT_CODE = `def process(record):
-    """Transform each record. Return dict to pass, None to drop."""
-    record["processed"] = True
-    return record
+const DEFAULT_CODE = `function process(record) {
+    // Transform each record. Return object to pass, null to drop.
+    record.processed = true;
+    return record;
+}
 `
 
 const DEFAULT_SAMPLE = JSON.stringify(
@@ -41,37 +41,23 @@ const DEFAULT_SAMPLE = JSON.stringify(
   2
 )
 
-const BUILTIN_FUNCTIONS = [
-  { name: 'hash_sha256(s)', desc: 'SHA-256 hash' },
-  { name: 'base64_encode(s)', desc: 'Base64 encode' },
-  { name: 'base64_decode(s)', desc: 'Base64 decode' },
-  { name: 'json_encode(v)', desc: 'JSON serialize' },
-  { name: 'json_decode(s)', desc: 'JSON parse' },
-  { name: 'regex_match(pattern, s)', desc: 'Regex match' },
-  { name: 'regex_replace(pattern, s, repl)', desc: 'Regex replace' },
-  { name: 'timestamp_now()', desc: 'Current UTC time' },
-  { name: 'timestamp_parse(s, format)', desc: 'Parse timestamp' },
-  { name: 'log(level, message)', desc: 'Log message' },
-]
-
-interface ScriptStageEditorProps {
+interface JSScriptStageEditorProps {
   value: Record<string, unknown>
   onChange: (value: Record<string, unknown>) => void
   disabled?: boolean
 }
 
-export default function ScriptStageEditor({
+export default function JSScriptStageEditor({
   value,
   onChange,
   disabled,
-}: ScriptStageEditorProps) {
+}: JSScriptStageEditorProps) {
   const code = (value.code as string) || DEFAULT_CODE
   const timeout = (value.timeout as string) || '1s'
 
   const [sampleData, setSampleData] = useState(DEFAULT_SAMPLE)
   const [testResult, setTestResult] = useState<TestScriptResponse | null>(null)
   const [testing, setTesting] = useState(false)
-  const [showBuiltins, setShowBuiltins] = useState(false)
 
   const handleCodeChange = useCallback(
     (newCode: string | undefined) => {
@@ -130,42 +116,22 @@ export default function ScriptStageEditor({
 
   return (
     <Stack spacing={2}>
+      {/* Info */}
+      <Alert severity="info" sx={{ '& .MuiAlert-message': { fontSize: '0.8rem' } }}>
+        JavaScript (ES6) — JSON, RegExp, Date, Math 등 표준 내장 객체 사용 가능.
+        import/require, fetch, setTimeout 불가. hash/base64는 별도 Stage 사용.
+      </Alert>
+
       {/* Code Editor */}
       <Box>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-          <Typography variant="subtitle2">
-            Starlark Code <Chip label="required" size="small" color="error" variant="outlined" sx={{ ml: 1 }} />
-          </Typography>
-          <Button
-            size="small"
-            onClick={() => setShowBuiltins(!showBuiltins)}
-            endIcon={showBuiltins ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-          >
-            Built-in Functions
-          </Button>
-        </Stack>
-
-        <Collapse in={showBuiltins}>
-          <Paper variant="outlined" sx={{ p: 1.5, mb: 1, bgcolor: 'action.hover' }}>
-            <Stack direction="row" flexWrap="wrap" gap={0.5}>
-              {BUILTIN_FUNCTIONS.map((fn) => (
-                <Tooltip key={fn.name} title={fn.desc} arrow>
-                  <Chip
-                    label={fn.name}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}
-                  />
-                </Tooltip>
-              ))}
-            </Stack>
-          </Paper>
-        </Collapse>
+        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+          JavaScript Code <Chip label="required" size="small" color="error" variant="outlined" sx={{ ml: 1 }} />
+        </Typography>
 
         <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
           <Editor
             height="300px"
-            language="python"
+            language="javascript"
             theme="vs-dark"
             value={code}
             onChange={handleCodeChange}
@@ -175,7 +141,7 @@ export default function ScriptStageEditor({
               lineNumbers: 'on',
               scrollBeyondLastLine: false,
               wordWrap: 'on',
-              tabSize: 4,
+              tabSize: 2,
               insertSpaces: true,
               readOnly: disabled,
               automaticLayout: true,
@@ -266,7 +232,7 @@ export default function ScriptStageEditor({
                   testResult.dropped ? (
                     <Stack direction="row" alignItems="center" gap={1}>
                       <RemoveCircleIcon color="warning" fontSize="small" />
-                      <span>Record dropped (None returned)</span>
+                      <span>Record dropped (null returned)</span>
                     </Stack>
                   ) : (
                     JSON.stringify(testResult.output, null, 2)

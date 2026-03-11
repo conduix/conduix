@@ -392,9 +392,10 @@ func TestTestScript_Success(t *testing.T) {
 
 	reqBody := TestScriptRequest{
 		Code: `
-def process(record):
-    record["greeting"] = "hello " + record.get("name", "")
-    return record
+function process(record) {
+    record.greeting = "hello " + (record.name || "");
+    return record;
+}
 `,
 		SampleData: map[string]any{
 			"name": "world",
@@ -428,8 +429,9 @@ func TestTestScript_Drop(t *testing.T) {
 
 	reqBody := TestScriptRequest{
 		Code: `
-def process(record):
-    return None
+function process(record) {
+    return null;
+}
 `,
 		SampleData: map[string]any{"key": "value"},
 	}
@@ -458,7 +460,7 @@ func TestTestScript_CompileError(t *testing.T) {
 	router := setupTestRouter(handler)
 
 	reqBody := TestScriptRequest{
-		Code:       `def process(record)  return record`,
+		Code:       `function process(record { return record; }`,
 		SampleData: map[string]any{"key": "value"},
 	}
 

@@ -461,7 +461,7 @@ type TestScriptResponse struct {
 }
 
 // TestScript POST /api/v1/plugins/test-script
-// @Summary Starlark 스크립트 테스트 실행
+// @Summary JavaScript 스크립트 테스트 실행
 // @Tags plugins
 // @Accept json
 // @Produce json
@@ -475,13 +475,13 @@ func (h *PluginHandler) TestScript(c *gin.Context) {
 		return
 	}
 
-	// ScriptStage 생성 (컴파일 검증 포함)
+	// JSScriptStage 생성 (컴파일 검증 포함)
 	config := map[string]any{"code": req.Code}
 	if req.Timeout != "" {
 		config["timeout"] = req.Timeout
 	}
 
-	stage, err := stream.NewScriptStage("test", config)
+	stage, err := stream.NewJSScriptStage("test", config)
 	if err != nil {
 		middleware.SuccessResponse(c, TestScriptResponse{
 			Success: false,

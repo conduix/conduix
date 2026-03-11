@@ -362,52 +362,78 @@ func (s *ValidationStage) SetSchema(sch *schema.DataSchema) {
 	s.schema = sch
 }
 
-// NewStage creates a stage from configuration
-func NewStage(cfg StageConfig) (Stage, error) {
-	switch cfg.Type {
-	case "passthrough":
-		return NewPassthroughStage(cfg.Name, cfg.Config), nil
-	case "filter":
-		return NewFilterStage(cfg.Name, cfg.Config), nil
-	case "remap":
-		return NewRemapStage(cfg.Name, cfg.Config), nil
-	case "sample":
-		return NewSampleStage(cfg.Name, cfg.Config), nil
-	case "enrich":
-		return NewEnrichStage(cfg.Name, cfg.Config), nil
-	case "aggregate":
-		return NewAggregateStage(cfg.Name, cfg.Config), nil
-	case "validate":
-		return NewValidationStage(cfg.Name, cfg.Config)
-	case "contract":
-		return NewContractStageFromConfig(cfg.Name, cfg.Config)
-	case "router":
-		return NewRouterStageFromConfig(cfg.Name, cfg.Config)
-	case "fan_out":
-		return NewFanOutStageFromConfig(cfg.Name, cfg.Config)
-	case "lookup_enrich":
-		return NewLookupEnrichStage(cfg.Name, cfg.Config)
-	case "batch_lookup":
-		return NewBatchLookupStage(cfg.Name, cfg.Config)
-	case "async_enrich":
-		return NewAsyncEnrichStage(cfg.Name, cfg.Config)
-	case "es_lookup":
-		return NewElasticsearchLookupStage(cfg.Name, cfg.Config)
-	case "es_lookup_batch":
-		return NewESLookupBatchStage(cfg.Name, cfg.Config)
-	case "windowed_aggregate":
-		return NewWindowedAggregateStage(cfg.Name, cfg.Config)
-	case "stream_join":
-		return NewStreamJoinStageFromConfig(cfg.Name, cfg.Config)
-	case "sub_pipeline":
-		return NewSubPipelineStage(cfg.Name, cfg.Config)
-	case "script":
-		return NewScriptStage(cfg.Name, cfg.Config)
-	default:
-		// 커스텀 스테이지 레지스트리에서 검색 (native plugin)
-		if factory, ok := GetCustomStageFactory(cfg.Type); ok {
-			return factory(cfg.Name, cfg.Config)
-		}
-		return nil, fmt.Errorf("unknown stage type: %s", cfg.Type)
+// StageFactory is a constructor function that creates a Stage from name and config.
+type StageFactory func(name string, config map[string]any) (Stage, error)
+
+// stageFactoryRegistry holds built-in stage factories.
+var (
+	stageFactories   = make(map[string]StageFactory)
+	stageFactoriesMu sync.RWMutex
+)
+
+// RegisterStageFactory registers a built-in stage factory.
+func RegisterStageFactory(stageType string, factory StageFactory) {
+	stageFactoriesMu.Lock()
+	defer stageFactoriesMu.Unlock()
+	stageFactories[stageType] = factory
+}
+
+// wrapSimple wraps a constructor that returns (*T, nil) into StageFactory.
+func wrapSimple[T Stage](fn func(string, map[string]any) T) StageFactory {
+	return func(name string, config map[string]any) (Stage, error) {
+		return fn(name, config), nil
 	}
+}
+
+func init() {
+	// Transform stages
+	RegisterStageFactory("passthrough", wrapSimple(NewPassthroughStage))
+	RegisterStageFactory("filter", wrapSimple(NewFilterStage))
+	RegisterStageFactory("remap", wrapSimple(NewRemapStage))
+	RegisterStageFactory("sample", wrapSimple(NewSampleStage))
+	RegisterStageFactory("enrich", wrapSimple(NewEnrichStage))
+	RegisterStageFactory("aggregate", wrapSimple(NewAggregateStage))
+	RegisterStageFactory("merge", wrapSimple(NewMergeStage))
+	RegisterStageFactory("cast", wrapSimple(NewCastStage))
+
+	// Stages returning error
+	RegisterStageFactory("validate", func(n string, c map[string]any) (Stage, error) { return NewValidationStage(n, c) })
+	RegisterStageFactory("contract", func(n string, c map[string]any) (Stage, error) { return NewContractStageFromConfig(n, c) })
+	RegisterStageFactory("router", func(n string, c map[string]any) (Stage, error) { return NewRouterStageFromConfig(n, c) })
+	RegisterStageFactory("fan_out", func(n string, c map[string]any) (Stage, error) { return NewFanOutStageFromConfig(n, c) })
+	RegisterStageFactory("lookup_enrich", func(n string, c map[string]any) (Stage, error) { return NewLookupEnrichStage(n, c) })
+	RegisterStageFactory("batch_lookup", func(n string, c map[string]any) (Stage, error) { return NewBatchLookupStage(n, c) })
+	RegisterStageFactory("async_enrich", func(n string, c map[string]any) (Stage, error) { return NewAsyncEnrichStage(n, c) })
+	RegisterStageFactory("es_lookup", func(n string, c map[string]any) (Stage, error) { return NewElasticsearchLookupStage(n, c) })
+	RegisterStageFactory("es_lookup_batch", func(n string, c map[string]any) (Stage, error) { return NewESLookupBatchStage(n, c) })
+	RegisterStageFactory("windowed_aggregate", func(n string, c map[string]any) (Stage, error) { return NewWindowedAggregateStage(n, c) })
+	RegisterStageFactory("stream_join", func(n string, c map[string]any) (Stage, error) { return NewStreamJoinStageFromConfig(n, c) })
+	RegisterStageFactory("sub_pipeline", func(n string, c map[string]any) (Stage, error) { return NewSubPipelineStage(n, c) })
+	RegisterStageFactory("encrypt", func(n string, c map[string]any) (Stage, error) { return NewEncryptStage(n, c) })
+	RegisterStageFactory("drop", func(n string, c map[string]any) (Stage, error) { return NewDropStage(n, c) })
+	RegisterStageFactory("default", func(n string, c map[string]any) (Stage, error) { return NewDefaultStage(n, c) })
+	RegisterStageFactory("split", func(n string, c map[string]any) (Stage, error) { return NewSplitStage(n, c) })
+	RegisterStageFactory("timestamp", func(n string, c map[string]any) (Stage, error) { return NewTimestampStage(n, c) })
+	RegisterStageFactory("dedupe", func(n string, c map[string]any) (Stage, error) { return NewDedupeStage(n, c) })
+	RegisterStageFactory("throttle", func(n string, c map[string]any) (Stage, error) { return NewThrottleStage(n, c) })
+	RegisterStageFactory("base64", func(n string, c map[string]any) (Stage, error) { return NewBase64Stage(n, c) })
+	RegisterStageFactory("js_script", func(n string, c map[string]any) (Stage, error) { return NewJSScriptStage(n, c) })
+}
+
+// NewStage creates a stage from configuration using the factory registry.
+func NewStage(cfg StageConfig) (Stage, error) {
+	// 1. built-in stage factory
+	stageFactoriesMu.RLock()
+	factory, ok := stageFactories[cfg.Type]
+	stageFactoriesMu.RUnlock()
+	if ok {
+		return factory(cfg.Name, cfg.Config)
+	}
+
+	// 2. custom stage factory (native plugin)
+	if factory, ok := GetCustomStageFactory(cfg.Type); ok {
+		return factory(cfg.Name, cfg.Config)
+	}
+
+	return nil, fmt.Errorf("unknown stage type: %s", cfg.Type)
 }

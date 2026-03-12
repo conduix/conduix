@@ -34,31 +34,45 @@ import type { TestNativePluginResponse } from '../../types/plugin'
 import { LSPClient, lspKindToMonaco, lspSeverityToMonaco } from '../../services/lspClient'
 import type { LSPDiagnostic } from '../../services/lspClient'
 
-const DEFAULT_SOURCE_CODE = `package main
+// pluginNameToStructName converts plugin name (e.g. "ip-filter") to PascalCase struct name (e.g. "IpFilterStage")
+function pluginNameToStructName(name?: string): string {
+  if (!name) return 'MyStage'
+  const pascal = name
+    .split(/[-_\s]+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join('')
+  // Go 식별자는 숫자로 시작 불가
+  const safe = /^\d/.test(pascal) ? 'S' + pascal : pascal
+  return safe.endsWith('Stage') ? safe : safe + 'Stage'
+}
+
+function generateDefaultSource(structName: string): string {
+  return `package main
 
 import (
 	sdk "github.com/conduix/conduix/plugin-sdk"
 )
 
-// MyStage 커스텀 Stage
-type MyStage struct {
+// ${structName} 커스텀 Stage
+type ${structName} struct {
 	sdk.BaseNativeStage
 	// config fields
 }
 
-func (s *MyStage) Init(config map[string]any) error {
+func (s *${structName}) Init(config map[string]any) error {
 	return nil
 }
 
-func (s *MyStage) Process(record map[string]any) (map[string]any, error) {
+func (s *${structName}) Process(record map[string]any) (map[string]any, error) {
 	// Transform each record. Return nil to drop.
 	record["processed"] = true
 	return record, nil
 }
 
 // Stage 반드시 이 변수를 선언해야 합니다
-var Stage sdk.NativeStage = &MyStage{}
+var Stage sdk.NativeStage = &${structName}{}
 `
+}
 
 const DEFAULT_GO_MOD = `module conduix-plugin-test
 
@@ -95,7 +109,8 @@ export default function NativeStageEditor({
   pluginName,
 }: NativeStageEditorProps) {
   const { t } = useTranslation()
-  const code = sourceCode || DEFAULT_SOURCE_CODE
+  const structName = pluginNameToStructName(pluginName)
+  const code = sourceCode || generateDefaultSource(structName)
   const mod = goMod || DEFAULT_GO_MOD
 
   const [editorTab, setEditorTab] = useState(0) // 0: main.go, 1: go.mod

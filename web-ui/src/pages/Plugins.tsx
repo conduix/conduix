@@ -16,10 +16,6 @@ import {
   Tooltip,
   Alert,
   Collapse,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material'
@@ -30,14 +26,13 @@ import {
   Delete as DeleteIcon,
   Edit as EditIcon,
   CheckCircle as ActiveIcon,
-  Category as CategoryIcon,
   Code as CodeIcon,
   Javascript as JsIcon,
   Build as BuildIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useSnackbar } from '../hooks/useSnackbar'
-import type { Plugin, PluginCreateRequest, PluginStageCreate } from '../types/plugin'
+import type { Plugin, PluginCreateRequest } from '../types/plugin'
 import {
   getPlugins,
   createPlugin,
@@ -51,7 +46,7 @@ import type { RunnerStatusResponse, RunnerVersion } from '../services/pluginApi'
 import NativeStageEditor from '../components/NativeStageEditor/NativeStageEditor'
 import JSScriptStageEditor from '../components/JSScriptStageEditor/JSScriptStageEditor'
 
-type StageMode = 'none' | 'script' | 'native'
+type StageMode = 'script' | 'native'
 
 interface PluginFormData {
   name: string
@@ -61,26 +56,16 @@ interface PluginFormData {
   source_code: string
   go_mod: string
   scriptConfig: Record<string, unknown> // JS script stage config (code, timeout)
-  stages: PluginStageCreate[]
 }
 
 const initialFormData: PluginFormData = {
   name: '',
   description: '',
   source_repo: '',
-  stageMode: 'none',
+  stageMode: 'native',
   source_code: '',
   go_mod: '',
   scriptConfig: {},
-  stages: [],
-}
-
-const initialStage: PluginStageCreate = {
-  type: '',
-  displayName: '',
-  category: 'transform',
-  description: '',
-  configSchema: { type: 'object', properties: {} },
 }
 
 interface StatCardProps {
@@ -165,7 +150,6 @@ export default function PluginsPage() {
   }, [runnerStatus?.needs_build, loadRunnerStatus, loadPlugins])
 
   const activeCount = plugins.filter((p) => p.status === 'active').length
-  const totalStages = plugins.reduce((sum, p) => sum + (p.stages?.length || 0), 0)
 
   const handleCreate = () => {
     setSelectedPlugin(null)
@@ -178,12 +162,7 @@ export default function PluginsPage() {
     setSelectedPlugin(plugin)
 
     // plugin type에 따라 stageMode 결정
-    let stageMode: StageMode = 'none'
-    if (plugin.type === 'native' && plugin.source_code) {
-      stageMode = 'native'
-    } else if (plugin.type === 'script') {
-      stageMode = 'script'
-    }
+    const stageMode: StageMode = plugin.type === 'script' ? 'script' : 'native'
 
     setFormData({
       name: plugin.name,
@@ -195,14 +174,6 @@ export default function PluginsPage() {
       scriptConfig: plugin.type === 'script' && plugin.source_code
         ? { code: plugin.source_code }
         : {},
-      stages:
-        plugin.stages?.map((s) => ({
-          type: s.stage_type,
-          displayName: s.display_name || '',
-          category: s.category || 'transform',
-          description: s.description || '',
-          configSchema: s.config_schema || { type: 'object', properties: {} },
-        })) || [],
     })
     setTestPassed(false)
     setDialogOpen(true)
@@ -242,7 +213,6 @@ export default function PluginsPage() {
             ? (formData.scriptConfig.code as string) || undefined
             : undefined,
       go_mod: formData.stageMode === 'native' ? formData.go_mod || undefined : undefined,
-      stages: formData.stages,
     }
 
     try {
@@ -263,27 +233,6 @@ export default function PluginsPage() {
     } catch {
       showError(selectedPlugin ? t('plugin.updateError') : t('plugin.createError'))
     }
-  }
-
-  const addStage = () => {
-    setFormData((prev) => ({
-      ...prev,
-      stages: [...prev.stages, { ...initialStage }],
-    }))
-  }
-
-  const removeStage = (index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      stages: prev.stages.filter((_, i) => i !== index),
-    }))
-  }
-
-  const updateStage = (index: number, field: keyof PluginStageCreate, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      stages: prev.stages.map((s, i) => (i === index ? { ...s, [field]: value } : s)),
-    }))
   }
 
   const statusColor = (status: string) => {
@@ -373,14 +322,6 @@ export default function PluginsPage() {
       ),
     },
     {
-      field: 'stages',
-      headerName: t('plugin.stages'),
-      width: 80,
-      renderCell: (params: GridRenderCellParams) => (
-        <Chip size="small" label={params.value?.length || 0} variant="outlined" />
-      ),
-    },
-    {
       field: 'deploy_status',
       headerName: t('plugin.deployStatus', 'Deploy'),
       width: 120,
@@ -462,7 +403,7 @@ export default function PluginsPage() {
       </Box>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={4}>
+        <Grid item xs={12} sm={6}>
           <StatCard
             title={t('plugin.totalPlugins')}
             value={plugins.length}
@@ -470,20 +411,12 @@ export default function PluginsPage() {
             color="#1976d2"
           />
         </Grid>
-        <Grid item xs={12} sm={4}>
+        <Grid item xs={12} sm={6}>
           <StatCard
             title={t('plugin.activePlugins')}
             value={activeCount}
             icon={<ActiveIcon />}
             color="#2e7d32"
-          />
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          <StatCard
-            title={t('plugin.totalStages')}
-            value={totalStages}
-            icon={<CategoryIcon />}
-            color="#ed6c02"
           />
         </Grid>
       </Grid>
@@ -626,37 +559,10 @@ export default function PluginsPage() {
                       </Box>
                     )}
 
-                    {/* Stages List */}
-                    {plugin.stages && plugin.stages.length > 0 && (
-                      <>
-                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                          {t('plugin.registeredStages')}
-                        </Typography>
-                        <List dense>
-                          {plugin.stages.map((stage) => (
-                            <ListItem key={stage.id}>
-                              <ListItemIcon sx={{ minWidth: 36 }}>
-                                <CategoryIcon fontSize="small" />
-                              </ListItemIcon>
-                              <ListItemText
-                                primary={stage.display_name || stage.stage_type}
-                                secondary={`${stage.stage_type} / ${stage.category || 'transform'}`}
-                              />
-                              {stage.description && (
-                                <Typography variant="caption" color="text.secondary">
-                                  {stage.description}
-                                </Typography>
-                              )}
-                            </ListItem>
-                          ))}
-                        </List>
-                      </>
-                    )}
-
                     {/* No content */}
-                    {!plugin.source_code && (!plugin.stages || plugin.stages.length === 0) && (
+                    {!plugin.source_code && (
                       <Typography variant="body2" color="text.secondary">
-                        {t('plugin.noContent', 'No source code or stages registered.')}
+                        {t('plugin.noContent', 'No source code registered.')}
                       </Typography>
                     )}
                   </Box>
@@ -715,19 +621,6 @@ export default function PluginsPage() {
                 }}
                 sx={{ mb: 1 }}
               >
-                <ToggleButton value="none" sx={{ px: 3 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <CategoryIcon sx={{ fontSize: 20 }} />
-                    <Box sx={{ textAlign: 'left' }}>
-                      <Typography variant="body2" sx={{ textTransform: 'none', fontWeight: 600 }}>
-                        {t('plugin.modeNone', 'None')}
-                      </Typography>
-                      <Typography variant="caption" sx={{ textTransform: 'none', display: 'block', color: 'text.secondary' }}>
-                        {t('plugin.modeNoneDesc', 'Metadata only')}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </ToggleButton>
                 <ToggleButton value="script" sx={{ px: 3 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <JsIcon sx={{ fontSize: 20, color: '#f7df1e' }} />
@@ -790,68 +683,6 @@ export default function PluginsPage() {
               />
             )}
 
-            {/* Stages Metadata Section */}
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="subtitle1">{t('plugin.stages')}</Typography>
-              <Button size="small" startIcon={<AddIcon />} onClick={addStage}>
-                {t('plugin.addStage')}
-              </Button>
-            </Box>
-
-            {formData.stages.map((stage, idx) => (
-              <Card key={idx} variant="outlined">
-                <CardContent>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                    <Typography variant="subtitle2">
-                      Stage #{idx + 1}
-                    </Typography>
-                    <IconButton size="small" onClick={() => removeStage(idx)} color="error">
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                    <Box sx={{ display: 'flex', gap: 2 }}>
-                      <TextField
-                        label={t('plugin.stageType')}
-                        value={stage.type}
-                        onChange={(e) => updateStage(idx, 'type', e.target.value)}
-                        required
-                        size="small"
-                        sx={{ flex: 1 }}
-                        placeholder="ml-anomaly"
-                      />
-                      <TextField
-                        label={t('plugin.stageDisplayName')}
-                        value={stage.displayName}
-                        onChange={(e) => updateStage(idx, 'displayName', e.target.value)}
-                        required
-                        size="small"
-                        sx={{ flex: 1 }}
-                      />
-                      <TextField
-                        label={t('plugin.stageCategory')}
-                        value={stage.category}
-                        onChange={(e) => updateStage(idx, 'category', e.target.value)}
-                        size="small"
-                        sx={{ flex: 1 }}
-                        placeholder="transform"
-                      />
-                    </Box>
-                    <TextField
-                      label={t('common.description')}
-                      value={stage.description || ''}
-                      onChange={(e) => updateStage(idx, 'description', e.target.value)}
-                      size="small"
-                      fullWidth
-                    />
-                  </Box>
-                </CardContent>
-              </Card>
-            ))}
-
-            {formData.stages.length === 0 && (
-              <Alert severity="info">{t('plugin.noStagesHint')}</Alert>
-            )}
           </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

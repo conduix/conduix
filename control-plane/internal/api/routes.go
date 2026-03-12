@@ -329,7 +329,6 @@ func (s *Server) setupRoutes() {
 				plugins.POST("/test-native", s.pluginHandler.TestNativePlugin)
 				plugins.GET("/revisions/:revisionId", s.pluginHandler.GetRevision)
 				plugins.GET("/:name", s.pluginHandler.GetPlugin)
-				plugins.GET("/:name/stages", s.pluginHandler.GetPluginStages)
 				plugins.GET("/:name/revisions", s.pluginHandler.ListRevisions)
 				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
 				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)

@@ -45,24 +45,11 @@ func NewPluginHandler(db *database.DB) *PluginHandler {
 
 // CreatePluginRequest 플러그인 등록 요청
 type CreatePluginRequest struct {
-	Name        string               `json:"name" binding:"required"`
-	Version     string               `json:"version,omitempty"`
-	Image       string               `json:"image,omitempty"`
-	Description string               `json:"description,omitempty"`
-	SourceRepo  string               `json:"source_repo,omitempty"`
-	Stages      []CreateStageRequest `json:"stages,omitempty"`
-}
-
-// CreateStageRequest Stage 등록 요청
-type CreateStageRequest struct {
-	StageType    string `json:"type" binding:"required"`
-	Category     string `json:"category,omitempty"`
-	DisplayName  string `json:"display_name,omitempty"`
-	Description  string `json:"description,omitempty"`
-	ConfigSchema any    `json:"config_schema" binding:"required"` // JSON Schema
-	UISchema     any    `json:"ui_schema,omitempty"`              // UI Schema for react-jsonschema-form
-	Icon         string `json:"icon,omitempty"`
-	Color        string `json:"color,omitempty"`
+	Name        string `json:"name" binding:"required"`
+	Version     string `json:"version,omitempty"`
+	Image       string `json:"image,omitempty"`
+	Description string `json:"description,omitempty"`
+	SourceRepo  string `json:"source_repo,omitempty"`
 }
 
 // UpdatePluginRequest 플러그인 수정 요청
@@ -74,12 +61,6 @@ type UpdatePluginRequest struct {
 	Status      string `json:"status,omitempty"` // active, inactive, deprecated
 	SourceCode  string `json:"source_code,omitempty"`
 	GoMod       string `json:"go_mod,omitempty"`
-}
-
-// PluginResponse 플러그인 응답 (Stage 수 포함)
-type PluginResponse struct {
-	models.Plugin
-	StageCount int `json:"stage_count"`
 }
 
 // ListPlugins GET /api/v1/plugins
@@ -95,7 +76,7 @@ func (h *PluginHandler) ListPlugins(c *gin.Context) {
 	requestID := middleware.GetRequestID(c)
 
 	var plugins []models.Plugin
-	query := h.db.Model(&models.Plugin{}).Preload("Stages")
+	query := h.db.Model(&models.Plugin{})
 
 	// 필터링
 	if status := c.Query("status"); status != "" {
@@ -116,16 +97,7 @@ func (h *PluginHandler) ListPlugins(c *gin.Context) {
 		return
 	}
 
-	// 응답 생성
-	responses := make([]PluginResponse, 0, len(plugins))
-	for _, plugin := range plugins {
-		responses = append(responses, PluginResponse{
-			Plugin:     plugin,
-			StageCount: len(plugin.Stages),
-		})
-	}
-
-	middleware.SuccessResponse(c, responses)
+	middleware.SuccessResponse(c, plugins)
 }
 
 // GetPlugin GET /api/v1/plugins/:name
@@ -141,7 +113,7 @@ func (h *PluginHandler) GetPlugin(c *gin.Context) {
 	pluginName := c.Param("name")
 
 	var plugin models.Plugin
-	if err := h.db.Preload("Stages").First(&plugin, "name = ?", pluginName).Error; err != nil {
+	if err := h.db.First(&plugin, "name = ?", pluginName).Error; err != nil {
 		h.logger.Warn("Plugin not found", "request_id", requestID, "plugin_name", pluginName)
 		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Plugin not found")
 		return
@@ -182,9 +154,6 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 		userIDStr = userID.(string)
 	}
 
-	// 트랜잭션으로 Plugin과 Stages 생성
-	tx := h.db.Begin()
-
 	version := req.Version
 	if version == "" {
 		version = "v0.0.0"
@@ -203,62 +172,18 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 		UpdatedAt:   time.Now(),
 	}
 
-	if err := tx.Create(plugin).Error; err != nil {
-		tx.Rollback()
+	if err := h.db.Create(plugin).Error; err != nil {
 		h.logger.Error("Failed to create plugin", "request_id", requestID, "error", err)
 		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to create plugin")
 		return
 	}
-
-	// Stages 생성
-	for _, stageReq := range req.Stages {
-		configSchemaJSON, _ := json.Marshal(stageReq.ConfigSchema)
-		uiSchemaJSON, _ := json.Marshal(stageReq.UISchema)
-
-		stage := &models.PluginStage{
-			ID:           uuid.New().String(),
-			PluginID:     plugin.ID,
-			StageType:    stageReq.StageType,
-			Category:     stageReq.Category,
-			DisplayName:  stageReq.DisplayName,
-			Description:  stageReq.Description,
-			ConfigSchema: string(configSchemaJSON),
-			UISchema:     string(uiSchemaJSON),
-			Icon:         stageReq.Icon,
-			Color:        stageReq.Color,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
-
-		// StageType 중복 확인
-		var existingStage models.PluginStage
-		if err := tx.First(&existingStage, "stage_type = ?", stageReq.StageType).Error; err == nil {
-			tx.Rollback()
-			h.logger.Warn("Stage type already exists", "request_id", requestID, "stage_type", stageReq.StageType)
-			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeDuplicateResource,
-				"Stage type '"+stageReq.StageType+"' already registered by another plugin")
-			return
-		}
-
-		if err := tx.Create(stage).Error; err != nil {
-			tx.Rollback()
-			h.logger.Error("Failed to create plugin stage", "request_id", requestID, "error", err)
-			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to create plugin stage")
-			return
-		}
-	}
-
-	tx.Commit()
-
-	// Stages와 함께 다시 조회
-	h.db.Preload("Stages").First(&plugin, "id = ?", plugin.ID)
 
 	// Revision 생성 (native plugin인 경우)
 	if plugin.Type == "native" && plugin.SourceCode != "" {
 		h.createRevision(plugin.ID, plugin.Name, "create", plugin.SourceCode, plugin.GoMod, plugin.SourceHash, "", "", userIDStr)
 	}
 
-	h.logger.Info("Plugin created", "request_id", requestID, "plugin_id", plugin.ID, "plugin_name", plugin.Name, "stage_count", len(req.Stages))
+	h.logger.Info("Plugin created", "request_id", requestID, "plugin_id", plugin.ID, "plugin_name", plugin.Name)
 	c.JSON(http.StatusCreated, types.APIResponse[models.Plugin]{
 		Success: true,
 		Data:    *plugin,
@@ -269,64 +194,19 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 func (h *PluginHandler) updateExistingPlugin(c *gin.Context, existing *models.Plugin, req *CreatePluginRequest) {
 	requestID := middleware.GetRequestID(c)
 
-	tx := h.db.Begin()
-
-	// 플러그인 업데이트
 	existing.Version = req.Version
 	existing.Image = req.Image
 	existing.Description = req.Description
 	existing.SourceRepo = req.SourceRepo
 	existing.UpdatedAt = time.Now()
 
-	if err := tx.Save(existing).Error; err != nil {
-		tx.Rollback()
+	if err := h.db.Save(existing).Error; err != nil {
 		h.logger.Error("Failed to update plugin", "request_id", requestID, "error", err)
 		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to update plugin")
 		return
 	}
 
-	// 기존 Stages 삭제 후 재생성
-	if err := tx.Where("plugin_id = ?", existing.ID).Delete(&models.PluginStage{}).Error; err != nil {
-		tx.Rollback()
-		h.logger.Error("Failed to delete existing stages", "request_id", requestID, "error", err)
-		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to update plugin stages")
-		return
-	}
-
-	// 새 Stages 생성
-	for _, stageReq := range req.Stages {
-		configSchemaJSON, _ := json.Marshal(stageReq.ConfigSchema)
-		uiSchemaJSON, _ := json.Marshal(stageReq.UISchema)
-
-		stage := &models.PluginStage{
-			ID:           uuid.New().String(),
-			PluginID:     existing.ID,
-			StageType:    stageReq.StageType,
-			Category:     stageReq.Category,
-			DisplayName:  stageReq.DisplayName,
-			Description:  stageReq.Description,
-			ConfigSchema: string(configSchemaJSON),
-			UISchema:     string(uiSchemaJSON),
-			Icon:         stageReq.Icon,
-			Color:        stageReq.Color,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
-
-		if err := tx.Create(stage).Error; err != nil {
-			tx.Rollback()
-			h.logger.Error("Failed to create plugin stage", "request_id", requestID, "error", err)
-			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to create plugin stage")
-			return
-		}
-	}
-
-	tx.Commit()
-
-	// Stages와 함께 다시 조회
-	h.db.Preload("Stages").First(existing, "id = ?", existing.ID)
-
-	h.logger.Info("Plugin updated", "request_id", requestID, "plugin_id", existing.ID, "plugin_name", existing.Name, "stage_count", len(req.Stages))
+	h.logger.Info("Plugin updated", "request_id", requestID, "plugin_id", existing.ID, "plugin_name", existing.Name)
 	c.JSON(http.StatusOK, types.APIResponse[models.Plugin]{
 		Success: true,
 		Data:    *existing,
@@ -398,9 +278,6 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 		return
 	}
 
-	// Stages와 함께 다시 조회
-	h.db.Preload("Stages").First(&plugin, "id = ?", plugin.ID)
-
 	// 소스가 변경된 경우 revision 생성 + Runner auto-build 트리거
 	userID := c.GetString("user_id")
 	sourceChanged := plugin.Type == "native" && plugin.SourceHash != "" && plugin.SourceHash != oldSourceHash
@@ -460,26 +337,12 @@ func (h *PluginHandler) DeletePlugin(c *gin.Context) {
 		return
 	}
 
-	// 트랜잭션으로 Plugin과 Stages 삭제
-	tx := h.db.Begin()
-
-	// Stages 먼저 삭제
-	if err := tx.Where("plugin_id = ?", plugin.ID).Delete(&models.PluginStage{}).Error; err != nil {
-		tx.Rollback()
-		h.logger.Error("Failed to delete plugin stages", "request_id", requestID, "error", err)
-		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to delete plugin stages")
-		return
-	}
-
 	// Plugin soft delete
-	if err := tx.Delete(&plugin).Error; err != nil {
-		tx.Rollback()
+	if err := h.db.Delete(&plugin).Error; err != nil {
 		h.logger.Error("Failed to delete plugin", "request_id", requestID, "error", err)
 		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to delete plugin")
 		return
 	}
-
-	tx.Commit()
 
 	// 삭제 revision 생성 (native plugin인 경우)
 	userID := c.GetString("user_id")
@@ -573,35 +436,6 @@ func (h *PluginHandler) TestScript(c *gin.Context) {
 	h.recordTestResult(req.PluginName, resp.Success, resp.Error)
 
 	middleware.SuccessResponse(c, resp)
-}
-
-// GetPluginStages GET /api/v1/plugins/:name/stages
-// @Summary 플러그인의 Stage 목록 조회
-// @Tags plugins
-// @Accept json
-// @Produce json
-// @Param name path string true "Plugin Name"
-// @Success 200 {object} types.APIResponse[[]models.PluginStage]
-// @Router /plugins/{name}/stages [get]
-func (h *PluginHandler) GetPluginStages(c *gin.Context) {
-	requestID := middleware.GetRequestID(c)
-	pluginName := c.Param("name")
-
-	var plugin models.Plugin
-	if err := h.db.First(&plugin, "name = ?", pluginName).Error; err != nil {
-		h.logger.Warn("Plugin not found", "request_id", requestID, "plugin_name", pluginName)
-		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Plugin not found")
-		return
-	}
-
-	var stages []models.PluginStage
-	if err := h.db.Where("plugin_id = ?", plugin.ID).Find(&stages).Error; err != nil {
-		h.logger.Error("Failed to fetch plugin stages", "request_id", requestID, "error", err)
-		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch plugin stages")
-		return
-	}
-
-	middleware.SuccessResponse(c, stages)
 }
 
 // ListRevisions GET /api/v1/plugins/:name/revisions — plugin revision 히스토리 조회

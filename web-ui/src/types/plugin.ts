@@ -18,28 +18,10 @@ export interface Plugin {
   created_by?: string
   created_at: string
   updated_at: string
-  stages?: PluginStage[]
-}
-
-export interface PluginStage {
-  id: string
-  plugin_id: string
-  stage_type: string
-  category?: string
-  display_name?: string
-  description?: string
-  config_schema: Record<string, unknown> // JSON Schema
-  ui_schema?: Record<string, unknown>
-  icon?: string
-  color?: string
-  created_at: string
-  updated_at: string
-  plugin?: Plugin
 }
 
 export interface StageListResponse {
   builtin: StageInfo[]
-  plugins: PluginStageInfo[]
 }
 
 export interface StageInfo {
@@ -47,10 +29,6 @@ export interface StageInfo {
   displayName: string
   category: string
   description?: string
-}
-
-export interface PluginStageInfo extends StageInfo {
-  pluginName: string
 }
 
 export interface StageSchemaResponse {
@@ -66,7 +44,6 @@ export interface PluginCreateRequest {
   source_repo?: string
   source_code?: string
   go_mod?: string
-  stages: PluginStageCreate[]
 }
 
 // Native Plugin Test
@@ -93,14 +70,6 @@ export interface TestNativePluginResponse {
   exec_output?: Record<string, unknown>[]
   exec_error?: string
   exec_elapsed?: string
-}
-
-export interface PluginStageCreate {
-  type: string
-  displayName: string
-  category: string
-  description?: string
-  configSchema: Record<string, unknown>
 }
 
 // ClusterMetrics 클러스터 메트릭

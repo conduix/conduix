@@ -88,7 +88,6 @@ func (db *DB) Migrate() error {
 		// 플러그인 시스템
 		&models.RunnerVersion{},
 		&models.Plugin{},
-		&models.PluginStage{},
 		&models.PluginBuild{},
 		&models.StageRevision{},
 		// 파이프라인 링크

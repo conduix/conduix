@@ -347,8 +347,7 @@ func GenerateRegistryCustom(plugins []models.Plugin) string {
 
 	buf.WriteString("func init() {\n")
 
-	// PluginStage 정보를 사용하여 등록
-	// 각 plugin의 stages를 등록
+	// 각 plugin의 Stage를 등록 (plugin name = stage type)
 	for _, p := range plugins {
 		alias := fmt.Sprintf("plugin_%s", sanitizeName(p.Name))
 		// plugin의 Export 구조체 이름은 관례적으로 Stage

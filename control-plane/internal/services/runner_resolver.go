@@ -124,29 +124,9 @@ func (r *RunnerResolver) findNativePluginsInWorkflow(workflow *models.Workflow) 
 		return nil, nil
 	}
 
-	// PluginStage 테이블에서 해당 stage type의 native plugin 조회
-	var pluginStages []models.PluginStage
-	if err := r.db.Where("stage_type IN ?", stageTypes).Find(&pluginStages).Error; err != nil {
-		return nil, err
-	}
-
-	if len(pluginStages) == 0 {
-		return nil, nil
-	}
-
-	// plugin ID 수집
-	pluginIDs := make([]string, 0, len(pluginStages))
-	seen := make(map[string]bool)
-	for _, ps := range pluginStages {
-		if !seen[ps.PluginID] {
-			pluginIDs = append(pluginIDs, ps.PluginID)
-			seen[ps.PluginID] = true
-		}
-	}
-
-	// native 타입 플러그인만 조회
+	// stage type = plugin name으로 직접 매칭하여 native plugin 조회
 	var plugins []models.Plugin
-	if err := r.db.Where("id IN ? AND type = ?", pluginIDs, "native").Find(&plugins).Error; err != nil {
+	if err := r.db.Where("name IN ? AND type = ?", stageTypes, "native").Find(&plugins).Error; err != nil {
 		return nil, err
 	}
 
@@ -240,19 +220,11 @@ func (r *RunnerResolver) getLatestRevisionSeq() int {
 	return revision.Seq
 }
 
-// getPendingStageTypes 변경된 plugin들의 stage type 목록을 map으로 반환
+// getPendingStageTypes 변경된 plugin들의 stage type(= plugin name) 목록을 map으로 반환
 func (r *RunnerResolver) getPendingStageTypes(pendingPlugins []models.Plugin) map[string]bool {
-	pluginIDs := make([]string, len(pendingPlugins))
-	for i, p := range pendingPlugins {
-		pluginIDs[i] = p.ID
-	}
-
-	var pluginStages []models.PluginStage
-	r.db.Where("plugin_id IN ?", pluginIDs).Find(&pluginStages)
-
 	result := make(map[string]bool)
-	for _, ps := range pluginStages {
-		result[ps.StageType] = true
+	for _, p := range pendingPlugins {
+		result[p.Name] = true
 	}
 	return result
 }

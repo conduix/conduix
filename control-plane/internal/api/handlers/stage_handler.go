@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -9,7 +8,6 @@ import (
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/database"
-	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/pipeline-core/pkg/stream"
 	"github.com/conduix/conduix/shared/types"
 )
@@ -18,7 +16,6 @@ import (
 type StageSchemaResponse struct {
 	Type         string `json:"type"`
 	DisplayName  string `json:"display_name"`
-	PluginImage  string `json:"plugin_image,omitempty"`
 	ConfigSchema any    `json:"config_schema"`
 	UISchema     any    `json:"ui_schema,omitempty"`
 }
@@ -45,32 +42,19 @@ type BuiltinStageInfo struct {
 	Description string `json:"description"`
 }
 
-// PluginStageInfo 플러그인 Stage 정보
-type PluginStageInfo struct {
-	Type        string `json:"type"`
-	DisplayName string `json:"display_name"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
-	PluginName  string `json:"plugin_name"`
-	PluginImage string `json:"plugin_image"`
-}
-
 // AllStagesResponse 모든 Stage 목록 응답
 type AllStagesResponse struct {
 	Builtin []BuiltinStageInfo `json:"builtin"`
-	Plugins []PluginStageInfo  `json:"plugins"`
 }
 
 // ListAllStages GET /api/v1/stages
-// @Summary 모든 Stage 목록 조회 (빌트인 + 플러그인)
+// @Summary 모든 Stage 목록 조회 (빌트인)
 // @Tags stages
 // @Accept json
 // @Produce json
 // @Success 200 {object} types.APIResponse[AllStagesResponse]
 // @Router /stages [get]
 func (h *StageHandler) ListAllStages(c *gin.Context) {
-	requestID := middleware.GetRequestID(c)
-
 	// 빌트인 Stage 목록
 	builtinSchemas := stream.StageRegistry.All()
 	builtinStages := make([]BuiltinStageInfo, 0, len(builtinSchemas))
@@ -83,40 +67,8 @@ func (h *StageHandler) ListAllStages(c *gin.Context) {
 		})
 	}
 
-	// 플러그인 Stage 목록
-	var pluginStages []PluginStageInfo
-	var dbStages []models.PluginStage
-
-	if h.db != nil {
-		if err := h.db.Preload("Plugin").Where("1=1").Find(&dbStages).Error; err != nil {
-			h.logger.Warn("Failed to fetch plugin stages", "request_id", requestID, "error", err)
-		} else {
-			for _, dbStage := range dbStages {
-				pluginName := ""
-				pluginImage := ""
-				if dbStage.Plugin != nil {
-					pluginName = dbStage.Plugin.Name
-					pluginImage = dbStage.Plugin.Image
-				}
-				pluginStages = append(pluginStages, PluginStageInfo{
-					Type:        dbStage.StageType,
-					DisplayName: dbStage.DisplayName,
-					Category:    dbStage.Category,
-					Description: dbStage.Description,
-					PluginName:  pluginName,
-					PluginImage: pluginImage,
-				})
-			}
-		}
-	}
-
-	if pluginStages == nil {
-		pluginStages = []PluginStageInfo{}
-	}
-
 	response := AllStagesResponse{
 		Builtin: builtinStages,
-		Plugins: pluginStages,
 	}
 
 	middleware.SuccessResponse(c, response)
@@ -154,7 +106,6 @@ func (h *StageHandler) GetSchema(c *gin.Context) {
 // @Success 200 {object} types.APIResponse[StageSchemaResponse]
 // @Router /stages/{type}/schema [get]
 func (h *StageHandler) GetStageSchema(c *gin.Context) {
-	requestID := middleware.GetRequestID(c)
 	stageType := c.Param("type")
 
 	// 1. 빌트인 Stage에서 찾기
@@ -169,41 +120,6 @@ func (h *StageHandler) GetStageSchema(c *gin.Context) {
 		}
 		middleware.SuccessResponse(c, response)
 		return
-	}
-
-	// 2. 플러그인 Stage에서 찾기
-	if h.db != nil {
-		var pluginStage models.PluginStage
-		if err := h.db.Preload("Plugin").First(&pluginStage, "stage_type = ?", stageType).Error; err == nil {
-			var configSchema any
-			var uiSchema any
-
-			if pluginStage.ConfigSchema != "" {
-				if err := json.Unmarshal([]byte(pluginStage.ConfigSchema), &configSchema); err != nil {
-					h.logger.Warn("Failed to parse config schema", "request_id", requestID, "error", err)
-				}
-			}
-			if pluginStage.UISchema != "" {
-				if err := json.Unmarshal([]byte(pluginStage.UISchema), &uiSchema); err != nil {
-					h.logger.Warn("Failed to parse ui schema", "request_id", requestID, "error", err)
-				}
-			}
-
-			pluginImage := ""
-			if pluginStage.Plugin != nil {
-				pluginImage = pluginStage.Plugin.Image
-			}
-
-			response := StageSchemaResponse{
-				Type:         pluginStage.StageType,
-				DisplayName:  pluginStage.DisplayName,
-				PluginImage:  pluginImage,
-				ConfigSchema: configSchema,
-				UISchema:     uiSchema,
-			}
-			middleware.SuccessResponse(c, response)
-			return
-		}
 	}
 
 	// 찾지 못함

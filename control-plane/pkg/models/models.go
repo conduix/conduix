@@ -614,7 +614,6 @@ type Plugin struct {
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relations
-	Stages        []PluginStage  `gorm:"foreignKey:PluginID" json:"stages,omitempty"`
 	Builds        []PluginBuild  `gorm:"foreignKey:PluginID" json:"builds,omitempty"`
 	RunnerVersion *RunnerVersion `gorm:"foreignKey:RunnerVersionID" json:"runner_version,omitempty"`
 }
@@ -622,31 +621,6 @@ type Plugin struct {
 // TableName 테이블 이름
 func (Plugin) TableName() string {
 	return "plugins"
-}
-
-// PluginStage 플러그인이 제공하는 Stage 모델
-// 플러그인 하나가 여러 Stage를 제공할 수 있음
-type PluginStage struct {
-	ID           string    `gorm:"primaryKey;size:36" json:"id"`
-	PluginID     string    `gorm:"size:36;not null;index" json:"plugin_id"`         // 플러그인 FK
-	StageType    string    `gorm:"size:100;not null;uniqueIndex" json:"stage_type"` // Stage 타입 (예: ml-anomaly)
-	Category     string    `gorm:"size:50" json:"category,omitempty"`               // 카테고리 (transform, enrich, filter 등)
-	DisplayName  string    `gorm:"size:255" json:"display_name,omitempty"`          // UI 표시명 (예: ML 이상치 탐지)
-	Description  string    `gorm:"type:text" json:"description,omitempty"`          // 상세 설명
-	ConfigSchema string    `gorm:"type:text;not null" json:"config_schema"`         // JSON Schema for UI form generation
-	UISchema     string    `gorm:"type:text" json:"ui_schema,omitempty"`            // UI Schema for react-jsonschema-form
-	Icon         string    `gorm:"size:100" json:"icon,omitempty"`                  // 아이콘 이름
-	Color        string    `gorm:"size:20" json:"color,omitempty"`                  // 색상 코드 (예: #4CAF50)
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-
-	// Relations
-	Plugin *Plugin `gorm:"foreignKey:PluginID" json:"plugin,omitempty"`
-}
-
-// TableName 테이블 이름
-func (PluginStage) TableName() string {
-	return "plugin_stages"
 }
 
 // PluginBuild 플러그인 빌드 이력

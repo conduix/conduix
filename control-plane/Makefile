@@ -78,6 +78,7 @@ run-debug: ## 디버그 모드로 실행
 run-local: ## 로컬 개발용 실행 (docker-compose 인프라 사용)
 	DB_HOST=localhost DB_PORT=3306 DB_USER=vpuser DB_PASSWORD=vppassword \
 	DB_NAME=conduix REDIS_ADDR=localhost:6379 JWT_SECRET=dev-secret-key \
+	CONDUIX_SDK_PATH=$$(cd .. && pwd)/plugin-sdk \
 		go run ./cmd/server -port 8080
 
 run-migrate: ## 마이그레이션과 함께 실행

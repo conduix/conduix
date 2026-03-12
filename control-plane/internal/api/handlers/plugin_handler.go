@@ -2,15 +2,22 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
+	"github.com/conduix/conduix/control-plane/internal/builder"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -22,6 +29,7 @@ import (
 type PluginHandler struct {
 	db              *database.DB
 	revisionService *services.RevisionService
+	runnerBuilder   *builder.RunnerBuilder
 	logger          *slog.Logger
 }
 
@@ -30,6 +38,7 @@ func NewPluginHandler(db *database.DB) *PluginHandler {
 	return &PluginHandler{
 		db:              db,
 		revisionService: services.NewRevisionService(db.DB),
+		runnerBuilder:   builder.NewRunnerBuilder(db.DB, nil),
 		logger:          slog.Default(),
 	}
 }
@@ -63,6 +72,8 @@ type UpdatePluginRequest struct {
 	Description string `json:"description,omitempty"`
 	SourceRepo  string `json:"source_repo,omitempty"`
 	Status      string `json:"status,omitempty"` // active, inactive, deprecated
+	SourceCode  string `json:"source_code,omitempty"`
+	GoMod       string `json:"go_mod,omitempty"`
 }
 
 // PluginResponse 플러그인 응답 (Stage 수 포함)
@@ -369,6 +380,15 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 	if req.Status != "" {
 		plugin.Status = req.Status
 	}
+	if req.SourceCode != "" {
+		plugin.SourceCode = req.SourceCode
+		plugin.Type = "native"
+		hash := sha256.Sum256([]byte(req.SourceCode))
+		plugin.SourceHash = fmt.Sprintf("%x", hash)
+	}
+	if req.GoMod != "" {
+		plugin.GoMod = req.GoMod
+	}
 
 	plugin.UpdatedAt = time.Now()
 
@@ -381,13 +401,43 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 	// Stages와 함께 다시 조회
 	h.db.Preload("Stages").First(&plugin, "id = ?", plugin.ID)
 
-	// 소스가 변경된 경우 revision 생성
+	// 소스가 변경된 경우 revision 생성 + Runner auto-build 트리거
 	userID := c.GetString("user_id")
-	if plugin.Type == "native" && plugin.SourceHash != "" && plugin.SourceHash != oldSourceHash {
+	sourceChanged := plugin.Type == "native" && plugin.SourceHash != "" && plugin.SourceHash != oldSourceHash
+	if sourceChanged {
 		h.createRevision(plugin.ID, plugin.Name, "update", plugin.SourceCode, plugin.GoMod, plugin.SourceHash, oldSource, "", userID)
+
+		// 비동기 Runner auto-build 트리거
+		latestSeq, _ := h.revisionService.GetLatestSeq()
+		go func() {
+			h.logger.Info("Auto-build triggered by source change",
+				"plugin_name", plugin.Name,
+				"old_hash", oldSourceHash,
+				"new_hash", plugin.SourceHash,
+			)
+			result, err := h.runnerBuilder.Build(context.Background(), userID)
+			if err != nil {
+				versionID := ""
+				if result != nil {
+					versionID = result.VersionID
+				}
+				h.logger.Error("Auto-build failed", "error", err, "version_id", versionID)
+				return
+			}
+			// trigger를 "auto"로 기록
+			h.db.Model(&models.RunnerVersion{}).Where("id = ?", result.VersionID).Updates(map[string]any{
+				"trigger":      "auto",
+				"revision_seq": latestSeq,
+			})
+			h.logger.Info("Auto-build completed",
+				"version_id", result.VersionID,
+				"status", result.Status,
+				"duration", result.Duration,
+			)
+		}()
 	}
 
-	h.logger.Info("Plugin updated", "request_id", requestID, "plugin_id", plugin.ID)
+	h.logger.Info("Plugin updated", "request_id", requestID, "plugin_id", plugin.ID, "auto_build", sourceChanged)
 	middleware.SuccessResponse(c, plugin)
 }
 
@@ -449,6 +499,7 @@ type TestScriptRequest struct {
 	Code       string         `json:"code" binding:"required"`
 	Timeout    string         `json:"timeout,omitempty"`
 	SampleData map[string]any `json:"sample_data" binding:"required"`
+	PluginName string         `json:"plugin_name,omitempty"` // 기존 플러그인이면 테스트 결과 DB 기록
 }
 
 // TestScriptResponse Script 테스트 결과
@@ -518,6 +569,9 @@ func (h *PluginHandler) TestScript(c *gin.Context) {
 		resp.Output = result.Data
 	}
 
+	// 테스트 결과 DB 기록
+	h.recordTestResult(req.PluginName, resp.Success, resp.Error)
+
 	middleware.SuccessResponse(c, resp)
 }
 
@@ -584,6 +638,185 @@ func (h *PluginHandler) GetRevision(c *gin.Context) {
 		"source_code": sourceCode,
 		"go_mod":      goMod,
 	})
+}
+
+// TestNativePluginRequest Native Plugin 테스트 요청
+type TestNativePluginRequest struct {
+	SourceCode string           `json:"source_code" binding:"required"`
+	GoMod      string           `json:"go_mod,omitempty"`
+	Config     map[string]any   `json:"config,omitempty"`
+	SampleData []map[string]any `json:"sample_data" binding:"required"`
+	PluginName string           `json:"plugin_name,omitempty"` // 기존 플러그인이면 테스트 결과 DB 기록
+}
+
+// TestNativePluginResponse Native Plugin 테스트 결과
+type TestNativePluginResponse struct {
+	Success       bool                 `json:"success"`
+	SecurityCheck *SecurityCheckResult `json:"security_check"`
+	BuildOutput   string               `json:"build_output,omitempty"`
+	BuildError    string               `json:"build_error,omitempty"`
+	BuildElapsed  string               `json:"build_elapsed,omitempty"`
+	ExecOutput    []map[string]any     `json:"exec_output,omitempty"`
+	ExecError     string               `json:"exec_error,omitempty"`
+	ExecElapsed   string               `json:"exec_elapsed,omitempty"`
+}
+
+// TestNativePlugin POST /api/v1/plugins/test-native
+// @Summary Native Stage 소스 코드 빌드 및 테스트 실행
+// @Tags plugins
+// @Accept json
+// @Produce json
+// @Param request body TestNativePluginRequest true "Native Plugin Test Request"
+// @Success 200 {object} types.APIResponse[TestNativePluginResponse]
+// @Router /plugins/test-native [post]
+func (h *PluginHandler) TestNativePlugin(c *gin.Context) {
+	var req TestNativePluginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
+	resp := TestNativePluginResponse{}
+
+	// 1. 보안 검사 (go/ast)
+	secResult := CheckSourceSecurity(req.SourceCode)
+	resp.SecurityCheck = secResult
+	if !secResult.Passed {
+		resp.Success = false
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+
+	// 2. 임시 디렉토리에 소스 작성
+	tmpDir, err := os.MkdirTemp("", "conduix-test-*")
+	if err != nil {
+		h.logger.Error("Failed to create temp dir", "error", err)
+		resp.Success = false
+		resp.BuildError = "Failed to create temp directory"
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// main.go 작성
+	mainPath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(mainPath, []byte(req.SourceCode), 0o600); err != nil {
+		resp.Success = false
+		resp.BuildError = "Failed to write source file"
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+
+	// go.mod 작성
+	goModContent := req.GoMod
+	if goModContent == "" {
+		goModContent = `module conduix-plugin-test
+
+go 1.26
+
+require github.com/conduix/conduix/plugin-sdk v0.0.0
+
+replace github.com/conduix/conduix/plugin-sdk => github.com/conduix/conduix/plugin-sdk v0.0.0
+`
+	}
+	goModPath := filepath.Join(tmpDir, "go.mod")
+	if err := os.WriteFile(goModPath, []byte(goModContent), 0o600); err != nil {
+		resp.Success = false
+		resp.BuildError = "Failed to write go.mod"
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+
+	// 3. go build (타임아웃 60초)
+	buildCtx, buildCancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer buildCancel()
+
+	buildStart := time.Now()
+	binPath := filepath.Join(tmpDir, "plugin-test")
+	buildCmd := exec.CommandContext(buildCtx, "go", "build", "-o", binPath, ".")
+	buildCmd.Dir = tmpDir
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+
+	buildOutput, buildErr := buildCmd.CombinedOutput()
+	resp.BuildElapsed = time.Since(buildStart).String()
+	resp.BuildOutput = string(buildOutput)
+
+	if buildErr != nil {
+		resp.Success = false
+		resp.BuildError = fmt.Sprintf("Build failed: %v\n%s", buildErr, buildOutput)
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+
+	// 4. 바이너리 실행 + sample_data 전달 (타임아웃 10초)
+	// 표준 입력으로 JSON 전달, 표준 출력으로 결과 수집
+	execCtx, execCancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer execCancel()
+
+	sampleJSON, _ := json.Marshal(map[string]any{
+		"config":      req.Config,
+		"sample_data": req.SampleData,
+	})
+
+	execStart := time.Now()
+	execCmd := exec.CommandContext(execCtx, binPath)
+	execCmd.Dir = tmpDir
+	execCmd.Stdin = strings.NewReader(string(sampleJSON))
+
+	execOutput, execErr := execCmd.CombinedOutput()
+	resp.ExecElapsed = time.Since(execStart).String()
+
+	if execErr != nil {
+		resp.Success = false
+		resp.ExecError = fmt.Sprintf("Execution failed: %v\n%s", execErr, execOutput)
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+
+	// 실행 결과 파싱
+	var execResult struct {
+		Records []map[string]any `json:"records"`
+		Error   string           `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(execOutput, &execResult); err != nil {
+		resp.Success = false
+		resp.ExecError = fmt.Sprintf("Failed to parse output: %v\nRaw output: %s", err, execOutput)
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+
+	if execResult.Error != "" {
+		resp.Success = false
+		resp.ExecError = execResult.Error
+	} else {
+		resp.Success = true
+		resp.ExecOutput = execResult.Records
+	}
+
+	// 테스트 결과 DB 기록 (plugin_name이 있으면)
+	h.recordTestResult(req.PluginName, resp.Success, resp.ExecError+resp.BuildError)
+
+	middleware.SuccessResponse(c, resp)
+}
+
+// recordTestResult 테스트 결과를 DB에 기록 (plugin_name이 있을 때만)
+func (h *PluginHandler) recordTestResult(pluginName string, success bool, errMsg string) {
+	if pluginName == "" {
+		return
+	}
+	now := time.Now()
+	updates := map[string]any{
+		"last_test_passed": success,
+		"last_test_at":     now,
+	}
+	if success {
+		updates["last_test_error"] = ""
+	} else if errMsg != "" {
+		updates["last_test_error"] = errMsg
+	}
+	if err := h.db.Model(&models.Plugin{}).Where("name = ?", pluginName).Updates(updates).Error; err != nil {
+		h.logger.Error("Failed to record test result", "plugin_name", pluginName, "error", err)
+	}
 }
 
 // createRevision revision 생성 헬퍼 (실패해도 메인 플로우에 영향 없음)

@@ -8,6 +8,11 @@ WORKDIR /app
 # 의존성 설치
 RUN apk add --no-cache git
 
+# gopls 설치 (LSP 자동완성 서버)
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@latest
+
 # Go 모듈 복사 및 다운로드 (캐시 마운트)
 COPY shared/go.mod shared/go.sum ./shared/
 COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
@@ -31,14 +36,25 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-s -w" -o /app/control-plane-server ./cmd/server
 
-# Runtime stage
-FROM alpine:3.19
+# Runtime stage — golang 이미지 사용 (go build + gopls 필요)
+# TestNativePlugin에서 서버 사이드 go build 수행
+# gopls LSP 서버로 자동완성 제공
+FROM golang:1.26-alpine
 
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata git
 
 WORKDIR /app
 
+# control-plane 바이너리
 COPY --from=builder /app/control-plane-server .
+
+# gopls 바이너리
+COPY --from=builder /usr/local/bin/gopls /usr/local/bin/gopls
+
+# plugin-sdk 소스 (gopls workspace에서 참조)
+COPY plugin-sdk /app/plugin-sdk
+
+ENV CONDUIX_SDK_PATH=/app/plugin-sdk
 
 EXPOSE 8080
 

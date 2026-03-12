@@ -3,9 +3,17 @@
 export interface Plugin {
   id: string
   name: string
+  type?: 'script' | 'native'
   version: string
   description?: string
   source_repo?: string
+  source_code?: string
+  go_mod?: string
+  source_hash?: string
+  deployed_hash?: string
+  last_test_passed?: boolean
+  last_test_at?: string
+  last_test_error?: string
   status: 'active' | 'inactive' | 'deprecated'
   created_by?: string
   created_at: string
@@ -56,7 +64,35 @@ export interface PluginCreateRequest {
   name: string
   description?: string
   source_repo?: string
+  source_code?: string
+  go_mod?: string
   stages: PluginStageCreate[]
+}
+
+// Native Plugin Test
+export interface TestNativePluginRequest {
+  source_code: string
+  go_mod?: string
+  config?: Record<string, unknown>
+  sample_data: Record<string, unknown>[]
+  plugin_name?: string
+}
+
+export interface SecurityCheckResult {
+  passed: boolean
+  errors?: string[]
+  warnings?: string[]
+}
+
+export interface TestNativePluginResponse {
+  success: boolean
+  security_check?: SecurityCheckResult
+  build_output?: string
+  build_error?: string
+  build_elapsed?: string
+  exec_output?: Record<string, unknown>[]
+  exec_error?: string
+  exec_elapsed?: string
 }
 
 export interface PluginStageCreate {

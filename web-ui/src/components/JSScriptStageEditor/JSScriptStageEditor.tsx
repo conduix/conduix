@@ -45,12 +45,18 @@ interface JSScriptStageEditorProps {
   value: Record<string, unknown>
   onChange: (value: Record<string, unknown>) => void
   disabled?: boolean
+  /** 테스트 실행 결과를 부모에게 알려주는 콜백 (success: true/false) */
+  onTestResult?: (success: boolean) => void
+  /** 기존 플러그인이면 테스트 결과 DB 기록 */
+  pluginName?: string
 }
 
 export default function JSScriptStageEditor({
   value,
   onChange,
   disabled,
+  onTestResult,
+  pluginName,
 }: JSScriptStageEditorProps) {
   const code = (value.code as string) || DEFAULT_CODE
   const timeout = (value.timeout as string) || '1s'
@@ -62,8 +68,11 @@ export default function JSScriptStageEditor({
   const handleCodeChange = useCallback(
     (newCode: string | undefined) => {
       onChange({ ...value, code: newCode || '' })
+      // 코드 변경 시 테스트 결과 무효화
+      setTestResult(null)
+      onTestResult?.(false)
     },
-    [value, onChange]
+    [value, onChange, onTestResult]
   )
 
   const handleTimeoutChange = useCallback(
@@ -94,19 +103,23 @@ export default function JSScriptStageEditor({
         code,
         timeout: timeout || '1s',
         sample_data: parsedData,
+        plugin_name: pluginName,
       })
       setTestResult(result)
+      onTestResult?.(result.success)
     } catch (err) {
-      setTestResult({
+      const failResult = {
         success: false,
         dropped: false,
         error: err instanceof Error ? err.message : 'Test failed',
         elapsed: '0s',
-      })
+      }
+      setTestResult(failResult)
+      onTestResult?.(false)
     } finally {
       setTesting(false)
     }
-  }, [code, timeout, sampleData])
+  }, [code, timeout, sampleData, onTestResult, pluginName])
 
   const copyOutput = useCallback(() => {
     if (testResult?.output) {

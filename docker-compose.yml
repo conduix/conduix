@@ -58,6 +58,7 @@ services:
       - OAUTH2_CLIENT_ID=${OAUTH2_CLIENT_ID:-}
       - OAUTH2_CLIENT_SECRET=${OAUTH2_CLIENT_SECRET:-}
       - OIDC_ISSUER_URL=${OIDC_ISSUER_URL:-}
+      - CONDUIX_SDK_PATH=/app/plugin-sdk
     ports:
       - "8080:8080"
     depends_on:

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"os"
 	"runtime"
 	"time"
 
@@ -39,6 +40,7 @@ type Server struct {
 	previewHandler      *handlers.PreviewHandler
 	pluginHandler       *handlers.PluginHandler
 	runnerHandler       *handlers.RunnerHandler
+	lspHandler          *handlers.LSPHandler
 	startTime           time.Time
 	version             string
 }
@@ -87,6 +89,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		previewHandler:      handlers.NewPreviewHandler(),
 		pluginHandler:       handlers.NewPluginHandler(db),
 		runnerHandler:       handlers.NewRunnerHandler(db),
+		lspHandler:          handlers.NewLSPHandler(os.Getenv("CONDUIX_SDK_PATH")),
 		startTime:           time.Now(),
 		version:             Version,
 	}
@@ -323,6 +326,7 @@ func (s *Server) setupRoutes() {
 			{
 				plugins.GET("", s.pluginHandler.ListPlugins)
 				plugins.POST("/test-script", s.pluginHandler.TestScript)
+				plugins.POST("/test-native", s.pluginHandler.TestNativePlugin)
 				plugins.GET("/revisions/:revisionId", s.pluginHandler.GetRevision)
 				plugins.GET("/:name", s.pluginHandler.GetPlugin)
 				plugins.GET("/:name/stages", s.pluginHandler.GetPluginStages)
@@ -340,6 +344,13 @@ func (s *Server) setupRoutes() {
 				runner.POST("/build", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.StartBuild)
 				runner.POST("/resolve", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.ResolveImage)
 				runner.POST("/rebuild/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.RebuildVersion)
+			}
+
+			// LSP (gopls 자동완성)
+			lspGroup := authenticated.Group("/lsp")
+			{
+				lspGroup.GET("/go", s.lspHandler.HandleLSP)
+				lspGroup.POST("/sync", s.lspHandler.SyncSource)
 			}
 
 			// 미리보기

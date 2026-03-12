@@ -604,6 +604,9 @@ type Plugin struct {
 	DeployedHash    string         `gorm:"size:64" json:"deployed_hash,omitempty"`       // 최신 ready 이미지에 포함된 소스 해시
 	RunnerVersionID string         `gorm:"size:36" json:"runner_version_id,omitempty"`   // 이 stage가 포함된 최신 ready 버전 ID
 	SourceRepo      string         `gorm:"size:500" json:"source_repo,omitempty"`        // Git 저장소 URL (optional)
+	LastTestPassed  bool           `gorm:"default:false" json:"last_test_passed"`        // 마지막 테스트 성공 여부
+	LastTestAt      *time.Time     `json:"last_test_at,omitempty"`                       // 마지막 테스트 시각
+	LastTestError   string         `gorm:"type:text" json:"last_test_error,omitempty"`   // 마지막 테스트 에러 메시지
 	Status          string         `gorm:"size:50;default:active" json:"status"`         // active, inactive, deprecated
 	CreatedBy       string         `gorm:"size:36" json:"created_by,omitempty"`          // 등록한 사용자
 	CreatedAt       time.Time      `json:"created_at"`

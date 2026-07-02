@@ -28,14 +28,13 @@ import (
 
 // GroupExecutor 파이프라인 그룹 실행기
 type GroupExecutor struct {
-	group           *types.PipelineGroup
-	pipelineRunners map[string]*PipelineRunner
-	mu              sync.RWMutex
-	status          types.PipelineGroupStatus
-	execution       *types.PipelineGroupExecution
-	cancelFunc      context.CancelFunc
-	resultCh        chan *types.PipelineExecutionResult
-	errorCh         chan error
+	group      *types.PipelineGroup
+	mu         sync.RWMutex
+	status     types.PipelineGroupStatus
+	execution  *types.PipelineGroupExecution
+	cancelFunc context.CancelFunc
+	resultCh   chan *types.PipelineExecutionResult
+	errorCh    chan error
 
 	// 일시정지 게이트: paused가 true인 동안 처리 루프는 waitIfPaused에서 대기한다.
 	// resumeCh는 Resume/Stop 시 close되어 대기 중인 루프를 깨운다(재개마다 새 채널로 교체).
@@ -89,7 +88,6 @@ func WithLinkClient(client *link.Client) GroupExecutorOption {
 func NewGroupExecutor(group *types.PipelineGroup, opts ...GroupExecutorOption) *GroupExecutor {
 	e := &GroupExecutor{
 		group:           group,
-		pipelineRunners: make(map[string]*PipelineRunner),
 		status:          types.PipelineGroupStatusIdle,
 		resultCh:        make(chan *types.PipelineExecutionResult, len(group.Pipelines)),
 		errorCh:         make(chan error, len(group.Pipelines)),
@@ -1527,15 +1525,6 @@ func (e *GroupExecutor) sortByPriority(pipelines []types.GroupedPipeline) []type
 		}
 	}
 	return sorted
-}
-
-// PipelineRunner 개별 파이프라인 실행기
-// TODO: 개별 파이프라인 실행 구현시 사용
-type PipelineRunner struct {
-	pipeline types.GroupedPipeline //nolint:unused
-	source   source.Source         //nolint:unused
-	status   string                //nolint:unused
-	mu       sync.RWMutex          //nolint:unused
 }
 
 // 소스 생성 헬퍼 함수들

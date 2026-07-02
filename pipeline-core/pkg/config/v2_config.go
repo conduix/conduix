@@ -438,6 +438,7 @@ type RealtimeConfig struct {
 	EntityIDField  string `yaml:"entity_id_field"`  // 엔티티 ID 필드
 	DedupStorage   string `yaml:"dedup_storage"`    // redis, memory
 	DedupTTL       string `yaml:"dedup_ttl"`        // 중복 ID 보관 기간
+	DedupRedisAddr string `yaml:"dedup_redis_addr"` // redis storage 사용 시 Redis 주소 (기본 localhost:6379)
 }
 
 // ContractConfig Data Contract 설정

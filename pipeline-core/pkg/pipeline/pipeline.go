@@ -77,7 +77,7 @@ func New(cfg *config.PipelineConfigV2) (*Pipeline, error) {
 	// 실시간 모드 설정
 	if cfg.IsRealtime() && cfg.Realtime != nil {
 		ttl, _ := time.ParseDuration(cfg.Realtime.DedupTTL)
-		dedupSvc, err := dedup.NewDedupService(cfg.Realtime.DedupStorage, ttl)
+		dedupSvc, err := dedup.NewDedupService(cfg.Realtime.DedupStorage, cfg.Realtime.DedupRedisAddr, ttl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create dedup service: %w", err)
 		}

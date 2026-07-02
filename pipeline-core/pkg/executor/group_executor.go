@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -321,13 +322,16 @@ func (e *GroupExecutor) runPipelineWithRetry(ctx context.Context, pipeline types
 		}
 		if attempt < maxAttempts {
 			metrics.PipelineRetriesTotal.Inc()
-			fmt.Printf("[runSequential] pipeline %s failed (attempt %d/%d), retrying: %v\n",
-				pipeline.Name, attempt, maxAttempts, err)
-			if retryDelay > 0 {
+			// 지수 백오프 + jitter: 여러 파이프라인이 동시에 실패해도 재시도가 몰리지 않게(thundering herd 방지)
+			delay := backoffWithJitter(retryDelay, attempt)
+			slog.Warn("pipeline attempt failed, retrying",
+				"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "pipeline", pipeline.Name,
+				"attempt", attempt, "max_attempts", maxAttempts, "backoff", delay, "error", err)
+			if delay > 0 {
 				select {
 				case <-ctx.Done():
 					return result, ctx.Err()
-				case <-time.After(retryDelay):
+				case <-time.After(delay):
 				}
 			} else if ctx.Err() != nil {
 				return result, ctx.Err()
@@ -335,6 +339,31 @@ func (e *GroupExecutor) runPipelineWithRetry(ctx context.Context, pipeline types
 		}
 	}
 	return result, err
+}
+
+// backoffWithJitter는 base 딜레이에 지수 백오프(2^(attempt-1))와 ±20% jitter를 적용한다.
+// base가 0이면 0을 반환(딜레이 없음). 최대 5분으로 상한을 둔다.
+func backoffWithJitter(base time.Duration, attempt int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	const maxBackoff = 5 * time.Minute
+	// 2^(attempt-1) 배수 (attempt는 1부터). 오버플로우 방지 위해 시프트 상한.
+	shift := attempt - 1
+	if shift > 20 {
+		shift = 20
+	}
+	d := base * time.Duration(1<<uint(shift))
+	if d > maxBackoff {
+		d = maxBackoff
+	}
+	// ±20% jitter
+	jitter := time.Duration(rand.Int63n(int64(d)/5*2+1)) - d/5
+	d += jitter
+	if d < 0 {
+		d = base
+	}
+	return d
 }
 
 // runDAG DAG 기반 의존성 실행

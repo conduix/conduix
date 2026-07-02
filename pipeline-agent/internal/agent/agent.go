@@ -647,6 +647,22 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	startTime := time.Now()
 	workflow := cmd.WorkflowConfig
 
+	// panic이 에이전트 전체를 죽이지 않도록 복구하고 실행을 실패로 보고한다.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("PANIC in executeGroup (workflow=%s execution=%s): %v\n", cmd.WorkflowID, cmd.ExecutionID, r)
+			completedAt := time.Now()
+			_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+				ExecutionID:  cmd.ExecutionID,
+				WorkflowID:   cmd.WorkflowID,
+				Status:       types.PipelineGroupStatusError,
+				StartedAt:    startTime,
+				CompletedAt:  &completedAt,
+				ErrorMessage: fmt.Sprintf("panic during execution: %v", r),
+			})
+		}
+	}()
+
 	fmt.Printf("Starting group execution: %s (%s)\n", workflow.Name, workflow.ID)
 
 	// Link Client 생성

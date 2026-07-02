@@ -17,7 +17,9 @@
 - [x] **실패 카운트 + 서킷 브레이크**: `failureGuard`(pkg/executor/failure_guard.go) — 연속/누적 실패 카운트, CircuitBreakerPolicy 임계 초과 시 서킷 오픈 → 실행 에러 종료. record/batch 양 경로 적용. 테스트 4건.
 - [x] **DLQ 연동**: FailurePolicy.DLQ 설정 시 실패 레코드를 DLQOutput으로 적재. 서킷과 독립 동작.
 - [x] **구조화 로그**: 실패/서킷트립 이벤트를 workflow_id/pipeline_id 상관키 포함 slog로 기록. Prometheus circuit_tripped_total 메트릭.
-- [ ] 추가 방어 기법 검토 (backoff jitter, 타임아웃 상한, panic recover, graceful degradation 등)
+- [x] 추가 방어: retry에 **지수 백오프 + jitter**(backoffWithJitter, 상한 5분) — 동시 실패 시 재시도 몰림(thundering herd) 방지. 테스트.
+- [x] 추가 방어: executeGroup 고루틴 **panic recover** — 한 파이프라인 panic이 에이전트 전체를 죽이지 않고 실행을 failed로 보고.
+- [ ] 추가 방어(후속): 실행 타임아웃 상한 설정화(현재 하드코딩 10분)
 
 ## 남은 작업 (우선순위)
 

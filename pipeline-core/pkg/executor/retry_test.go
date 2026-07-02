@@ -97,3 +97,32 @@ func TestRunPipelineWithRetry_ContextCancelStopsRetry(t *testing.T) {
 		t.Errorf("context cancel should stop retries quickly, elapsed=%v", elapsed)
 	}
 }
+
+func TestBackoffWithJitter(t *testing.T) {
+	// base=0 이면 딜레이 없음
+	if d := backoffWithJitter(0, 3); d != 0 {
+		t.Errorf("base 0 should yield 0, got %v", d)
+	}
+
+	base := 100 * time.Millisecond
+	// attempt가 커질수록 대략 지수적으로 증가(±20% jitter 감안)
+	// attempt=1 → ~100ms, attempt=2 → ~200ms, attempt=3 → ~400ms
+	d1 := backoffWithJitter(base, 1)
+	d3 := backoffWithJitter(base, 3)
+	// jitter 하한을 감안해도 d3(≈400±80ms)은 d1(≈100±20ms) 상한보다 커야 함
+	if d3 <= d1 {
+		t.Errorf("backoff should grow with attempts: d1=%v d3=%v", d1, d3)
+	}
+
+	// 상한(5분) 초과하지 않음
+	if d := backoffWithJitter(time.Hour, 10); d > 5*time.Minute+time.Minute {
+		t.Errorf("backoff exceeded cap: %v", d)
+	}
+
+	// 항상 양수(base>0일 때)
+	for attempt := 1; attempt <= 8; attempt++ {
+		if d := backoffWithJitter(base, attempt); d <= 0 {
+			t.Errorf("backoff should be positive at attempt %d, got %v", attempt, d)
+		}
+	}
+}

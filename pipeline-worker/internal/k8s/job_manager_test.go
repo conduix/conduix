@@ -52,7 +52,7 @@ func TestCreateBatchJob(t *testing.T) {
 	createdJob := jobs.Items[0]
 
 	// 레이블 확인
-	if createdJob.Labels["app.kubernetes.io/managed-by"] != "conduix-agent" {
+	if createdJob.Labels["app.kubernetes.io/managed-by"] != "conduix-worker" {
 		t.Errorf("expected managed-by label, got %v", createdJob.Labels)
 	}
 	if createdJob.Labels["conduix.io/workflow-id"] != "wf-001" {

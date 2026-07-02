@@ -1,4 +1,4 @@
-module github.com/conduix/conduix/pipeline-daemon
+module github.com/conduix/conduix/pipeline-worker
 
 go 1.26
 

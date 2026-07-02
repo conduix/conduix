@@ -113,6 +113,7 @@ interface Workflow {
   slug: string
   description: string
   type: 'batch' | 'realtime'
+  cluster_id?: string
   status: string
   schedule_enabled: boolean
   provider_id: string
@@ -168,7 +169,9 @@ export default function ProjectDetailPage() {
     slug: '',
     type: 'batch' as 'batch' | 'realtime',
     description: '',
+    cluster_id: '', // 실행 대상 cluster (빈 값이면 서버가 default cluster로 폴백)
   })
+  const [clusterOptions, setClusterOptions] = useState<Array<{ id: string; name: string }>>([])
   const [workflowSaving, setWorkflowSaving] = useState(false)
   const [deleteWorkflowId, setDeleteWorkflowId] = useState<string | null>(null)
 
@@ -314,10 +317,22 @@ export default function ProjectDetailPage() {
     }
   }
 
+  // 워크플로우 dialog에서 실행 대상 cluster를 고를 수 있도록 목록을 로드한다.
+  const loadClusterOptions = async () => {
+    try {
+      const res = await api.getClusters()
+      const list = (res.data || []) as Array<{ id: string; name: string }>
+      setClusterOptions(list.map((c) => ({ id: c.id, name: c.name })))
+    } catch {
+      setClusterOptions([])
+    }
+  }
+
   // Workflow CRUD handlers
   const handleCreateWorkflow = () => {
     setEditingWorkflow(null)
-    setWorkflowForm({ name: '', slug: '', type: 'batch', description: '' })
+    setWorkflowForm({ name: '', slug: '', type: 'batch', description: '', cluster_id: '' })
+    loadClusterOptions()
     setWorkflowModalOpen(true)
   }
 
@@ -328,7 +343,9 @@ export default function ProjectDetailPage() {
       slug: workflow.slug,
       type: workflow.type,
       description: workflow.description,
+      cluster_id: workflow.cluster_id || '',
     })
+    loadClusterOptions()
     setWorkflowModalOpen(true)
   }
 
@@ -1057,6 +1074,21 @@ export default function ProjectDetailPage() {
                     <Typography variant="body2" color="text.secondary">{t('workflow.realtimeDesc')}</Typography>
                   </Box>
                 </MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>{t('workflow.cluster')}</InputLabel>
+              <Select
+                value={workflowForm.cluster_id}
+                label={t('workflow.cluster')}
+                onChange={(e) => setWorkflowForm({ ...workflowForm, cluster_id: e.target.value })}
+              >
+                <MenuItem value="">
+                  <Typography variant="body2" color="text.secondary">{t('workflow.clusterDefault')}</Typography>
+                </MenuItem>
+                {clusterOptions.map((cl) => (
+                  <MenuItem key={cl.id} value={cl.id}>{cl.name}</MenuItem>
+                ))}
               </Select>
             </FormControl>
             <TextField

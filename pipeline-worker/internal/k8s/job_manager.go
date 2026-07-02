@@ -15,6 +15,13 @@ import (
 	"github.com/conduix/conduix/shared/types"
 )
 
+// managedByLabel은 worker가 생성한 Job임을 표시하는 라벨 값이다.
+// 생성(CreateBatchJob)과 조회(ListJobs)가 반드시 동일 값을 써야 하므로 한 곳에서 관리한다.
+const (
+	labelManagedByKey = "app.kubernetes.io/managed-by"
+	managedByValue    = "conduix-worker"
+)
+
 // JobManager K8s Job/CronJob 관리자
 type JobManager struct {
 	client          *Client
@@ -73,9 +80,9 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 	}
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":       "conduix-runner",
+		"app.kubernetes.io/name":       "conduix-worker",
 		"app.kubernetes.io/component":  "batch-job",
-		"app.kubernetes.io/managed-by": "conduix-agent",
+		labelManagedByKey:              managedByValue,
 		"conduix.io/workflow-id":       sanitizeLabel(spec.WorkflowID),
 		"conduix.io/execution-id":      sanitizeLabel(spec.ExecutionID),
 	}
@@ -184,9 +191,9 @@ func (m *JobManager) CreateCronJob(ctx context.Context, spec *CronJobSpec) (*bat
 	}
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":       "conduix-runner",
+		"app.kubernetes.io/name":       "conduix-worker",
 		"app.kubernetes.io/component":  "cron-job",
-		"app.kubernetes.io/managed-by": "conduix-agent",
+		labelManagedByKey:              managedByValue,
 		"conduix.io/workflow-id":       sanitizeLabel(spec.WorkflowID),
 	}
 
@@ -335,7 +342,7 @@ func (m *JobManager) ListJobs(ctx context.Context, namespace string) ([]JobStatu
 	}
 
 	jobs, err := m.client.Clientset().BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/managed-by=conduix-agent",
+		LabelSelector: labelManagedByKey + "=" + managedByValue,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list jobs: %w", err)

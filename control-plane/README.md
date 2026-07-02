@@ -504,6 +504,6 @@ replicas: 3
 
 ## 관련 문서
 
-- [Pipeline Agent](../pipeline-daemon/README.md)
+- [Pipeline Agent](../pipeline-worker/README.md)
 - [Web UI](../web-ui/README.md)
 - [장애 처리](../README.md#장애-처리-fault-tolerance)

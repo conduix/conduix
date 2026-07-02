@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/conduix/conduix/pipeline-daemon/api"
-	"github.com/conduix/conduix/pipeline-daemon/internal/agent"
+	"github.com/conduix/conduix/pipeline-worker/api"
+	"github.com/conduix/conduix/pipeline-worker/internal/agent"
 )
 
 var (
@@ -88,6 +88,9 @@ func runAgentMode() {
 		RedisHost:         *redisHost,
 		RedisPort:         *redisPort,
 		HeartbeatInterval: 10 * time.Second,
+		// batch 위임 시 이 worker가 자기 cluster에 만들 K8s Job 설정
+		Namespace:   os.Getenv("NAMESPACE"),
+		RunnerImage: os.Getenv("RUNNER_IMAGE"), // pipeline-batch-job 이미지
 	}
 
 	// 에이전트 생성

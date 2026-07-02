@@ -4,7 +4,7 @@
 
 ## 개요
 
-`pipeline-daemon`는 Control Plane의 명령을 받아 데이터 파이프라인을 실행하는 에이전트입니다. 여러 대의 서버에 배포되어 파이프라인 클러스터를 구성합니다.
+`pipeline-worker`는 Control Plane의 명령을 받아 데이터 파이프라인을 실행하는 에이전트입니다. 여러 대의 서버에 배포되어 파이프라인 클러스터를 구성합니다.
 
 ## 아키텍처
 
@@ -43,7 +43,7 @@
 ## 디렉토리 구조
 
 ```
-pipeline-daemon/
+pipeline-worker/
 ├── cmd/
 │   └── agent/
 │       └── main.go              # CLI 진입점
@@ -233,7 +233,7 @@ curl http://localhost:8081/pipelines
 
 ```bash
 # 단독 빌드
-cd pipeline-daemon
+cd pipeline-worker
 go build -o agent ./cmd/agent
 
 # 전체 프로젝트에서 빌드
@@ -260,7 +260,7 @@ REDIS_HOST=redis \
 
 ```bash
 docker run -d \
-  --name pipeline-daemon \
+  --name pipeline-worker \
   -e CONTROL_PLANE_URL=http://control-plane:8080 \
   -e REDIS_HOST=redis \
   conduix/agent:latest

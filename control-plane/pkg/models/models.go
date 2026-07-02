@@ -110,6 +110,9 @@ type Cluster struct {
 	Region       string `gorm:"size:100" json:"region,omitempty"`
 	Status       string `gorm:"size:50;default:active" json:"status"` // active, inactive
 
+	// 워크플로우가 cluster_id 미지정 시 실행 대상이 되는 기본 클러스터. 전체에서 최대 1개.
+	IsDefault bool `gorm:"default:false;index" json:"is_default"`
+
 	// Agent 배포 설정
 	DesiredAgents int    `gorm:"default:1" json:"desired_agents"`         // 원하는 Agent 수
 	AgentConfig   string `gorm:"type:text" json:"agent_config,omitempty"` // JSON: nodeSelector, tolerations, affinity 등

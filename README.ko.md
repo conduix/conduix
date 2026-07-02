@@ -294,7 +294,7 @@ stages:
 ```
 conduix/
 ├── pipeline-core/     # 파이프라인 코어 (Actor 시스템, Bento 통합)
-├── pipeline-daemon/    # 파이프라인 실행 에이전트
+├── pipeline-worker/    # 파이프라인 실행 에이전트
 ├── control-plane/     # 운영툴 백엔드 API
 ├── web-ui/            # 운영툴 프론트엔드
 ├── shared/            # 공유 타입/상수

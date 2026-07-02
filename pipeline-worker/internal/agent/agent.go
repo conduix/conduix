@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/conduix/conduix/pipeline-worker/internal/k8s"
+
 	"github.com/conduix/conduix/pipeline-core/pkg/executor"
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
 	redisclient "github.com/conduix/conduix/shared/redis"
@@ -53,6 +55,11 @@ type Agent struct {
 	commMode        CommunicationMode
 	redisHealthy    bool
 	healthMu        sync.RWMutex
+
+	// batch 위임: control-plane이 이 cluster에 batch 워크플로우 실행을 위임하면
+	// worker가 자기 cluster에 K8s Job을 생성한다. K8s 클라이언트가 없는 환경(로컬 등)에서는 nil.
+	jobManager   *k8s.JobManager
+	jobManagerMu sync.Mutex
 }
 
 // Config 에이전트 설정
@@ -69,6 +76,10 @@ type Config struct {
 	CommandPollInterval time.Duration `json:"command_poll_interval"` // REST 폴링 간격
 	EnableRESTFallback  bool          `json:"enable_rest_fallback"`  // REST 폴백 활성화
 	ExecutionTimeout    time.Duration `json:"execution_timeout"`     // 워크플로우 실행 최대 시간 (기본 10분)
+
+	// batch 위임 시 생성할 K8s Job 설정
+	Namespace   string `json:"namespace"`    // Job 생성 네임스페이스 (비면 in-cluster 기본)
+	RunnerImage string `json:"runner_image"` // 배치 실행용 pipeline-batch-job 이미지
 }
 
 // defaultExecutionTimeout 워크플로우 실행 기본 타임아웃.
@@ -620,8 +631,98 @@ func (a *Agent) handleGroupExecution(message string) {
 		return
 	}
 
+	// batch 워크플로우는 이 cluster에 K8s Job으로 위임 생성(일회성 격리 실행).
+	// realtime은 worker 프로세스 내에서 직접 상주 실행.
+	if cmd.WorkflowConfig.Type == types.WorkflowTypeBatch {
+		go a.delegateBatchJob(&cmd)
+		return
+	}
+
 	// 그룹 실행 시작 (비동기)
 	go a.executeGroup(&cmd)
+}
+
+// delegateBatchJob은 batch 워크플로우를 이 worker가 속한 cluster의 K8s Job으로 생성한다.
+// control-plane이 아니라 worker가 in-cluster 권한으로 Job을 만든다(위임 구조).
+// Job Pod(pipeline-batch-job)가 실행 후 control-plane에 REST 콜백으로 결과를 보고한다.
+func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
+	startTime := time.Now()
+	workflow := cmd.WorkflowConfig
+
+	jm := a.getJobManager()
+	if jm == nil {
+		completedAt := time.Now()
+		_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: "batch delegation requires a Kubernetes cluster, but no K8s client is available on this worker",
+		})
+		return
+	}
+
+	// JobConfig(선택): 있으면 리소스 스펙으로 사용, 없으면 JobManager 기본값.
+	var jobConfig types.JobConfig
+	if cmd.JobConfig != "" {
+		if err := json.Unmarshal([]byte(cmd.JobConfig), &jobConfig); err != nil {
+			fmt.Printf("Invalid job_config for execution %s, using defaults: %v\n", cmd.ExecutionID, err)
+		}
+	}
+
+	pipelinesJSON, err := json.Marshal(workflow.Pipelines)
+	if err != nil {
+		completedAt := time.Now()
+		_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: fmt.Sprintf("failed to serialize pipelines: %v", err),
+		})
+		return
+	}
+
+	job, err := jm.CreateBatchJob(a.ctx, &k8s.JobSpec{
+		ExecutionID:     cmd.ExecutionID,
+		WorkflowID:      cmd.WorkflowID,
+		PipelinesConfig: string(pipelinesJSON),
+		JobConfig:       jobConfig,
+	})
+	if err != nil {
+		completedAt := time.Now()
+		_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: fmt.Sprintf("failed to create batch job: %v", err),
+		})
+		return
+	}
+
+	// Job 생성 성공. 이후 상태·결과는 Job Pod가 control-plane에 직접 콜백한다.
+	fmt.Printf("Delegated batch job %s for execution %s (workflow=%s)\n", job.Name, cmd.ExecutionID, cmd.WorkflowID)
+}
+
+// getJobManager는 batch 위임용 JobManager를 지연 생성한다(in-cluster K8s 클라이언트).
+// K8s 환경이 아니면 nil을 반환하며, 이 경우 batch 위임은 실패로 보고된다.
+func (a *Agent) getJobManager() *k8s.JobManager {
+	a.jobManagerMu.Lock()
+	defer a.jobManagerMu.Unlock()
+	if a.jobManager != nil {
+		return a.jobManager
+	}
+	client, err := k8s.NewClient(a.config.Namespace)
+	if err != nil {
+		fmt.Printf("K8s client unavailable, batch delegation disabled: %v\n", err)
+		return nil
+	}
+	a.jobManager = k8s.NewJobManager(client, a.controlPlaneURL, a.config.RunnerImage)
+	return a.jobManager
 }
 
 // claimExecution은 Redis SETNX로 execution 소유권을 원자적으로 획득한다.

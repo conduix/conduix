@@ -10,9 +10,9 @@ pre-commit:
     lint-control-plane:
       glob: "control-plane/**/*.go"
       run: cd control-plane && golangci-lint run --fix --allow-parallel-runners
-    lint-pipeline-daemon:
-      glob: "pipeline-daemon/**/*.go"
-      run: cd pipeline-daemon && golangci-lint run --fix --allow-parallel-runners
+    lint-pipeline-worker:
+      glob: "pipeline-worker/**/*.go"
+      run: cd pipeline-worker && golangci-lint run --fix --allow-parallel-runners
     lint-pipeline-core:
       glob: "pipeline-core/**/*.go"
       run: cd pipeline-core && golangci-lint run --fix --allow-parallel-runners

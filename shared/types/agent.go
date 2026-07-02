@@ -98,6 +98,7 @@ type WorkflowExecutionCommand struct {
 	TriggeredBy     string         `json:"triggered_by"`                // "user", "schedule", "event"
 	UserID          string         `json:"user_id,omitempty"`
 	WorkflowConfig  *Workflow      `json:"workflow_config,omitempty"`
+	JobConfig       string         `json:"job_config,omitempty"` // batch 위임 시 worker가 K8s Job 리소스 스펙으로 사용(선택)
 	Timestamp       time.Time      `json:"timestamp"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
 }

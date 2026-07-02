@@ -60,14 +60,8 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 	kafkaService := services.NewKafkaService(nil)
 	linkService := services.NewPipelineLinkService(db, kafkaService, nil)
 
-	// Kubernetes 서비스 초기화 (실패해도 서버는 시작)
-	var k8sService *services.KubernetesJobService
-	k8sService, err := services.NewKubernetesJobService(&services.KubernetesJobServiceConfig{})
-	if err != nil {
-		// K8s 클라이언트 초기화 실패는 로컬 개발 환경에서 정상
-		// 실제 K8s 환경에서만 스케일링 기능 사용 가능
-		k8sService = nil
-	}
+	// control-plane은 K8s 크레덴셜을 갖지 않는다(위임 구조). K8s Job 생성·deployment 스케일은
+	// 각 cluster의 worker/배포 차트가 담당한다. (docs/EXECUTION_TOPOLOGY_INTENT.md)
 
 	s := &Server{
 		router:              gin.New(),
@@ -85,7 +79,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		userHandler:         handlers.NewUserHandler(db),
 		projectHandler:      handlers.NewProjectHandler(db),
 		agentHandler:        handlers.NewAgentHandler(db, redisService),
-		clusterHandler:      handlers.NewClusterHandler(db, redisService, k8sService),
+		clusterHandler:      handlers.NewClusterHandler(db, redisService),
 		utilsHandler:        handlers.NewUtilsHandler(),
 		checkpointHandler:   handlers.NewCheckpointHandler(db),
 		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),

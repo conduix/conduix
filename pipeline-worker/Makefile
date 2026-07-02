@@ -11,7 +11,7 @@ GITHASH=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 OS=$(shell go env GOOS)
 ARCH=$(shell go env GOARCH)
 
-MODULE_NAME=pipeline-daemon
+MODULE_NAME=pipeline-worker
 BINARY=agent
 BUILD_DIR=../build
 PACKAGE_DIR=$(MODULE_NAME)

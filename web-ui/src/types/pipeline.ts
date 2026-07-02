@@ -317,6 +317,7 @@ export interface Workflow {
   slug: string
   description?: string
   type: 'batch' | 'realtime'
+  cluster_id?: string // 실행 대상 cluster (빈 값이면 default cluster로 폴백)
   execution_mode: 'parallel' | 'sequential' | 'dag'
   status: string
   schedule_enabled: boolean

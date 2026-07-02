@@ -650,13 +650,13 @@ func (PluginBuild) TableName() string {
 	return "plugin_builds"
 }
 
-// RunnerVersion pipeline-runner 이미지 빌드 버전
+// RunnerVersion pipeline-batch-job 이미지 빌드 버전
 // 모든 native stage를 포함하는 Runner 이미지의 빌드 기록
 type RunnerVersion struct {
 	ID           string     `gorm:"primaryKey;size:36" json:"id"`                   // "rv-42"
 	BuildNumber  int        `gorm:"autoIncrement;uniqueIndex" json:"build_number"`  // 자동 증가
 	Status       string     `gorm:"size:20;not null;default:pending" json:"status"` // pending → building → ready | failed
-	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-runner:rv-42"
+	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-batch-job:rv-42"
 	ImageDigest  string     `gorm:"size:100" json:"image_digest,omitempty"`         // sha256:... (이미지 무결성 검증)
 	SourceHash   string     `gorm:"size:64;not null" json:"source_hash"`            // 모든 native stage 소스의 결합 해시
 	PluginIDs    string     `gorm:"type:text" json:"plugin_ids,omitempty"`          // JSON: 포함된 native stage ID 목록

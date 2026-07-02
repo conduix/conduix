@@ -121,7 +121,7 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
-							Name:            "pipeline-runner",
+							Name:            "pipeline-batch-job",
 							Image:           image,
 							ImagePullPolicy: pullPolicy,
 							Env:             envVars,
@@ -225,7 +225,7 @@ func (m *JobManager) CreateCronJob(ctx context.Context, spec *CronJobSpec) (*bat
 							RestartPolicy: corev1.RestartPolicyNever,
 							Containers: []corev1.Container{
 								{
-									Name:      "pipeline-runner",
+									Name:      "pipeline-batch-job",
 									Image:     image,
 									Env:       envVars,
 									Resources: resources,

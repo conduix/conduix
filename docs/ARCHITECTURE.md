@@ -20,8 +20,8 @@
 | `shared/` | 공통 타입·유틸 (Redis ResilientClient, 메트릭) | 없음 |
 | `plugin-sdk/` | 네이티브 stage 인터페이스 (`NativeStage`) | 없음 |
 | `pipeline-core/` | 실행 엔진 (GroupExecutor, source/stage/output, 체크포인트) | shared, plugin-sdk |
-| `pipeline-runner/` | 배치용 실행 바이너리 (K8s Job에서 GroupExecutor 구동) | shared, pipeline-core |
-| `pipeline-agent/` | 실행 에이전트 (워크플로우 수신·실행, 하트비트) | shared, pipeline-core |
+| `pipeline-daemon/` | **상주 데몬**: Redis로 명령 수신, 인메모리로 GroupExecutor 구동. realtime 및 JobConfig 없는 batch 담당. | shared, pipeline-core |
+| `pipeline-batch-job/` | **일회성 K8s Job 바이너리**: 환경변수로 config 받아 GroupExecutor 한 번 구동 후 종료. `JobConfig`가 붙은 batch 전용. | shared, pipeline-core |
 | `control-plane/` | 운영 백엔드 (Gin+GORM+MySQL, 스케줄러, Redis pub/sub) | shared, pipeline-core |
 | `web-ui/` | 프론트엔드 (React+TS+MUI) | control-plane REST |
 
@@ -30,9 +30,9 @@
 ```mermaid
 graph TD
     webui["web-ui (React)"] -->|REST| cp["control-plane<br/>(API·스케줄러·pub/sub)"]
-    cp -->|"명령: Redis pub/sub<br/>(폴백 REST 폴링)"| agent["pipeline-agent"]
+    cp -->|"명령: Redis pub/sub<br/>(폴백 REST 폴링)"| agent["pipeline-daemon"]
     agent -->|"REST: 등록·하트비트·결과보고"| cp
-    cp -->|K8s Job 생성| runner["pipeline-runner<br/>(batch 바이너리)"]
+    cp -->|K8s Job 생성| runner["pipeline-batch-job<br/>(batch 바이너리)"]
     runner -->|"REST: job-result 콜백"| cp
     agent --> core["pipeline-core<br/>(GroupExecutor)"]
     runner --> core
@@ -77,6 +77,28 @@ flowchart LR
 - **재시도**: FailurePolicy.retry — 지수 백오프 + jitter(thundering herd 방지).
 - **체크포인트**: 소스 오프셋 기반 복구.
 
+### agent vs runner — 무엇이 다른가 (혼동 방지)
+
+두 모듈은 **"어떤 데이터 타입을 처리하느냐"로 나뉘지 않는다.** 둘 다 동일한 `GroupExecutor`를 구동하며, 어떤 파이프라인(kafka/cdc/sql/rest…)이든 실행할 수 있다. 차이는 **"어떻게 구동·배포되느냐(생명주기)"** 다.
+
+| | `pipeline-daemon` | `pipeline-batch-job` |
+|---|---|---|
+| 생명주기 | **상주 데몬** (항상 떠 있음) | **일회성** (실행 후 종료) |
+| 명령 수신 | Redis Pub/Sub (REST 폴백) | 환경변수로 config 주입 |
+| 배포 형태 | 항상 떠 있는 프로세스 | 필요할 때 K8s Job으로 생성 |
+| 실행 엔진 | `GroupExecutor` | `GroupExecutor` (동일) |
+
+**batch는 왜 두 경로로 갈리나?** — 데이터 타입이 아니라 워크플로우에 **`JobConfig`가 설정됐는지**로 갈린다. control-plane의 단일 분기(`workflow.go` StartWorkflow):
+
+```
+if type == batch AND JobConfig != "" AND K8s 사용가능:
+    → pipeline-batch-job (K8s Job으로 격리 일회성 실행)   # 무겁거나 격리가 필요한 배치
+else:
+    → pipeline-daemon (상주 데몬이 인메모리 실행)         # realtime 전부 + JobConfig 없는 batch
+```
+
+즉 `JobConfig`는 "이 배치를 독립 K8s Job(전용 리소스·격리)으로 띄울지"를 정하는 **운영 선택**이다. 붙이지 않으면 realtime과 동일하게 상주 agent가 처리한다.
+
 ## 5. 분산 · 통신
 
 **통신은 하이브리드** — 방향에 따라 채널이 다르다:
@@ -105,9 +127,9 @@ sequenceDiagram
 
     U->>CP: POST /workflows/:id/start
     CP->>CP: execution 레코드 생성(running)
-    alt batch + JobConfig
-        CP->>CP: K8s Job 생성 → pipeline-runner 구동
-    else realtime / agent
+    alt type==batch AND JobConfig 설정됨
+        CP->>CP: K8s Job 생성 → pipeline-batch-job 일회성 구동
+    else 그 외 (realtime, 또는 JobConfig 없는 batch)
         CP->>R: publish cluster:<id>:execute
         R-->>A: 명령 fan-out (전 에이전트 수신)
         A->>R: SETNX execution:claim (단독 실행 획득)
@@ -120,17 +142,19 @@ sequenceDiagram
 
 ### 실행 프로세스 종류
 
+분기 기준은 **워크플로우 type + `JobConfig` 유무** 단 하나다 (데이터 타입 아님):
+
 ```mermaid
 flowchart TD
-    W{워크플로우 type}
-    W -->|realtime<br/>kafka·cdc·ws| AG[agent 상주 프로세스<br/>장기 실행 + pause/resume]
-    W -->|batch + JobConfig| KJ[K8s Job<br/>pipeline-runner 일회성]
-    W -->|batch<br/>기본| AG2[agent 프로세스<br/>소스 소진 시 완료]
-    AG --> GE[GroupExecutor]
-    KJ --> GE
-    AG2 --> GE
+    W{type == batch<br/>AND JobConfig 설정?}
+    W -->|"예 (격리 일회성)"| KJ["pipeline-batch-job<br/>K8s Job 일회성<br/>소스 소진 시 Pod 종료"]
+    W -->|"아니오 (realtime,<br/>또는 JobConfig 없는 batch)"| AG["pipeline-daemon<br/>상주 데몬이 실행<br/>realtime=장기+pause/resume<br/>batch=소스 소진 시 완료"]
+    KJ --> GE[GroupExecutor]
+    AG --> GE
     GE -->|병렬/순차/DAG| PIPE[파이프라인들<br/>서버-로컬 인프로세스]
 ```
+
+> realtime과 batch의 실행 방식 차이(장기 vs 소스 소진 후 종료)는 GroupExecutor 내부에서 소스 특성으로 결정된다. agent/runner 선택과는 독립적이다.
 
 ## 6. 복원력 · 안전
 

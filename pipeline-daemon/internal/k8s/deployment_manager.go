@@ -100,7 +100,7 @@ func (m *DeploymentManager) CreateDeployment(ctx context.Context, spec *Deployme
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:      "pipeline-runner",
+							Name:      "pipeline-batch-job",
 							Image:     image,
 							Env:       envVars,
 							Resources: resources,
@@ -163,7 +163,7 @@ func (m *DeploymentManager) UpdateDeployment(ctx context.Context, namespace, nam
 
 	if spec.Image != "" {
 		for i := range deployment.Spec.Template.Spec.Containers {
-			if deployment.Spec.Template.Spec.Containers[i].Name == "pipeline-runner" {
+			if deployment.Spec.Template.Spec.Containers[i].Name == "pipeline-batch-job" {
 				deployment.Spec.Template.Spec.Containers[i].Image = spec.Image
 			}
 		}

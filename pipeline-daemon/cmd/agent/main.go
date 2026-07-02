@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/conduix/conduix/pipeline-agent/api"
-	"github.com/conduix/conduix/pipeline-agent/internal/agent"
+	"github.com/conduix/conduix/pipeline-daemon/api"
+	"github.com/conduix/conduix/pipeline-daemon/internal/agent"
 )
 
 var (

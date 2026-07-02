@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: [shared, plugin-sdk, pipeline-core, pipeline-agent, control-plane]
+        package: [shared, plugin-sdk, pipeline-core, pipeline-daemon, control-plane]
     steps:
       - uses: actions/checkout@v4
 

@@ -77,7 +77,7 @@ func NewKubernetesJobService(cfg *KubernetesJobServiceConfig) (*KubernetesJobSer
 	if agentImage == "" {
 		agentImage = os.Getenv("AGENT_IMAGE")
 		if agentImage == "" {
-			agentImage = "conduix/pipeline-agent:latest"
+			agentImage = "conduix/pipeline-daemon:latest"
 		}
 	}
 

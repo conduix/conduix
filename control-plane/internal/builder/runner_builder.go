@@ -1,4 +1,4 @@
-// Package builder provides RunnerBuilder for building pipeline-runner images
+// Package builder provides RunnerBuilder for building pipeline-batch-job images
 // that include all native plugin stages compiled in-process.
 package builder
 
@@ -26,7 +26,7 @@ import (
 type RunnerBuilderConfig struct {
 	BuildTimeout time.Duration // 빌드 타임아웃 (default: 5분)
 	GoProxy      string        // GOPROXY 설정
-	ImagePrefix  string        // Docker 이미지 prefix (예: ghcr.io/conduix/pipeline-runner)
+	ImagePrefix  string        // Docker 이미지 prefix (예: ghcr.io/conduix/pipeline-batch-job)
 	Platform     string        // 빌드 플랫폼 (default: linux/arm64)
 	DockerPush   bool          // Docker push 수행 여부
 }
@@ -36,13 +36,13 @@ func DefaultRunnerBuilderConfig() *RunnerBuilderConfig {
 	return &RunnerBuilderConfig{
 		BuildTimeout: 5 * time.Minute,
 		GoProxy:      "https://proxy.golang.org,direct",
-		ImagePrefix:  "ghcr.io/conduix/pipeline-runner",
+		ImagePrefix:  "ghcr.io/conduix/pipeline-batch-job",
 		Platform:     "linux/arm64",
 		DockerPush:   false,
 	}
 }
 
-// RunnerBuilder 모든 native plugin을 포함하는 pipeline-runner 이미지를 빌드
+// RunnerBuilder 모든 native plugin을 포함하는 pipeline-batch-job 이미지를 빌드
 type RunnerBuilder struct {
 	config *RunnerBuilderConfig
 	db     *gorm.DB
@@ -237,7 +237,7 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	buildOut, err := rb.runCommand(buildCtx, tmpDir, []string{
 		"GOOS=" + goos,
 		"GOARCH=" + goarch,
-	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", "pipeline-runner", ".")
+	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", "pipeline-batch-job", ".")
 	logBuf.WriteString(buildOut)
 	if err != nil {
 		return fmt.Errorf("go build: %w", err)
@@ -426,9 +426,9 @@ func main() {
 func generateDockerfile() string {
 	return `FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
-COPY pipeline-runner /usr/local/bin/pipeline-runner
-RUN chmod +x /usr/local/bin/pipeline-runner
-ENTRYPOINT ["/usr/local/bin/pipeline-runner"]
+COPY pipeline-batch-job /usr/local/bin/pipeline-batch-job
+RUN chmod +x /usr/local/bin/pipeline-batch-job
+ENTRYPOINT ["/usr/local/bin/pipeline-batch-job"]
 `
 }
 

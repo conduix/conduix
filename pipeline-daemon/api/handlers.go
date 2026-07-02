@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/conduix/conduix/pipeline-agent/internal/agent"
+	"github.com/conduix/conduix/pipeline-daemon/internal/agent"
 	"github.com/conduix/conduix/shared/types"
 )
 

@@ -9,11 +9,11 @@
 
 커스텀 Stage를 2가지 티어로 제공:
 - **Tier 1 (Script)**: JavaScript(goja) 스크립트 → 빌드 없음, 즉시 적용
-- **Tier 2 (Native)**: Go 코드 → pipeline-runner에 통합 빌드 → 단일 이미지
+- **Tier 2 (Native)**: Go 코드 → pipeline-batch-job에 통합 빌드 → 단일 이미지
 
 ### V3 대비 변경점
 - go-plugin (gRPC over unix socket) 제거 → 단일 바이너리 인프로세스 실행
-- 파이프라인별 이미지 X → **pipeline-runner 이미지 1개에 모든 stage 포함**
+- 파이프라인별 이미지 X → **pipeline-batch-job 이미지 1개에 모든 stage 포함**
 - runner 이미지 버전(RunnerVersion) 도입으로 빌드/배포/실행 일관성 보장
 - Starlark 스크립트 Tier 추가 (80% 케이스 커버)
 
@@ -148,7 +148,7 @@ def process(record):
     Go 빌드 캐시로 반복 테스트 시 2-3초
 
 [저장 & 빌드] — runner 전체 재빌드 + 이미지 push (20-40초)
-    모든 native stage를 포함한 pipeline-runner 전체 빌드
+    모든 native stage를 포함한 pipeline-batch-job 전체 빌드
     Docker 이미지 빌드 + push → RunnerVersion 생성
 ```
 
@@ -323,7 +323,7 @@ func init() {
 
 ### 핵심 개념: RunnerVersion
 
-모든 커스텀 native stage는 하나의 pipeline-runner 이미지에 포함된다.
+모든 커스텀 native stage는 하나의 pipeline-batch-job 이미지에 포함된다.
 stage가 하나라도 수정되면 runner 이미지를 재빌드해야 하고,
 **빌드 완료된 이미지 버전을 기준으로 파이프라인 실행 가능 여부를 결정**한다.
 
@@ -334,12 +334,12 @@ RunnerVersion = "rv-{build-number}"  (예: rv-42)
 ### 데이터 모델
 
 ```go
-// RunnerVersion pipeline-runner 이미지 빌드 버전
+// RunnerVersion pipeline-batch-job 이미지 빌드 버전
 type RunnerVersion struct {
     ID            string     `json:"id"`              // "rv-42"
     BuildNumber   int        `json:"build_number"`    // 자동 증가
     Status        string     `json:"status"`          // pending → building → ready | failed
-    ImageTag      string     `json:"image_tag"`       // "ghcr.io/.../pipeline-runner:rv-42"
+    ImageTag      string     `json:"image_tag"`       // "ghcr.io/.../pipeline-batch-job:rv-42"
     ImageDigest   string     `json:"image_digest"`    // sha256:... (이미지 무결성 검증)
     SourceHash    string     `json:"source_hash"`     // 모든 native stage 소스의 결합 해시
     PluginIDs     []string   `json:"plugin_ids"`      // 포함된 native stage ID 목록
@@ -512,9 +512,9 @@ POST /api/v1/runner/build
    a. 모든 native plugin 소스를 임시 디렉토리에 배치
    b. registry_custom.go 자동 생성 (import + RegisterCustomStage)
    c. go.mod에 local replace directive 추가
-   d. go build -o pipeline-runner (CGO_ENABLED=0)
-   e. Dockerfile: FROM alpine + COPY pipeline-runner
-   f. docker build & push → ghcr.io/{org}/pipeline-runner:rv-{N}
+   d. go build -o pipeline-batch-job (CGO_ENABLED=0)
+   e. Dockerfile: FROM alpine + COPY pipeline-batch-job
+   f. docker build & push → ghcr.io/{org}/pipeline-batch-job:rv-{N}
     ↓
 5. 빌드 성공 시:
    - RunnerVersion.Status = "ready"
@@ -709,11 +709,11 @@ native plugin 최초 등록 → DeployedHash = "" (빌드 이력 없음)
 
 ### 태그 규칙
 ```
-기본 이미지:    ghcr.io/{org}/pipeline-runner:base
+기본 이미지:    ghcr.io/{org}/pipeline-batch-job:base
                 (builtin + script만, native plugin 없음)
 
-버전 이미지:    ghcr.io/{org}/pipeline-runner:rv-42
-                ghcr.io/{org}/pipeline-runner:rv-43
+버전 이미지:    ghcr.io/{org}/pipeline-batch-job:rv-42
+                ghcr.io/{org}/pipeline-batch-job:rv-43
                 (builtin + script + native plugins 포함)
 ```
 
@@ -731,8 +731,8 @@ native plugin 최초 등록 → DeployedHash = "" (빌드 이력 없음)
 ```go
 // V4: resolveRunnerImage() 결과 사용
 image := resolveRunnerImage(workflow)
-// native plugin 없으면: "ghcr.io/{org}/pipeline-runner:base"
-// native plugin 있으면: "ghcr.io/{org}/pipeline-runner:rv-42"
+// native plugin 없으면: "ghcr.io/{org}/pipeline-batch-job:base"
+// native plugin 있으면: "ghcr.io/{org}/pipeline-batch-job:rv-42"
 ```
 
 ### Realtime Agent에서의 이미지 참조
@@ -870,7 +870,7 @@ COPY plugin-sdk/ ./plugin-sdk/
 COPY plugins/ ./plugins/
 
 # 6. 빌드 — plugin 소스만 바뀌면 incremental build
-RUN CGO_ENABLED=0 go build -o /pipeline-runner ./cmd/runner
+RUN CGO_ENABLED=0 go build -o /pipeline-batch-job ./cmd/runner
 ```
 
 ### 레이어별 캐시 영향
@@ -890,7 +890,7 @@ RUN CGO_ENABLED=0 go build -o /pipeline-runner ./cmd/runner
 # Docker BuildKit cache mount — 빌드 간 Go 컴파일 캐시 유지
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -o /pipeline-runner ./cmd/runner
+    CGO_ENABLED=0 go build -o /pipeline-batch-job ./cmd/runner
 ```
 
 ⚠ **주의**: `--mount=type=cache`는 **같은 빌드 서버에서만 유효**.
@@ -901,13 +901,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 ### Base 이미지 전략
 
 ```
-pipeline-runner:base (CI에서 빌드)
+pipeline-batch-job:base (CI에서 빌드)
 ├── Alpine + Go runtime
 ├── builtin input/stage/output 컴파일 완료
 └── Starlark 인터프리터 내장
 
-pipeline-runner:rv-N (Builder Service에서 빌드)
-├── FROM pipeline-runner:base  ← builtin 레이어 CACHED
+pipeline-batch-job:rv-N (Builder Service에서 빌드)
+├── FROM pipeline-batch-job:base  ← builtin 레이어 CACHED
 ├── COPY plugins/ (native stage 소스만 추가)
 └── go build (incremental — plugin 코드만 컴파일)
 ```

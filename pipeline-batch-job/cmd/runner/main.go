@@ -9,21 +9,21 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/conduix/conduix/pipeline-runner/internal/config"
-	"github.com/conduix/conduix/pipeline-runner/internal/runner"
+	"github.com/conduix/conduix/pipeline-batch-job/internal/config"
+	"github.com/conduix/conduix/pipeline-batch-job/internal/runner"
 )
 
 func main() {
-	fmt.Println("[pipeline-runner] Starting...")
+	fmt.Println("[pipeline-batch-job] Starting...")
 
 	// 설정 로드
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[pipeline-runner] Configuration error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[pipeline-batch-job] Configuration error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("[pipeline-runner] Mode=%s, WorkflowID=%s\n", cfg.Mode, cfg.WorkflowID)
+	fmt.Printf("[pipeline-batch-job] Mode=%s, WorkflowID=%s\n", cfg.Mode, cfg.WorkflowID)
 
 	// 시그널 핸들링 (graceful shutdown)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -34,16 +34,16 @@ func main() {
 
 	go func() {
 		sig := <-sigCh
-		fmt.Printf("[pipeline-runner] Received signal: %v, shutting down...\n", sig)
+		fmt.Printf("[pipeline-batch-job] Received signal: %v, shutting down...\n", sig)
 		cancel()
 	}()
 
 	// Runner 실행
 	r := runner.New(cfg)
 	if err := r.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "[pipeline-runner] Execution error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[pipeline-batch-job] Execution error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("[pipeline-runner] Finished.")
+	fmt.Println("[pipeline-batch-job] Finished.")
 }

@@ -4,13 +4,13 @@ WORKDIR /app
 
 RUN apk add --no-cache git
 
-# Copy all modules (shared, pipeline-core, pipeline-runner)
+# Copy all modules (shared, pipeline-core, pipeline-batch-job)
 COPY shared/ ./shared/
 COPY pipeline-core/ ./pipeline-core/
-COPY pipeline-runner/ ./pipeline-runner/
+COPY pipeline-batch-job/ ./pipeline-batch-job/
 
-# Build pipeline-runner
-WORKDIR /app/pipeline-runner
+# Build pipeline-batch-job
+WORKDIR /app/pipeline-batch-job
 RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/runner ./cmd/runner
 

@@ -1,6 +1,6 @@
 // Package sdk provides NativeStage interface for in-process plugin execution.
 // Plugin authors implement NativeStage instead of the gRPC-based Stage interface
-// when their stage will be compiled directly into the pipeline-runner binary.
+// when their stage will be compiled directly into the pipeline-batch-job binary.
 package sdk
 
 // NativeStage 인프로세스 실행 Stage 인터페이스

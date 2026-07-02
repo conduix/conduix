@@ -464,5 +464,5 @@ require (
 ## 관련 문서
 
 - [Pipeline Core](../pipeline-core/README.md)
-- [Pipeline Agent](../pipeline-agent/README.md)
+- [Pipeline Agent](../pipeline-daemon/README.md)
 - [Control Plane](../control-plane/README.md)

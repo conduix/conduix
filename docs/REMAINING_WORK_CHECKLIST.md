@@ -44,3 +44,4 @@
 - [x] 실패 처리: 서킷브레이커 + DLQ + 고아 실행 감지 + 백오프/jitter + panic recover
 - [x] 샘플 파이프라인 6종 + 커스텀(js_script) stage 샘플: 첫 실행 시 자동 등록(삭제 가능), 실행 검증 (internal/seed)
 - [x] 문서 정리: ARCHITECTURE.md 요약 + archive 분리, docs/README 인덱스
+- [x] 모듈 리네임(명명 혼동 해소): `pipeline-agent`→`pipeline-daemon`(상주 데몬), `pipeline-runner`→`pipeline-batch-job`(일회성 K8s Job). 47개 파일(디렉토리·go.mod·import·K8s 하드코딩·이미지 URI·Makefile·Dockerfile·lefthook·CI·문서) 일괄 수정, 5개 모듈 빌드+테스트 통과. archive 문서는 히스토리라 미변경. ARCHITECTURE.md에 "agent vs runner 생명주기 차이 + batch가 JobConfig로 갈리는 이유" 명시.

@@ -15,8 +15,8 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
 	"github.com/conduix/conduix/pipeline-core/pkg/executor"
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
-	"github.com/conduix/conduix/pipeline-runner/internal/config"
-	"github.com/conduix/conduix/pipeline-runner/internal/health"
+	"github.com/conduix/conduix/pipeline-batch-job/internal/config"
+	"github.com/conduix/conduix/pipeline-batch-job/internal/health"
 	"github.com/conduix/conduix/shared/types"
 )
 

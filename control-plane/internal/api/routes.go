@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/conduix/conduix/control-plane/internal/api/handlers"
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
@@ -143,6 +144,9 @@ func (s *Server) setupRoutes() {
 	// 헬스체크 (인증 불필요)
 	s.router.GET("/health", s.health)
 	s.router.GET("/ready", s.ready)
+
+	// Prometheus 메트릭 (스크레이핑용, 인증 불필요)
+	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// API v1
 	v1 := s.router.Group("/api/v1")

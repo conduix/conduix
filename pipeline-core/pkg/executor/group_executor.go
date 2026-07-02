@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
 	"github.com/conduix/conduix/pipeline-core/pkg/stream"
 	"github.com/conduix/conduix/pipeline-core/pkg/validator"
+	"github.com/conduix/conduix/shared/metrics"
 	"github.com/conduix/conduix/shared/types"
 )
 
@@ -318,6 +320,7 @@ func (e *GroupExecutor) runPipelineWithRetry(ctx context.Context, pipeline types
 			return result, nil
 		}
 		if attempt < maxAttempts {
+			metrics.PipelineRetriesTotal.Inc()
 			fmt.Printf("[runSequential] pipeline %s failed (attempt %d/%d), retrying: %v\n",
 				pipeline.Name, attempt, maxAttempts, err)
 			if retryDelay > 0 {
@@ -481,6 +484,16 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		Status:       "running",
 		StartedAt:    time.Now(),
 	}
+
+	// Prometheus 메트릭: 활성 실행 게이지 + 종료 시 결과 기록.
+	// result는 포인터로 in-place 갱신되므로 defer에서 최종 상태를 읽는다.
+	metrics.ActiveExecutions.Inc()
+	pipelineStart := time.Now()
+	defer func() {
+		metrics.ActiveExecutions.Dec()
+		metrics.RecordExecution(result.Status, time.Since(pipelineStart).Seconds(),
+			result.RecordsRead, result.RecordsWritten, result.ErrorCount)
+	}()
 
 	// 에러 메시지 수집용 (최대 10개)
 	var sinkErrors []string
@@ -695,8 +708,10 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				}
 				sinkErrorsMu.Unlock()
 
-				fmt.Printf("[runPipeline] Completed: read=%d, written=%d, errors=%d\n",
-					result.RecordsRead, result.RecordsWritten, result.ErrorCount)
+				slog.Info("pipeline completed",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "pipeline", pipeline.Name,
+					"records_read", result.RecordsRead, "records_written", result.RecordsWritten,
+					"errors", result.ErrorCount)
 				saveCheckpoints() // 완료 시 체크포인트 저장
 				return result, nil
 			}
@@ -1995,8 +2010,10 @@ func (e *GroupExecutor) runPipelineBatch(
 				}
 				sinkErrorsMu.Unlock()
 
-				fmt.Printf("[runPipelineBatch] Completed: read=%d, written=%d, errors=%d\n",
-					result.RecordsRead, result.RecordsWritten, result.ErrorCount)
+				slog.Info("pipeline completed (batch)",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "pipeline", pipeline.Name,
+					"records_read", result.RecordsRead, "records_written", result.RecordsWritten,
+					"errors", result.ErrorCount)
 				saveCheckpoints()
 				return result, nil
 			}

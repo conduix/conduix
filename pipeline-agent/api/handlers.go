@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/conduix/conduix/pipeline-agent/internal/agent"
 	"github.com/conduix/conduix/shared/types"
@@ -45,6 +46,9 @@ type IndexInfo struct {
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	// Index (서비스 정보)
 	r.GET("/", h.Index)
+
+	// Prometheus 메트릭 (파이프라인 실행 지표: 실행 수/처리량/소요시간/활성 실행)
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	api := r.Group("/api/v1")
 	{

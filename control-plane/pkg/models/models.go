@@ -141,11 +141,6 @@ type Agent struct {
 	Labels        string     `gorm:"type:text" json:"labels,omitempty"` // JSON array
 	ClusterID     string     `gorm:"size:36;index" json:"cluster_id,omitempty"`
 
-	// Leader Election (HA 구성)
-	IsLeader       bool       `gorm:"default:false" json:"is_leader"`               // 현재 리더 여부
-	LeaderSince    *time.Time `json:"leader_since,omitempty"`                       // 리더가 된 시점
-	LeaderLeaseTTL int        `gorm:"default:30" json:"leader_lease_ttl,omitempty"` // 리더 임대 TTL (초)
-
 	// 리소스 모니터링 (클러스터 매니저 역할)
 	Metrics      string `gorm:"type:text" json:"metrics,omitempty"`      // JSON - CPU, Memory, Pod count 등
 	Capabilities string `gorm:"type:text" json:"capabilities,omitempty"` // JSON - 지원 기능 목록

@@ -84,7 +84,6 @@ type AgentRegistration struct {
 	ClusterID string   `json:"cluster_id"`
 	Labels    []string `json:"labels,omitempty"`
 	Version   string   `json:"version,omitempty"`
-	IsLeader  bool     `json:"is_leader"`
 }
 
 // Heartbeat 하트비트 데이터
@@ -92,7 +91,6 @@ type Heartbeat struct {
 	AgentID   string    `json:"agent_id"`
 	ClusterID string    `json:"cluster_id"`
 	Hostname  string    `json:"hostname"`
-	IsLeader  bool      `json:"is_leader"`
 	Timestamp time.Time `json:"timestamp"`
 
 	// 관리 중인 리소스 현황

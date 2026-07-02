@@ -578,16 +578,6 @@ func (o *GCSOutput) Stats() OutputStats {
 	return o.stats
 }
 
-// GCSOutputOption GCS 출력 옵션 (테스트용)
-type GCSOutputOption func(*GCSOutput)
-
-// WithGCSClient GCS 클라이언트 설정 (테스트용)
-func WithGCSClient(client *storage.Client) GCSOutputOption {
-	return func(o *GCSOutput) {
-		o.client = client
-	}
-}
-
 // SetClient GCS 클라이언트 설정 (테스트용)
 func (o *GCSOutput) SetClient(client *storage.Client) {
 	o.client = client

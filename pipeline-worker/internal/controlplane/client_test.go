@@ -48,7 +48,6 @@ func TestSendHeartbeat(t *testing.T) {
 		AgentID:            "agent-1",
 		ClusterID:          "cluster-1",
 		Hostname:           "test-host",
-		IsLeader:           true,
 		Timestamp:          time.Now(),
 		ManagedJobs:        5,
 		ManagedDeployments: 3,

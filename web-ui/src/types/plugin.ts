@@ -90,7 +90,6 @@ export interface ClusterAgent {
   id: string
   hostname: string
   status: string
-  is_leader: boolean
   last_heartbeat?: string
   metrics?: string // JSON
   cluster_id: string

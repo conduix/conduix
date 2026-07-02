@@ -1,9 +1,14 @@
 # Plugin Architecture V4: 2-Tier Hybrid Model
 
+> **정정(2026-07-02):** 이 문서는 스크립트 Tier를 "Starlark"로 기술하나, 실제 구현은
+> **JavaScript(goja)** 로 교체됐다(`js_script` stage). 아래 본문의 "Starlark"는
+> "JavaScript(goja)"로 읽는다. 나머지 2-tier 구조(스크립트/네이티브)와 단일 runner 이미지
+> 빌드 모델은 현재 구현과 일치한다.
+
 ## 개요
 
 커스텀 Stage를 2가지 티어로 제공:
-- **Tier 1 (Script)**: Starlark 스크립트 → 빌드 없음, 즉시 적용
+- **Tier 1 (Script)**: JavaScript(goja) 스크립트 → 빌드 없음, 즉시 적용
 - **Tier 2 (Native)**: Go 코드 → pipeline-runner에 통합 빌드 → 단일 이미지
 
 ### V3 대비 변경점

@@ -19,7 +19,7 @@
 - [x] **구조화 로그**: 실패/서킷트립 이벤트를 workflow_id/pipeline_id 상관키 포함 slog로 기록. Prometheus circuit_tripped_total 메트릭.
 - [x] 추가 방어: retry에 **지수 백오프 + jitter**(backoffWithJitter, 상한 5분) — 동시 실패 시 재시도 몰림(thundering herd) 방지. 테스트.
 - [x] 추가 방어: executeGroup 고루틴 **panic recover** — 한 파이프라인 panic이 에이전트 전체를 죽이지 않고 실행을 failed로 보고.
-- [ ] 추가 방어(후속): 실행 타임아웃 상한 설정화(현재 하드코딩 10분)
+- [x] 추가 방어: 실행 타임아웃 설정화 — Config.ExecutionTimeout(기본 10분), 하드코딩 매직넘버 제거.
 
 ## 남은 작업 (우선순위)
 

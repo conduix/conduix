@@ -68,7 +68,11 @@ type Config struct {
 	// 새로운 설정
 	CommandPollInterval time.Duration `json:"command_poll_interval"` // REST 폴링 간격
 	EnableRESTFallback  bool          `json:"enable_rest_fallback"`  // REST 폴백 활성화
+	ExecutionTimeout    time.Duration `json:"execution_timeout"`     // 워크플로우 실행 최대 시간 (기본 10분)
 }
+
+// defaultExecutionTimeout 워크플로우 실행 기본 타임아웃.
+const defaultExecutionTimeout = 10 * time.Minute
 
 // NewAgent 새 에이전트 생성
 func NewAgent(cfg *Config) (*Agent, error) {
@@ -688,8 +692,12 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 		a.execMu.Unlock()
 	}()
 
-	// 실행 시작
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// 실행 시작 (타임아웃은 설정값, 미설정 시 기본 10분)
+	execTimeout := a.config.ExecutionTimeout
+	if execTimeout <= 0 {
+		execTimeout = defaultExecutionTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
 	defer cancel()
 
 	_, err := groupExecutor.Start(ctx, cmd.TriggeredBy)
@@ -712,7 +720,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 		return
 	}
 
-	// 실행 완료 대기 (최대 10분)
+	// 실행 완료 대기 (execTimeout까지)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 

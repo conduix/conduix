@@ -63,6 +63,8 @@ import {
   Storage as StorageIcon,
   Refresh as RefreshIcon,
   ExpandMore as ExpandMoreIcon,
+  Download as DownloadIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -501,6 +503,43 @@ export default function WorkflowDetailPage() {
     }
   }
 
+  const handleExportYAML = async () => {
+    if (!effectiveId) return
+    try {
+      const yaml = await api.exportWorkflowYAML(effectiveId)
+      const blob = new Blob([yaml], { type: 'application/x-yaml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${workflow?.slug || workflow?.name || 'workflow'}.yaml`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      showError(t('workflow.exportError'))
+    }
+  }
+
+  // 복제: export한 YAML을 같은 프로젝트로 다시 import (파이프라인 ID는 서버가 재부여)
+  const handleCloneWorkflow = async () => {
+    if (!effectiveId || !workflow) return
+    try {
+      setActionLoading(true)
+      const yaml = await api.exportWorkflowYAML(effectiveId)
+      const res = await api.importWorkflowYAML(yaml, workflow.project_id)
+      if (res.success && res.data?.id) {
+        showSuccess(t('workflow.cloneSuccess'))
+        navigate(`/workflows/${res.data.id}`)
+      } else {
+        showError(res.error?.message || t('workflow.cloneError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.cloneError'))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const handleViewExecutionDetail = async (executionId: string) => {
     if (!effectiveId) return
     try {
@@ -869,6 +908,12 @@ export default function WorkflowDetailPage() {
             <Chip label={statusConfig.text} color={statusConfig.color} size="small" />
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button startIcon={<DownloadIcon />} onClick={handleExportYAML} disabled={actionLoading}>
+              {t('workflow.exportYaml')}
+            </Button>
+            <Button startIcon={<ContentCopyIcon />} onClick={handleCloneWorkflow} disabled={actionLoading}>
+              {t('workflow.clone')}
+            </Button>
             {workflow.status === 'running' && (
               <>
                 <Button

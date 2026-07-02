@@ -1,0 +1,41 @@
+# Conduix 남은 작업 체크리스트
+
+> 2026-07-02 기준. 브랜치: `feat/platform-value-improvements`
+> 이번 세션 완료분: 보안 수정, Redis dedup, actor 엔진 제거, agent 워크플로우 제어+claim,
+> YAML export/import(템플릿), stage 실행 통합, pause/resume, retry, 관측성(Prometheus+slog).
+
+## 진행 중: 실패 처리 & 복원력 (claim 재배치 + 실패 카운트/서킷브레이커 + DLQ)
+
+설계 원칙(사용자 지시):
+- DLQ는 문제 해결이 아니라 적재일 뿐 → 근본은 **실패 카운트 관리 + 서킷 브레이크**.
+- **로그 + 실패 카운트는 필수.**
+- 실패가 임계 이상 쌓이면 계속 도는 게 오히려 부하/문제 → **설정 기준으로 서킷 브레이크 → 작업 에러 종료.**
+- **DLQ 설정이 있으면** 실패 내역을 DLQ로 적재. **DLQ 여부와 무관하게 서킷 브레이크는 설정으로 제어.**
+- 추가 방어/안전운영 기법 조사·적용.
+
+- [ ] **claim 재배치**: SETNX claim한 에이전트 크래시 시 실행 유실 → 제어면이 claim/heartbeat 만료 감지 후 재발행 (또는 재시도 정책)
+- [x] **실패 카운트 + 서킷 브레이크**: `failureGuard`(pkg/executor/failure_guard.go) — 연속/누적 실패 카운트, CircuitBreakerPolicy 임계 초과 시 서킷 오픈 → 실행 에러 종료. record/batch 양 경로 적용. 테스트 4건.
+- [x] **DLQ 연동**: FailurePolicy.DLQ 설정 시 실패 레코드를 DLQOutput으로 적재. 서킷과 독립 동작.
+- [x] **구조화 로그**: 실패/서킷트립 이벤트를 workflow_id/pipeline_id 상관키 포함 slog로 기록. Prometheus circuit_tripped_total 메트릭.
+- [ ] 추가 방어 기법 검토 (backoff jitter, 타임아웃 상한, panic recover, graceful degradation 등)
+
+## 남은 작업 (우선순위)
+
+- [ ] **목록 페이지 YAML 가져오기 다이얼로그** (S~M): 외부 YAML 반입 UI (붙여넣기 + project_id 선택)
+- [ ] **PostgreSQL CDC** (M): cdc.go:206 스텁 → pglogrepl 구현 또는 명시적 미지원 처리
+- [ ] **e2e 통합 테스트** (L): MySQL+Redis+control-plane+agent 기동 후 실제 워크플로우 실행 검증
+- [ ] **stage 하드코딩 완전통일** (M): applyStage 5개 내장 case를 stream registry로 흡수 (remap 시맨틱 divergence 리스크 제거)
+- [ ] **나머지 fmt.Printf → slog 전면 전환** (M, 선택): 추적 핵심은 이미 커버, 나머지는 저가치
+
+## 완료 (이번 세션)
+
+- [x] 보안: CORS/OAuth redirect/타입단언/pagination
+- [x] Redis dedup 실구현 + 설정화
+- [x] actor 실행 엔진 제거 (~4,700 LOC)
+- [x] agent 워크플로우 제어 + SETNX claim (double-execution 수정)
+- [x] 워크플로우 YAML export/import (= 템플릿)
+- [x] stage 실행 통합 (28개 + native가 워크플로우에서 실행)
+- [x] pause/resume (real pause gate)
+- [x] retry (FailureActionRetry 구현)
+- [x] web-ui: pause/resume·처리량·YAML export/clone
+- [x] 관측성: Prometheus 메트릭 + 구조화 로깅

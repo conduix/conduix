@@ -50,6 +50,14 @@ var (
 		Name:      "retries_total",
 		Help:      "Total number of pipeline execution retries.",
 	})
+
+	// PipelineCircuitTrippedTotal은 서킷 브레이커가 열린(실행 조기 종료) 횟수를 센다.
+	PipelineCircuitTrippedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "pipeline",
+		Name:      "circuit_tripped_total",
+		Help:      "Total number of times the failure circuit breaker tripped and terminated a pipeline.",
+	})
 )
 
 // RecordExecution은 파이프라인 실행 1건의 결과 메트릭을 기록한다.

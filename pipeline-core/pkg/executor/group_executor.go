@@ -495,6 +495,15 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			result.RecordsRead, result.RecordsWritten, result.ErrorCount)
 	}()
 
+	// 실패 가드: 실패 카운트/서킷 브레이커/DLQ. FailurePolicy에서 구성.
+	guard, err := newFailureGuard(e.group.FailurePolicy, e.group.ID, pipeline.ID, pipeline.Name)
+	if err != nil {
+		result.Status = "failed"
+		result.ErrorMessage = fmt.Sprintf("failed to init failure guard: %v", err)
+		return result, err
+	}
+	defer guard.close()
+
 	// 에러 메시지 수집용 (최대 10개)
 	var sinkErrors []string
 	var sinkErrorsMu sync.Mutex
@@ -669,7 +678,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		fmt.Printf("[runPipeline] Using batch mode for pipeline %s (output_mode=%s, size=%d, workers=%d)\n",
 			pipeline.Name, outputMode, pipeline.Batch.Size, pipeline.Batch.Workers)
 		return e.runPipelineBatch(ctx, pipeline, records, errs, outputsWithSinks,
-			statsCollector, sampleBuffer, sourceValidator, saveCheckpoints)
+			statsCollector, sampleBuffer, sourceValidator, saveCheckpoints, guard)
 	}
 
 	// 기존 레코드 단위 처리 모드
@@ -801,10 +810,23 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				if err := e.sendToSink(ctx, outputData, ows.Sink); err != nil {
 					statsCollector.RecordProcessingError()
 					errMsg := fmt.Sprintf("[%s] %v", ows.Output.Name, err)
-					fmt.Printf("[runPipeline] Output %s write error: %v\n", ows.Output.Name, err)
 					addSinkError(errMsg)
+					// 실패 가드: 카운트/로그/DLQ + 서킷 브레이커
+					if guard.recordFailure(ctx, source.Record{Data: outputData}, err, ows.Output.Name) {
+						// 서킷 오픈 → 부하 확산 방지 위해 실행 에러 종료
+						result.Status = "failed"
+						result.ErrorMessage = guard.trippedErr().Error()
+						stats := statsCollector.GetStatistics()
+						result.RecordsRead = stats.RecordsCollected
+						result.RecordsWritten = stats.RecordsProcessed
+						result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
+						result.Statistics = stats
+						saveCheckpoints()
+						return result, guard.trippedErr()
+					}
 				} else {
 					statsCollector.RecordProcessed()
+					guard.recordSuccess()
 				}
 				sampleBuffer.AddSample(ows.Output.Name, outputData)
 			}
@@ -1770,6 +1792,7 @@ func (e *GroupExecutor) runPipelineBatch(
 	sampleBuffer *SampleBuffer,
 	sourceValidator *validator.SchemaValidator,
 	saveCheckpoints func(),
+	guard *failureGuard,
 ) (*types.PipelineExecutionResult, error) {
 	result := &types.PipelineExecutionResult{
 		PipelineID:   pipeline.ID,
@@ -1931,10 +1954,15 @@ func (e *GroupExecutor) runPipelineBatch(
 					if err := batchSink.WriteBatch(ctx, batchRecords); err != nil {
 						statsCollector.RecordProcessingError()
 						addSinkError(fmt.Sprintf("[%s] batch write error: %v", stageName, err))
+						// 배치 쓰기 실패: 배치 전체를 실패 이벤트로 기록(DLQ에는 배치 레코드 적재)
+						for _, br := range batchRecords {
+							guard.recordFailure(ctx, br, err, stageName)
+						}
 					} else {
 						for range outputData {
 							statsCollector.RecordProcessed()
 						}
+						guard.recordSuccess()
 					}
 				} else {
 					// Bulk 미지원 Sink는 개별 처리로 fallback
@@ -1942,8 +1970,10 @@ func (e *GroupExecutor) runPipelineBatch(
 						if err := e.sendToSink(ctx, data, s); err != nil {
 							statsCollector.RecordProcessingError()
 							addSinkError(fmt.Sprintf("[%s] %v", stageName, err))
+							guard.recordFailure(ctx, source.Record{Data: data}, err, stageName)
 						} else {
 							statsCollector.RecordProcessed()
+							guard.recordSuccess()
 						}
 					}
 				}
@@ -1989,6 +2019,9 @@ func (e *GroupExecutor) runPipelineBatch(
 				processBatch(batch)
 				batch = batch[:0]
 			}
+			if guard.isTripped() {
+				return e.finishBatchTripped(result, statsCollector, guard, saveCheckpoints)
+			}
 
 		case record, ok := <-records:
 			if !ok {
@@ -2027,6 +2060,9 @@ func (e *GroupExecutor) runPipelineBatch(
 			if len(batch) >= batchSize {
 				processBatch(batch)
 				batch = batch[:0]
+			}
+			if guard.isTripped() {
+				return e.finishBatchTripped(result, statsCollector, guard, saveCheckpoints)
 			}
 
 		case err := <-errs:

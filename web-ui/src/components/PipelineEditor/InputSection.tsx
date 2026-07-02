@@ -250,7 +250,7 @@ export function InputSection() {
               type="number"
               value={config.fetch_size || 1000}
               onChange={(e) => handleConfigChange('fetch_size', Number(e.target.value))}
-              inputProps={{ min: 100, max: 100000 }}
+              slotProps={{ htmlInput: { min: 100, max: 100000 } }}
               sx={{ width: 150 }}
             />
           </Stack>
@@ -398,7 +398,7 @@ export function InputSection() {
               type="number"
               value={config.tail_lines || 100}
               onChange={(e) => handleConfigChange('tail_lines', Number(e.target.value))}
-              inputProps={{ min: 1, max: 10000 }}
+              slotProps={{ htmlInput: { min: 1, max: 10000 } }}
               sx={{ width: 120 }}
             />
           </Stack>
@@ -452,10 +452,12 @@ export function InputSection() {
 
       default:
         return (
-          <Typography color="text.secondary">
+          <Typography sx={{
+            color: "text.secondary"
+          }}>
             {t('pipelineEditor.input.selectType')}
           </Typography>
-        )
+        );
     }
   }
 
@@ -524,7 +526,7 @@ export function InputSection() {
           type="number"
           value={partition.parallelism || 4}
           onChange={(e) => handlePartitionChange('parallelism', Number(e.target.value))}
-          inputProps={{ min: 1, max: 32 }}
+          slotProps={{ htmlInput: { min: 1, max: 32 } }}
           sx={{ width: 120 }}
         />
       </>
@@ -574,7 +576,7 @@ export function InputSection() {
             type="number"
             value={pagination.max_pages || 10000}
             onChange={(e) => handlePaginationChange('max_pages', Number(e.target.value))}
-            inputProps={{ min: 1 }}
+            slotProps={{ htmlInput: { min: 1 } }}
             sx={{ width: 150 }}
           />
         </Stack>
@@ -605,7 +607,7 @@ export function InputSection() {
               type="number"
               value={rateLimit.rate || 100}
               onChange={(e) => handleRateLimitChange('rate', Number(e.target.value))}
-              inputProps={{ min: 1 }}
+              slotProps={{ htmlInput: { min: 1 } }}
               sx={{ width: 120 }}
             />
             <FormControl sx={{ width: 120 }}>
@@ -627,7 +629,7 @@ export function InputSection() {
               onChange={(e) =>
                 handleRateLimitChange('burst', e.target.value ? Number(e.target.value) : undefined)
               }
-              inputProps={{ min: 1 }}
+              slotProps={{ htmlInput: { min: 1 } }}
               sx={{ width: 100 }}
             />
           </Stack>
@@ -680,7 +682,7 @@ export function InputSection() {
                   type="number"
                   value={batch.size || 100}
                   onChange={(e) => updateBatch({ size: Number(e.target.value) })}
-                  inputProps={{ min: 1, max: 10000 }}
+                  slotProps={{ htmlInput: { min: 1, max: 10000 } }}
                   sx={{ width: 120 }}
                 />
                 <TextField
@@ -688,7 +690,7 @@ export function InputSection() {
                   type="number"
                   value={batch.workers || 20}
                   onChange={(e) => updateBatch({ workers: Number(e.target.value) })}
-                  inputProps={{ min: 1, max: 100 }}
+                  slotProps={{ htmlInput: { min: 1, max: 100 } }}
                   sx={{ width: 120 }}
                 />
                 <TextField
@@ -710,7 +712,9 @@ export function InputSection() {
     <Accordion expanded={expanded} onChange={(_, isExpanded) => setExpanded(isExpanded)}>
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="subtitle1" fontWeight="medium">
+          <Typography variant="subtitle1" sx={{
+            fontWeight: "medium"
+          }}>
             {t('pipelineEditor.input.title')}
           </Typography>
           {input.type && inputTypeConfig[input.type as InputType] && (
@@ -740,7 +744,9 @@ export function InputSection() {
                 const config = inputTypeConfig[type]
                 return (
                   <MenuItem key={type} value={type}>
-                    <Stack direction="row" spacing={1} alignItems="center">
+                    <Stack direction="row" spacing={1} sx={{
+                      alignItems: "center"
+                    }}>
                       <Chip
                         icon={config.icon as React.ReactElement}
                         label={config.label}
@@ -749,7 +755,7 @@ export function InputSection() {
                       />
                     </Stack>
                   </MenuItem>
-                )
+                );
               })}
             </Select>
           </FormControl>
@@ -776,5 +782,5 @@ export function InputSection() {
         </Stack>
       </AccordionDetails>
     </Accordion>
-  )
+  );
 }

@@ -967,38 +967,62 @@ export default function SourceEditorPage() {
               >
                 <MenuItem value="">
                   <Chip label={t('source.paginationTypes.none')} size="small" />
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "text.secondary",
+                      ml: 1
+                    }}>
                     {t('source.paginationTypes.noneDesc')}
                   </Typography>
                 </MenuItem>
                 <MenuItem value="page_increment">
                   <Chip label={t('source.paginationTypes.page_increment')} size="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "text.secondary",
+                      ml: 1
+                    }}>
                     {t('source.paginationTypes.page_incrementDesc')}
                   </Typography>
                 </MenuItem>
                 <MenuItem value="next_url">
                   <Chip label={t('source.paginationTypes.next_url')} size="small" color="success" />
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "text.secondary",
+                      ml: 1
+                    }}>
                     {t('source.paginationTypes.next_urlDesc')}
                   </Typography>
                 </MenuItem>
                 <MenuItem value="next_offset">
                   <Chip label={t('source.paginationTypes.next_offset')} size="small" color="warning" />
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "text.secondary",
+                      ml: 1
+                    }}>
                     {t('source.paginationTypes.next_offsetDesc')}
                   </Typography>
                 </MenuItem>
                 <MenuItem value="page_with_count">
                   <Chip label={t('source.paginationTypes.page_with_count')} size="small" color="secondary" />
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "text.secondary",
+                      ml: 1
+                    }}>
                     {t('source.paginationTypes.page_with_countDesc')}
                   </Typography>
                 </MenuItem>
               </Select>
               <FormHelperText>{t('source.paginationHelp')}</FormHelperText>
             </FormControl>
-
             {/* Pagination type-specific config fields */}
             {formState.pagination_type === 'page_increment' && (
               <Box sx={{ ml: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
@@ -1035,7 +1059,6 @@ export default function SourceEditorPage() {
                 </Stack>
               </Box>
             )}
-
             {formState.pagination_type === 'next_url' && (
               <Box sx={{ ml: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
                 <Stack spacing={2}>
@@ -1060,7 +1083,6 @@ export default function SourceEditorPage() {
                 </Stack>
               </Box>
             )}
-
             {formState.pagination_type === 'next_offset' && (
               <Box sx={{ ml: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
                 <Stack spacing={2}>
@@ -1095,7 +1117,6 @@ export default function SourceEditorPage() {
                 </Stack>
               </Box>
             )}
-
             {formState.pagination_type === 'page_with_count' && (
               <Box sx={{ ml: 2, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
                 <Stack spacing={2}>
@@ -1151,7 +1172,6 @@ export default function SourceEditorPage() {
                 </Stack>
               </Box>
             )}
-
             {/* Partition 설정 (batch 워크플로우용) */}
             {workflow?.type === 'batch' && (
               <>
@@ -1165,7 +1185,14 @@ export default function SourceEditorPage() {
                   }
                   label={t('source.partition.enabled')}
                 />
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: -1, mb: 1 }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    display: 'block',
+                    mt: -1,
+                    mb: 1
+                  }}>
                   {t('source.partition.enabledHelp')}
                 </Typography>
 
@@ -1231,7 +1258,7 @@ export default function SourceEditorPage() {
                         value={formState.partition_parallelism}
                         onChange={(e) => updateFormField('partition_parallelism', e.target.value ? Number(e.target.value) : '')}
                         helperText={t('source.partition.parallelismHelp')}
-                        inputProps={{ min: 1, max: 32 }}
+                        slotProps={{ htmlInput: { min: 1, max: 32 } }}
                         sx={{ width: 120 }}
                       />
                     </Stack>
@@ -1239,7 +1266,6 @@ export default function SourceEditorPage() {
                 )}
               </>
             )}
-
             {/* 배치 처리 설정 (batch 워크플로우에서만 표시) */}
             {workflow?.type === 'batch' && (
               <>
@@ -1261,7 +1287,9 @@ export default function SourceEditorPage() {
                   <Box sx={{ pl: 2 }}>
                     <Stack spacing={2}>
                       {/* Stage는 항상 병렬 처리 안내 */}
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="body2" sx={{
+                        color: "text.secondary"
+                      }}>
                         {t('source.batch.stageNote')}
                       </Typography>
 
@@ -1276,7 +1304,9 @@ export default function SourceEditorPage() {
                           <MenuItem value="bulk">
                             <Box>
                               <Typography variant="body2">{t('source.batch.outputModeBulk')}</Typography>
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" sx={{
+                                color: "text.secondary"
+                              }}>
                                 {t('source.batch.outputModeBulkDesc')}
                               </Typography>
                             </Box>
@@ -1284,7 +1314,9 @@ export default function SourceEditorPage() {
                           <MenuItem value="individual">
                             <Box>
                               <Typography variant="body2">{t('source.batch.outputModeIndividual')}</Typography>
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" sx={{
+                                color: "text.secondary"
+                              }}>
                                 {t('source.batch.outputModeIndividualDesc')}
                               </Typography>
                             </Box>
@@ -1300,7 +1332,7 @@ export default function SourceEditorPage() {
                         value={formState.batch_size}
                         onChange={(e) => updateFormField('batch_size', e.target.value ? Number(e.target.value) : '')}
                         helperText={t('source.batch.sizeHelp')}
-                        inputProps={{ min: 1, max: 10000 }}
+                        slotProps={{ htmlInput: { min: 1, max: 10000 } }}
                         sx={{ width: 180 }}
                       />
 
@@ -1311,7 +1343,7 @@ export default function SourceEditorPage() {
                         value={formState.batch_workers}
                         onChange={(e) => updateFormField('batch_workers', e.target.value ? Number(e.target.value) : '')}
                         helperText={t('source.batch.workersHelp')}
-                        inputProps={{ min: 1, max: 100 }}
+                        slotProps={{ htmlInput: { min: 1, max: 100 } }}
                         sx={{ width: 180 }}
                       />
 
@@ -1330,7 +1362,7 @@ export default function SourceEditorPage() {
               </>
             )}
           </Stack>
-        )
+        );
 
       case 'kafka':
         return (
@@ -1476,10 +1508,9 @@ export default function SourceEditorPage() {
               value={formState.fetch_size}
               onChange={(e) => updateFormField('fetch_size', e.target.value ? Number(e.target.value) : '')}
               placeholder="1000"
-              inputProps={{ min: 100, max: 100000 }}
+              slotProps={{ htmlInput: { min: 100, max: 100000 } }}
               fullWidth
             />
-
             {/* SQL Partition 설정 (batch 워크플로우용) */}
             {workflow?.type === 'batch' && (
               <>
@@ -1493,7 +1524,14 @@ export default function SourceEditorPage() {
                   }
                   label={t('source.partition.enabled')}
                 />
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: -1, mb: 1 }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    display: 'block',
+                    mt: -1,
+                    mb: 1
+                  }}>
                   {t('source.partition.sqlEnabledHelp')}
                 </Typography>
 
@@ -1553,7 +1591,7 @@ export default function SourceEditorPage() {
                         value={formState.partition_parallelism}
                         onChange={(e) => updateFormField('partition_parallelism', e.target.value ? Number(e.target.value) : '')}
                         helperText={t('source.partition.parallelismHelp')}
-                        inputProps={{ min: 1, max: 32 }}
+                        slotProps={{ htmlInput: { min: 1, max: 32 } }}
                         sx={{ width: 120 }}
                       />
                     </Stack>
@@ -1561,7 +1599,6 @@ export default function SourceEditorPage() {
                 )}
               </>
             )}
-
             {/* 배치 처리 설정 (batch 워크플로우에서만 표시) */}
             {workflow?.type === 'batch' && (
               <>
@@ -1583,7 +1620,9 @@ export default function SourceEditorPage() {
                   <Box sx={{ pl: 2 }}>
                     <Stack spacing={2}>
                       {/* Stage는 항상 병렬 처리 안내 */}
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="body2" sx={{
+                        color: "text.secondary"
+                      }}>
                         {t('source.batch.stageNote')}
                       </Typography>
 
@@ -1598,7 +1637,9 @@ export default function SourceEditorPage() {
                           <MenuItem value="bulk">
                             <Box>
                               <Typography variant="body2">{t('source.batch.outputModeBulk')}</Typography>
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" sx={{
+                                color: "text.secondary"
+                              }}>
                                 {t('source.batch.outputModeBulkDesc')}
                               </Typography>
                             </Box>
@@ -1606,7 +1647,9 @@ export default function SourceEditorPage() {
                           <MenuItem value="individual">
                             <Box>
                               <Typography variant="body2">{t('source.batch.outputModeIndividual')}</Typography>
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" sx={{
+                                color: "text.secondary"
+                              }}>
                                 {t('source.batch.outputModeIndividualDesc')}
                               </Typography>
                             </Box>
@@ -1622,7 +1665,7 @@ export default function SourceEditorPage() {
                         value={formState.batch_size}
                         onChange={(e) => updateFormField('batch_size', e.target.value ? Number(e.target.value) : '')}
                         helperText={t('source.batch.sizeHelp')}
-                        inputProps={{ min: 1, max: 10000 }}
+                        slotProps={{ htmlInput: { min: 1, max: 10000 } }}
                         sx={{ width: 180 }}
                       />
 
@@ -1633,7 +1676,7 @@ export default function SourceEditorPage() {
                         value={formState.batch_workers}
                         onChange={(e) => updateFormField('batch_workers', e.target.value ? Number(e.target.value) : '')}
                         helperText={t('source.batch.workersHelp')}
-                        inputProps={{ min: 1, max: 100 }}
+                        slotProps={{ htmlInput: { min: 1, max: 100 } }}
                         sx={{ width: 180 }}
                       />
 
@@ -1652,7 +1695,7 @@ export default function SourceEditorPage() {
               </>
             )}
           </Stack>
-        )
+        );
 
       case 'file':
         return (
@@ -1785,7 +1828,7 @@ export default function SourceEditorPage() {
               onChange={(e) => updateFormField('tail_lines', e.target.value ? Number(e.target.value) : '')}
               helperText={t('source.k8s.tailLinesHelp')}
               placeholder="100"
-              inputProps={{ min: 1, max: 10000 }}
+              slotProps={{ htmlInput: { min: 1, max: 10000 } }}
               sx={{ width: 150 }}
             />
             <TextField
@@ -1795,7 +1838,7 @@ export default function SourceEditorPage() {
               onChange={(e) => updateFormField('since_seconds', e.target.value ? Number(e.target.value) : '')}
               helperText={t('source.k8s.sinceSecondsHelp')}
               placeholder="3600"
-              inputProps={{ min: 1 }}
+              slotProps={{ htmlInput: { min: 1 } }}
               sx={{ width: 150 }}
             />
             <Divider>{t('source.k8s.logParsing')}</Divider>
@@ -1856,9 +1899,11 @@ export default function SourceEditorPage() {
   if (!workflow || !pipeline) {
     return (
       <Box sx={{ textAlign: 'center', p: 5 }}>
-        <Typography color="text.secondary">{t('source.notFound')}</Typography>
+        <Typography sx={{
+          color: "text.secondary"
+        }}>{t('source.notFound')}</Typography>
       </Box>
-    )
+    );
   }
 
   return (
@@ -1888,12 +1933,17 @@ export default function SourceEditorPage() {
         >
           {workflow.name}
         </Link>
-        <Typography color="text.primary">{pipeline.name}</Typography>
-        <Typography color="text.primary">{t('source.title')}</Typography>
+        <Typography sx={{
+          color: "text.primary"
+        }}>{pipeline.name}</Typography>
+        <Typography sx={{
+          color: "text.primary"
+        }}>{t('source.title')}</Typography>
       </Breadcrumbs>
-
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Stack direction="row" spacing={2} alignItems="center">
+        <Stack direction="row" spacing={2} sx={{
+          alignItems: "center"
+        }}>
           <Button
             startIcon={<ArrowBackIcon />}
             onClick={() => navigate(`/projects/${projectAlias}/workflows/${workflowId}`)}
@@ -1913,7 +1963,6 @@ export default function SourceEditorPage() {
           {saving ? <CircularProgress size={20} /> : t('common.save')}
         </Button>
       </Box>
-
       <Card>
         <CardContent>
           <Tabs value={editMode} onChange={handleModeChange} sx={{ mb: 2 }}>
@@ -1943,7 +1992,9 @@ export default function SourceEditorPage() {
                       const config = sourceTypeConfig[key]
                       return (
                         <MenuItem key={key} value={key}>
-                          <Stack direction="row" spacing={1} alignItems="center">
+                          <Stack direction="row" spacing={1} sx={{
+                            alignItems: "center"
+                          }}>
                             <Chip
                               icon={config.icon as React.ReactElement}
                               label={config.label}
@@ -1952,7 +2003,7 @@ export default function SourceEditorPage() {
                             />
                           </Stack>
                         </MenuItem>
-                      )
+                      );
                     })}
                   </Select>
                 </FormControl>
@@ -1993,7 +2044,7 @@ export default function SourceEditorPage() {
                         value={formState.rate_limit_rate}
                         onChange={(e) => updateFormField('rate_limit_rate', e.target.value ? Number(e.target.value) : '')}
                         placeholder="100"
-                        inputProps={{ min: 1 }}
+                        slotProps={{ htmlInput: { min: 1 } }}
                         sx={{ width: 120 }}
                       />
                       <FormControl sx={{ width: 120 }}>
@@ -2016,7 +2067,7 @@ export default function SourceEditorPage() {
                         value={formState.rate_limit_burst}
                         onChange={(e) => updateFormField('rate_limit_burst', e.target.value ? Number(e.target.value) : '')}
                         placeholder="10"
-                        inputProps={{ min: 1 }}
+                        slotProps={{ htmlInput: { min: 1 } }}
                         sx={{ width: 120 }}
                       />
                       <FormControl sx={{ width: 150 }}>
@@ -2062,5 +2113,5 @@ export default function SourceEditorPage() {
         </CardContent>
       </Card>
     </Box>
-  )
+  );
 }

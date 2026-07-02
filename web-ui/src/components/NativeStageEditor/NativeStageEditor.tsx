@@ -393,10 +393,15 @@ export default function NativeStageEditor({
           />
         )}
       </Paper>
-
       {/* Test Section */}
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1.5 }}>
+        <Stack
+          direction="row"
+          sx={{
+            alignItems: "center",
+            justifyContent: "space-between",
+            mb: 1.5
+          }}>
           <Typography variant="subtitle2">
             <BuildIcon sx={{ fontSize: 16, mr: 0.5, verticalAlign: 'text-bottom' }} />
             {t('plugin.nativeTest', 'Build & Test')}
@@ -414,7 +419,13 @@ export default function NativeStageEditor({
 
         <Stack direction="row" spacing={2} sx={{ mb: 1.5 }}>
           <Box sx={{ flex: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                mb: 0.5,
+                display: 'block'
+              }}>
               Config (JSON)
             </Typography>
             <TextField
@@ -428,7 +439,13 @@ export default function NativeStageEditor({
             />
           </Box>
           <Box sx={{ flex: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                mb: 0.5,
+                display: 'block'
+              }}>
               Sample Data (JSON)
             </Typography>
             <TextField
@@ -497,7 +514,9 @@ export default function NativeStageEditor({
             {/* Success */}
             {testResult.success && (
               <Alert severity="success" icon={<CheckCircleIcon />} sx={{ mb: 1 }}>
-                <Stack direction="row" spacing={2} alignItems="center">
+                <Stack direction="row" spacing={2} sx={{
+                  alignItems: "center"
+                }}>
                   <Typography variant="subtitle2">
                     {t('plugin.nativeTestPassed', 'Test Passed')}
                   </Typography>
@@ -514,7 +533,9 @@ export default function NativeStageEditor({
             {/* Output */}
             {testResult.exec_output && testResult.exec_output.length > 0 && (
               <Box>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" sx={{
+                  color: "text.secondary"
+                }}>
                   Output ({testResult.exec_output.length} records)
                 </Typography>
                 <Paper
@@ -552,11 +573,17 @@ export default function NativeStageEditor({
         )}
 
         {!testResult && !testing && (
-          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 1 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              textAlign: 'center',
+              py: 1
+            }}>
             {t('plugin.nativeTestHint', 'Click Test to build and run the stage with sample data')}
           </Typography>
         )}
       </Paper>
     </Box>
-  )
+  );
 }

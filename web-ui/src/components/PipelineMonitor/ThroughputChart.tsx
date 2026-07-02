@@ -151,13 +151,21 @@ export function ThroughputChart({
   return (
     <Paper sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-        <Typography variant="subtitle2" color="text.secondary">
+        <Typography variant="subtitle2" sx={{
+          color: "text.secondary"
+        }}>
           {title}
         </Typography>
         <Box sx={{ textAlign: 'right' }}>
           <Typography variant="h6" sx={{ color: chartColor }}>
             {currentValue.toFixed(1)}
-            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+            <Typography
+              component="span"
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                ml: 0.5
+              }}>
               {yAxisLabel}
             </Typography>
           </Typography>
@@ -178,7 +186,7 @@ export function ThroughputChart({
         />
       </Box>
     </Paper>
-  )
+  );
 }
 
 interface MultiSeriesChartProps {
@@ -210,7 +218,9 @@ export function MultiSeriesChart({ data, height = 250, maxPoints = 60 }: MultiSe
   return (
     <Paper sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="subtitle2" color="text.secondary">
+        <Typography variant="subtitle2" sx={{
+          color: "text.secondary"
+        }}>
           Stage Throughput
         </Typography>
         <ToggleButtonGroup
@@ -239,7 +249,6 @@ export function MultiSeriesChart({ data, height = 250, maxPoints = 60 }: MultiSe
           ))}
         </ToggleButtonGroup>
       </Box>
-
       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 2 }}>
         {selectedSeries.map((seriesName, i) => (
           <ThroughputChart
@@ -253,7 +262,7 @@ export function MultiSeriesChart({ data, height = 250, maxPoints = 60 }: MultiSe
         ))}
       </Box>
     </Paper>
-  )
+  );
 }
 
 export default ThroughputChart

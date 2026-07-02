@@ -103,7 +103,9 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Box sx={{ color: color || 'text.secondary' }}>{icon}</Box>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
             {title}
           </Typography>
         </Box>
@@ -112,7 +114,7 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
         </Typography>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export default function ProjectsPage() {
@@ -449,20 +451,19 @@ export default function ProjectsPage() {
             size="small"
             sx={{ width: 250 }}
             onChange={(e) => handleSearch(e.target.value)}
-            InputProps={{
+            slotProps={{ input: {
               startAdornment: (
                 <InputAdornment position="start">
                   <SearchIcon />
                 </InputAdornment>
               ),
-            }}
+            } }}
           />
           <Button variant="contained" startIcon={<PlusOutlined />} onClick={handleCreate}>
             {t('project.new')}
           </Button>
         </Box>
       </Box>
-
       <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
         <Box sx={{ flex: '1 1 300px', minWidth: 250 }}>
           <StatCard title={t('project.totalProjects')} value={pagination.total} icon={<FolderOutlined />} />
@@ -479,7 +480,6 @@ export default function ProjectsPage() {
           <StatCard title={t('project.totalGroups')} value={totalGroups} icon={<TeamOutlined />} />
         </Box>
       </Box>
-
       <DataGrid
         rows={projects}
         columns={columns}
@@ -499,7 +499,6 @@ export default function ProjectsPage() {
           },
         }}
       />
-
       {/* Create/Edit Modal */}
       <Dialog
         open={modalVisible}
@@ -581,8 +580,10 @@ export default function ProjectsPage() {
                   </Box>
                 )}
                 MenuProps={{
-                  PaperProps: {
-                    sx: { maxHeight: 300 },
+                  slotProps: {
+                    paper: {
+                      sx: { maxHeight: 300 },
+                    },
                   },
                 }}
               >
@@ -595,13 +596,13 @@ export default function ProjectsPage() {
                     onChange={(e) => handleUserSearch(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
-                    InputProps={{
+                    slotProps={{ input: {
                       endAdornment: searchingUsers ? (
                         <InputAdornment position="end">
                           <CircularProgress size={16} />
                         </InputAdornment>
                       ) : null,
-                    }}
+                    } }}
                   />
                 </Box>
                 {/* Currently selected owners */}
@@ -613,7 +614,9 @@ export default function ProjectsPage() {
                       </Avatar>
                       <Box>
                         <Typography variant="body2">{owner.name || owner.email}</Typography>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="caption" sx={{
+                          color: "text.secondary"
+                        }}>
                           {owner.email}
                         </Typography>
                       </Box>
@@ -631,7 +634,9 @@ export default function ProjectsPage() {
                         </Avatar>
                         <Box>
                           <Typography variant="body2">{user.name || user.email}</Typography>
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={{
+                            color: "text.secondary"
+                          }}>
                             {user.email}
                           </Typography>
                         </Box>
@@ -673,7 +678,6 @@ export default function ProjectsPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>{t('project.deleteConfirm')}</DialogTitle>
@@ -698,5 +702,5 @@ export default function ProjectsPage() {
         </DialogActions>
       </Dialog>
     </Box>
-  )
+  );
 }

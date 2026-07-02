@@ -84,7 +84,9 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Box sx={{ color: color || 'text.secondary' }}>{icon}</Box>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
             {title}
           </Typography>
         </Box>
@@ -93,7 +95,7 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
         </Typography>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export default function ClustersPage() {
@@ -302,13 +304,15 @@ export default function ClustersPage() {
             <Typography variant="body2">
               {online}/{current}
               {current !== desired && (
-                <Typography component="span" variant="body2" color="text.secondary">
+                <Typography component="span" variant="body2" sx={{
+                  color: "text.secondary"
+                }}>
                   {' '}(→{desired})
                 </Typography>
               )}
             </Typography>
           </Box>
-        )
+        );
       },
     },
     {
@@ -316,7 +320,9 @@ export default function ClustersPage() {
       headerName: t('cluster.description'),
       flex: 1,
       renderCell: (params) => (
-        <Typography variant="body2" color="text.secondary" noWrap>
+        <Typography variant="body2" noWrap sx={{
+          color: "text.secondary"
+        }}>
           {params.value || '-'}
         </Typography>
       ),
@@ -369,16 +375,25 @@ export default function ClustersPage() {
           </Button>
         )}
       </Box>
-
       <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('cluster.totalClusters')}
             value={totalClusters}
             icon={<ClusterIcon />}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('cluster.activeClusters')}
             value={activeClusters}
@@ -386,14 +401,24 @@ export default function ClustersPage() {
             color="#4caf50"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('cluster.totalAgents')}
             value={totalAgents}
             icon={<CloudIcon />}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('cluster.onlineAgents')}
             value={onlineAgents}
@@ -402,7 +427,6 @@ export default function ClustersPage() {
           />
         </Grid>
       </Grid>
-
       <DataGrid
         rows={clusters}
         columns={columns}
@@ -410,7 +434,6 @@ export default function ClustersPage() {
         autoHeight
         disableRowSelectionOnClick
       />
-
       {/* 생성/수정 다이얼로그 */}
       <Dialog open={dialogOpen} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
         <DialogTitle>
@@ -471,7 +494,7 @@ export default function ClustersPage() {
               value={formData.desired_agents}
               onChange={(e) => setFormData({ ...formData, desired_agents: parseInt(e.target.value) || 1 })}
               fullWidth
-              inputProps={{ min: 0, max: 100 }}
+              slotProps={{ htmlInput: { min: 0, max: 100 } }}
               helperText={t('cluster.desiredAgentsHelp')}
             />
             <TextField
@@ -483,9 +506,9 @@ export default function ClustersPage() {
               rows={3}
               placeholder='{"node-type": "pipeline", "zone": "a"}'
               helperText={t('cluster.nodeSelectorHelp')}
-              InputProps={{
+              slotProps={{ input: {
                 style: { fontFamily: 'monospace', fontSize: '0.875rem' },
-              }}
+              } }}
             />
           </Box>
         </DialogContent>
@@ -496,7 +519,6 @@ export default function ClustersPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* 삭제 확인 다이얼로그 */}
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>{t('cluster.deleteConfirm')}</DialogTitle>
@@ -513,5 +535,5 @@ export default function ClustersPage() {
         </DialogActions>
       </Dialog>
     </Box>
-  )
+  );
 }

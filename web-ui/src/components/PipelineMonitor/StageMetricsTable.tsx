@@ -104,9 +104,11 @@ export function StageMetricsTable({ metrics, loading }: StageMetricsTableProps) 
   if (!metrics || Object.keys(metrics).length === 0) {
     return (
       <Paper sx={{ p: 4, textAlign: 'center' }}>
-        <Typography color="text.secondary">No stage metrics available</Typography>
+        <Typography sx={{
+          color: "text.secondary"
+        }}>No stage metrics available</Typography>
       </Paper>
-    )
+    );
   }
 
   const entries = Object.entries(metrics).sort(([a], [b]) => a.localeCompare(b))
@@ -135,7 +137,9 @@ export function StageMetricsTable({ metrics, loading }: StageMetricsTableProps) 
             return (
               <TableRow key={stageName} hover>
                 <TableCell>
-                  <Typography variant="body2" fontWeight={500}>
+                  <Typography variant="body2" sx={{
+                    fontWeight: 500
+                  }}>
                     {stageName}
                   </Typography>
                 </TableCell>
@@ -167,7 +171,9 @@ export function StageMetricsTable({ metrics, loading }: StageMetricsTableProps) 
                 <TableCell align="right">
                   <Box sx={{ minWidth: 100 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography variant="caption" sx={{
+                        color: "text.secondary"
+                      }}>
                         {stageMetrics.throughput_per_sec.toFixed(1)}/s
                       </Typography>
                     </Box>
@@ -188,17 +194,19 @@ export function StageMetricsTable({ metrics, loading }: StageMetricsTableProps) 
                   />
                 </TableCell>
                 <TableCell>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" sx={{
+                    color: "text.secondary"
+                  }}>
                     {formatTime(stageMetrics.last_updated)}
                   </Typography>
                 </TableCell>
               </TableRow>
-            )
+            );
           })}
         </TableBody>
       </Table>
     </TableContainer>
-  )
+  );
 }
 
 export default StageMetricsTable

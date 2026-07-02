@@ -11,7 +11,7 @@ import {
   Tooltip,
   Divider
 } from '@mui/material'
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
+import HelpOutlineIcon from '@mui/icons-material/HelpOutlineOutlined'
 import { useTranslation } from 'react-i18next'
 import type { JobConfig } from '../services/api'
 
@@ -76,7 +76,9 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
             }
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography fontWeight="medium">{t('workflow.jobConfigEnabled')}</Typography>
+                <Typography sx={{
+                  fontWeight: "medium"
+                }}>{t('workflow.jobConfigEnabled')}</Typography>
                 <Tooltip title={t('workflow.jobConfigEnabledDesc')} arrow>
                   <HelpOutlineIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                 </Tooltip>
@@ -88,12 +90,14 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
             <>
               <Divider />
 
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{
+                color: "text.secondary"
+              }}>
                 {t('workflow.jobResourceSettings')}
               </Typography>
 
               <Grid container spacing={2}>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <TextField
                     fullWidth
                     size="small"
@@ -104,7 +108,7 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
                     disabled={disabled}
                   />
                 </Grid>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <TextField
                     fullWidth
                     size="small"
@@ -115,7 +119,7 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
                     disabled={disabled}
                   />
                 </Grid>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <TextField
                     fullWidth
                     size="small"
@@ -126,7 +130,7 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
                     disabled={disabled}
                   />
                 </Grid>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <TextField
                     fullWidth
                     size="small"
@@ -141,12 +145,14 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
 
               <Divider />
 
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{
+                color: "text.secondary"
+              }}>
                 {t('workflow.jobBehaviorSettings')}
               </Typography>
 
               <Grid container spacing={2}>
-                <Grid item xs={4}>
+                <Grid size={4}>
                   <TextField
                     fullWidth
                     size="small"
@@ -154,11 +160,11 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
                     label={<LabelWithHelp label={t('workflow.jobTimeout')} help={t('workflow.jobTimeoutHelp')} />}
                     value={value?.timeout_seconds || ''}
                     onChange={(e) => handleFieldChange('timeout_seconds', e.target.value ? parseInt(e.target.value) : undefined)}
-                    inputProps={{ min: 60, max: 86400 }}
+                    slotProps={{ htmlInput: { min: 60, max: 86400 } }}
                     disabled={disabled}
                   />
                 </Grid>
-                <Grid item xs={4}>
+                <Grid size={4}>
                   <TextField
                     fullWidth
                     size="small"
@@ -166,11 +172,11 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
                     label={<LabelWithHelp label={t('workflow.jobBackoffLimit')} help={t('workflow.jobBackoffLimitHelp')} />}
                     value={value?.backoff_limit ?? ''}
                     onChange={(e) => handleFieldChange('backoff_limit', e.target.value ? parseInt(e.target.value) : undefined)}
-                    inputProps={{ min: 0, max: 10 }}
+                    slotProps={{ htmlInput: { min: 0, max: 10 } }}
                     disabled={disabled}
                   />
                 </Grid>
-                <Grid item xs={4}>
+                <Grid size={4}>
                   <TextField
                     fullWidth
                     size="small"
@@ -178,7 +184,7 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
                     label={<LabelWithHelp label={t('workflow.jobTtlAfterFinished')} help={t('workflow.jobTtlAfterFinishedHelp')} />}
                     value={value?.ttl_after_finished ?? ''}
                     onChange={(e) => handleFieldChange('ttl_after_finished', e.target.value ? parseInt(e.target.value) : undefined)}
-                    inputProps={{ min: 0, max: 3600 }}
+                    slotProps={{ htmlInput: { min: 0, max: 3600 } }}
                     disabled={disabled}
                   />
                 </Grid>
@@ -188,7 +194,7 @@ export function JobConfigForm({ value, onChange, disabled }: JobConfigFormProps)
         </Box>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export default JobConfigForm

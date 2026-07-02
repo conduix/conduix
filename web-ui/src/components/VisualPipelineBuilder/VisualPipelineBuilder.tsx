@@ -366,7 +366,6 @@ function VisualPipelineBuilderInner({
       {!readonly && (
         <StagePanel stageTypes={stageTypes} />
       )}
-
       {/* Flow Canvas */}
       <Box
         ref={reactFlowWrapper}
@@ -427,14 +426,15 @@ function VisualPipelineBuilderInner({
           {/* Info Panel */}
           <Panel position="bottom-left">
             <Paper sx={{ p: 1 }}>
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" sx={{
+                color: "text.secondary"
+              }}>
                 {nodes.length} nodes, {edges.length} connections
               </Typography>
             </Paper>
           </Panel>
         </ReactFlow>
       </Box>
-
       {/* Config Dialog */}
       {selectedNode && (
         <StageConfigDialog
@@ -449,7 +449,7 @@ function VisualPipelineBuilderInner({
         />
       )}
     </Box>
-  )
+  );
 }
 
 export function VisualPipelineBuilder(props: VisualPipelineBuilderProps) {

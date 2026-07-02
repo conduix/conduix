@@ -136,7 +136,7 @@ export default function WorkflowsPage() {
       field: 'project',
       headerName: t('workflow.project'),
       width: 150,
-      valueGetter: (params) => params.row.project?.name || '-',
+      valueGetter: (_value, row) => row.project?.name || "-",
       renderCell: (params: GridRenderCellParams<Workflow>) => (
         <Typography
           component="a"
@@ -248,7 +248,7 @@ export default function WorkflowsPage() {
             multiline
             minRows={12}
             margin="normal"
-            InputProps={{ style: { fontFamily: 'monospace', fontSize: 13 } }}
+            slotProps={{ input: { style: { fontFamily: 'monospace', fontSize: 13 } } }}
             placeholder={'name: my-workflow\ntype: realtime\npipelines: [...]'}
           />
         </DialogContent>

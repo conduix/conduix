@@ -199,7 +199,6 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
           </Menu>
         </Stack>
       </Box>
-
       {fields.length === 0 ? (
         <Box
           sx={{
@@ -235,7 +234,9 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
               }}
             >
               <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                <Stack direction="row" alignItems="center" spacing={1.5}>
+                <Stack direction="row" spacing={1.5} sx={{
+                  alignItems: "center"
+                }}>
                   <DragIndicatorIcon sx={{ color: 'text.disabled', cursor: 'grab' }} />
 
                   <TextField
@@ -245,13 +246,13 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
                     onChange={(e) => handleFieldChange(index, { name: e.target.value })}
                     sx={{ width: 150 }}
                     error={!field.name}
-                    InputProps={{
+                    slotProps={{ input: {
                       endAdornment: isKeyField(field.name) ? (
                         <InputAdornment position="end">
                           <VpnKeyIcon sx={{ color: 'warning.main', fontSize: 18 }} />
                         </InputAdornment>
                       ) : null,
-                    }}
+                    } }}
                   />
 
                   <FormControl size="small" sx={{ width: 130 }}>
@@ -300,7 +301,6 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
           ))}
         </Stack>
       )}
-
       <Dialog
         open={deleteConfirmIndex !== null}
         onClose={() => setDeleteConfirmIndex(null)}
@@ -327,5 +327,5 @@ export default function VisualFieldBuilder({ fields, onChange, idFields = [] }: 
         </DialogActions>
       </Dialog>
     </Box>
-  )
+  );
 }

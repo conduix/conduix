@@ -213,14 +213,15 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           />
         </CardContent>
       </Card>
-
       {/* 위반 처리 방식 */}
       <Card variant="outlined" sx={{ mb: 2 }}>
         <CardContent>
           <Typography variant="subtitle2" gutterBottom>
             {t('contract.violationAction', '위반 시 처리 방식')}
           </Typography>
-          <Stack direction="row" spacing={2} alignItems="center">
+          <Stack direction="row" spacing={2} sx={{
+            alignItems: "center"
+          }}>
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel>{t('contract.action', '처리 방식')}</InputLabel>
               <Select
@@ -229,22 +230,30 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
                 onChange={(e) => onChange({ ...value, action: e.target.value as ViolationAction })}
               >
                 <MenuItem value="drop">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <span>{t('contract.actionDrop', '삭제 (Drop)')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="quarantine">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <span>{t('contract.actionQuarantine', 'DLQ로 격리 (Quarantine)')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="tag">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <span>{t('contract.actionTag', '태그 추가 후 통과 (Tag)')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="error">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <span>{t('contract.actionError', '파이프라인 중단 (Error)')}</span>
                   </Stack>
                 </MenuItem>
@@ -269,13 +278,14 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           )}
         </CardContent>
       </Card>
-
       {/* 탭 네비게이션 */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
           <Tab
             label={
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack direction="row" spacing={1} sx={{
+                alignItems: "center"
+              }}>
                 <GavelIcon fontSize="small" />
                 <span>{t('contract.rulesTab', '비즈니스 규칙')}</span>
                 <Chip label={contract.rules?.length || 0} size="small" />
@@ -284,7 +294,9 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           />
           <Tab
             label={
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack direction="row" spacing={1} sx={{
+                alignItems: "center"
+              }}>
                 <StorageIcon fontSize="small" />
                 <span>{t('contract.schemaTab', '스키마 검증')}</span>
                 <Chip label={contract.schema?.fields?.length || 0} size="small" />
@@ -293,7 +305,9 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           />
           <Tab
             label={
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack direction="row" spacing={1} sx={{
+                alignItems: "center"
+              }}>
                 <SecurityIcon fontSize="small" />
                 <span>{t('contract.circuitBreakerTab', 'Circuit Breaker')}</span>
               </Stack>
@@ -302,7 +316,9 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           {action === 'quarantine' && (
             <Tab
               label={
-                <Stack direction="row" spacing={1} alignItems="center">
+                <Stack direction="row" spacing={1} sx={{
+                  alignItems: "center"
+                }}>
                   <StorageIcon fontSize="small" />
                   <span>{t('contract.dlqTab', 'DLQ 설정')}</span>
                 </Stack>
@@ -311,12 +327,13 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           )}
         </Tabs>
       </Box>
-
       {/* 비즈니스 규칙 탭 */}
       {activeTab === 0 && (
         <Box>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" sx={{
+              color: "text.secondary"
+            }}>
               {t('contract.rulesDescription', '필드 간 관계, 비즈니스 로직 등 복합 조건을 정의합니다.')}
             </Typography>
             <Button startIcon={<AddIcon />} size="small" onClick={addRule}>
@@ -326,7 +343,9 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
 
           {(contract.rules || []).length === 0 ? (
             <Paper variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
-              <Typography color="text.secondary">
+              <Typography sx={{
+                color: "text.secondary"
+              }}>
                 {t('contract.noRules', '정의된 규칙이 없습니다. 규칙을 추가하세요.')}
               </Typography>
             </Paper>
@@ -335,7 +354,14 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
               {(contract.rules || []).map((rule, index) => (
                 <Accordion key={rule.id} defaultExpanded={index === 0}>
                   <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Stack direction="row" spacing={2} alignItems="center" sx={{ flex: 1, pr: 2 }}>
+                    <Stack
+                      direction="row"
+                      spacing={2}
+                      sx={{
+                        alignItems: "center",
+                        flex: 1,
+                        pr: 2
+                      }}>
                       {severityIcon(rule.severity)}
                       <Typography sx={{ fontWeight: 500 }}>{rule.name || `규칙 ${index + 1}`}</Typography>
                       <Chip
@@ -344,7 +370,12 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
                         color={rule.severity === 'error' ? 'error' : rule.severity === 'warning' ? 'warning' : 'info'}
                       />
                       {rule.description && (
-                        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: "text.secondary",
+                            flex: 1
+                          }}>
                           {rule.description}
                         </Typography>
                       )}
@@ -364,13 +395,16 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           )}
         </Box>
       )}
-
       {/* 스키마 검증 탭 */}
       {activeTab === 1 && (
         <Box>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Stack direction="row" spacing={2} alignItems="center">
-              <Typography variant="body2" color="text.secondary">
+            <Stack direction="row" spacing={2} sx={{
+              alignItems: "center"
+            }}>
+              <Typography variant="body2" sx={{
+                color: "text.secondary"
+              }}>
                 {t('contract.schemaDescription', '필드별 타입, 필수 여부, 제약 조건을 정의합니다.')}
               </Typography>
               <FormControlLabel
@@ -395,7 +429,9 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
 
           {(contract.schema?.fields || []).length === 0 ? (
             <Paper variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
-              <Typography color="text.secondary">
+              <Typography sx={{
+                color: "text.secondary"
+              }}>
                 {t('contract.noFields', '정의된 필드가 없습니다. 필드를 추가하세요.')}
               </Typography>
             </Paper>
@@ -413,7 +449,6 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           )}
         </Box>
       )}
-
       {/* Circuit Breaker 탭 */}
       {activeTab === 2 && (
         <CircuitBreakerConfig
@@ -421,7 +456,6 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
           onChange={(cb) => onChange({ ...value, circuit_breaker: cb })}
         />
       )}
-
       {/* DLQ 설정 탭 */}
       {activeTab === 3 && action === 'quarantine' && (
         <DLQConfigEditor
@@ -430,7 +464,7 @@ export function ContractStageEditor({ value, onChange, availableFields = [] }: C
         />
       )}
     </Box>
-  )
+  );
 }
 
 export default ContractStageEditor

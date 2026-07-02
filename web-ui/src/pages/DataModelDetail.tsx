@@ -271,9 +271,11 @@ export default function DataModelDetailPage() {
   if (!dataModel) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-        <Typography color="text.secondary">{t('dataModel.notFound')}</Typography>
+        <Typography sx={{
+          color: "text.secondary"
+        }}>{t('dataModel.notFound')}</Typography>
       </Box>
-    )
+    );
   }
 
   const categoryConfig = getCategoryConfig(dataModel.category)
@@ -289,9 +291,10 @@ export default function DataModelDetailPage() {
         >
           {t('dataModel.list')}
         </Link>
-        <Typography color="text.primary">{dataModel.display_name}</Typography>
+        <Typography sx={{
+          color: "text.primary"
+        }}>{dataModel.display_name}</Typography>
       </Breadcrumbs>
-
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Button
@@ -315,14 +318,12 @@ export default function DataModelDetailPage() {
           {saving ? <CircularProgress size={20} /> : t('common.save')}
         </Button>
       </Box>
-
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
           <Tab label={t('dataModel.overview')} />
           <Tab label={t('dataModel.schemaTab')} />
         </Tabs>
       </Box>
-
       <TabPanel value={tabValue} index={0}>
         <Card>
           <CardContent>
@@ -376,7 +377,12 @@ export default function DataModelDetailPage() {
             </Box>
 
             <Box sx={{ mt: 3 }}>
-              <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+              <Typography
+                variant="subtitle2"
+                sx={{
+                  color: "text.secondary",
+                  mb: 1
+                }}>
                 {t('dataModel.additionalInfo')}
               </Typography>
               <Table size="small">
@@ -431,7 +437,6 @@ export default function DataModelDetailPage() {
           </CardContent>
         </Card>
       </TabPanel>
-
       <TabPanel value={tabValue} index={1}>
         <Card>
           <CardContent>
@@ -446,7 +451,7 @@ export default function DataModelDetailPage() {
         </Card>
       </TabPanel>
     </Box>
-  )
+  );
 }
 
 function mapJsonSchemaTypeToFieldType(type: string, format?: string): string {

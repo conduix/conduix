@@ -46,7 +46,9 @@ export function MetricsCard({
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Box sx={{ color }}>{icon}</Box>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
             {title}
           </Typography>
         </Box>
@@ -59,7 +61,9 @@ export function MetricsCard({
               {typeof value === 'number' ? value.toLocaleString() : value}
             </Typography>
             {unit && (
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{
+                color: "text.secondary"
+              }}>
                 {unit}
               </Typography>
             )}
@@ -76,7 +80,7 @@ export function MetricsCard({
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
 interface MetricsGridProps {

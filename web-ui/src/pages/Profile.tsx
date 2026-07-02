@@ -112,9 +112,11 @@ export default function ProfilePage() {
   if (!profile) {
     return (
       <Box sx={{ textAlign: 'center', py: 8 }}>
-        <Typography color="text.secondary">{t('profile.notFound')}</Typography>
+        <Typography sx={{
+          color: "text.secondary"
+        }}>{t('profile.notFound')}</Typography>
       </Box>
-    )
+    );
   }
 
   const { user, role_info, pipelines, workflows } = profile
@@ -169,10 +171,13 @@ export default function ProfilePage() {
         <UserIcon />
         <Typography variant="h5">{t('profile.title')}</Typography>
       </Box>
-
       <Grid container spacing={3}>
         {/* Account Info */}
-        <Grid item xs={12} lg={6}>
+        <Grid
+          size={{
+            xs: 12,
+            lg: 6
+          }}>
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2 }}>{t('profile.accountInfo')}</Typography>
@@ -197,22 +202,30 @@ export default function ProfilePage() {
               <Stack spacing={2}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <MailIcon color="action" />
-                  <Typography variant="body2" color="text.secondary">{t('profile.email')}</Typography>
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>{t('profile.email')}</Typography>
                   <Typography sx={{ ml: 'auto' }}>{user.email}</Typography>
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <SecurityIcon color="action" />
-                  <Typography variant="body2" color="text.secondary">{t('profile.authProvider')}</Typography>
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>{t('profile.authProvider')}</Typography>
                   <Chip label={user.provider?.toUpperCase() || 'N/A'} size="small" sx={{ ml: 'auto' }} />
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <CalendarIcon color="action" />
-                  <Typography variant="body2" color="text.secondary">{t('profile.joinedAt')}</Typography>
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>{t('profile.joinedAt')}</Typography>
                   <Typography sx={{ ml: 'auto' }}>{dayjs(user.created_at).format('YYYY-MM-DD HH:mm')}</Typography>
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <CalendarIcon color="action" />
-                  <Typography variant="body2" color="text.secondary">{t('profile.lastLogin')}</Typography>
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>{t('profile.lastLogin')}</Typography>
                   <Typography sx={{ ml: 'auto' }}>
                     {user.last_login ? dayjs(user.last_login).format('YYYY-MM-DD HH:mm') : '-'}
                   </Typography>
@@ -223,28 +236,49 @@ export default function ProfilePage() {
         </Grid>
 
         {/* Role & Permissions */}
-        <Grid item xs={12} lg={6}>
+        <Grid
+          size={{
+            xs: 12,
+            lg: 6
+          }}>
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2 }}>{t('profile.rolePermissions')}</Typography>
 
               <Box sx={{ mb: 2 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: "text.secondary",
+                    mb: 1
+                  }}>
                   {t('profile.role')}
                 </Typography>
                 <Chip label={t(`user.roles.${role_info.display_name}`, role_info.display_name)} color={roleColors[role_info.role] || 'default'} />
               </Box>
 
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                  mb: 2
+                }}>
                 {t(`user.roleDescriptions.${role_info.description}`, role_info.description)}
               </Typography>
 
               <Divider sx={{ my: 2 }} />
 
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                  mb: 1
+                }}>
                 {t('profile.permissions')}
               </Typography>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} useFlexGap sx={{
+                flexWrap: "wrap"
+              }}>
                 {role_info.permissions.map((perm) => (
                   <Chip key={perm} label={perm} size="small" color="info" variant="outlined" />
                 ))}
@@ -254,7 +288,7 @@ export default function ProfilePage() {
         </Grid>
 
         {/* Accessible Workflows */}
-        <Grid item xs={12}>
+        <Grid size={12}>
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
@@ -270,7 +304,12 @@ export default function ProfilePage() {
                   disableRowSelectionOnClick
                 />
               ) : (
-                <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+                <Typography
+                  sx={{
+                    color: "text.secondary",
+                    textAlign: 'center',
+                    py: 4
+                  }}>
                   {t('profile.noWorkflows')}
                 </Typography>
               )}
@@ -279,7 +318,7 @@ export default function ProfilePage() {
         </Grid>
 
         {/* Accessible Pipelines */}
-        <Grid item xs={12}>
+        <Grid size={12}>
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
@@ -298,7 +337,12 @@ export default function ProfilePage() {
                   disableRowSelectionOnClick
                 />
               ) : (
-                <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+                <Typography
+                  sx={{
+                    color: "text.secondary",
+                    textAlign: 'center',
+                    py: 4
+                  }}>
                   {t('profile.noPipelines')}
                 </Typography>
               )}
@@ -307,5 +351,5 @@ export default function ProfilePage() {
         </Grid>
       </Grid>
     </Box>
-  )
+  );
 }

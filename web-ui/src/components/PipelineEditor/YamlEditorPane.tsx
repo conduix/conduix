@@ -85,11 +85,15 @@ export function YamlEditorPane() {
           justifyContent: 'space-between',
         }}
       >
-        <Typography variant="subtitle2" color="text.secondary">
+        <Typography variant="subtitle2" sx={{
+          color: "text.secondary"
+        }}>
           {t('pipelineEditor.yaml.title')}
         </Typography>
 
-        <Stack direction="row" spacing={0.5} alignItems="center">
+        <Stack direction="row" spacing={0.5} sx={{
+          alignItems: "center"
+        }}>
           {/* 동기화 상태 */}
           <Chip
             icon={<StatusIcon sx={{ fontSize: 14 }} />}
@@ -123,7 +127,6 @@ export function YamlEditorPane() {
           </Tooltip>
         </Stack>
       </Box>
-
       {/* 에러 표시 */}
       {yamlError && (
         <Alert severity="error" sx={{ m: 1, py: 0.5 }} icon={<ErrorIcon fontSize="small" />}>
@@ -132,7 +135,6 @@ export function YamlEditorPane() {
           </Typography>
         </Alert>
       )}
-
       {/* 경고 표시 */}
       {yamlWarnings.length > 0 && !yamlError && (
         <Alert severity="warning" sx={{ m: 1, py: 0.5 }} icon={<WarningIcon fontSize="small" />}>
@@ -141,7 +143,6 @@ export function YamlEditorPane() {
           </Typography>
         </Alert>
       )}
-
       {/* Monaco Editor */}
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <Editor
@@ -168,5 +169,5 @@ export function YamlEditorPane() {
         />
       </Box>
     </Box>
-  )
+  );
 }

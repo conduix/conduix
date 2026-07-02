@@ -111,10 +111,12 @@ export function StageSchemaForm({
   // 필드가 없는 경우
   if (!schema.fields || schema.fields.length === 0) {
     return (
-      <Typography variant="body2" color="text.secondary">
+      <Typography variant="body2" sx={{
+        color: "text.secondary"
+      }}>
         {t('stage.noConfigRequired', '이 Stage는 추가 설정이 필요하지 않습니다.')}
       </Typography>
-    )
+    );
   }
 
   return (

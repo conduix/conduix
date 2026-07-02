@@ -63,7 +63,9 @@ function StatCard({ title, value, suffix, icon, color, loading }: StatCardProps)
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Box sx={{ color: color || 'text.secondary' }}>{icon}</Box>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
             {title}
           </Typography>
         </Box>
@@ -73,7 +75,9 @@ function StatCard({ title, value, suffix, icon, color, loading }: StatCardProps)
           <Typography variant="h4" sx={{ color: color || 'text.primary' }}>
             {value}
             {suffix && (
-              <Typography component="span" variant="body1" color="text.secondary">
+              <Typography component="span" variant="body1" sx={{
+                color: "text.secondary"
+              }}>
                 {suffix}
               </Typography>
             )}
@@ -81,7 +85,7 @@ function StatCard({ title, value, suffix, icon, color, loading }: StatCardProps)
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export default function DashboardPage() {
@@ -216,9 +220,13 @@ export default function DashboardPage() {
       <Typography variant="h5" sx={{ mb: 3 }}>
         {t('dashboard.title')}
       </Typography>
-
       <Grid container spacing={2}>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            lg: 3
+          }}>
           <StatCard
             title={t('dashboard.totalWorkflows')}
             value={workflowStats.total}
@@ -226,7 +234,12 @@ export default function DashboardPage() {
             loading={loading}
           />
         </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            lg: 3
+          }}>
           <StatCard
             title={t('dashboard.runningWorkflows')}
             value={workflowStats.running}
@@ -235,7 +248,12 @@ export default function DashboardPage() {
             loading={loading}
           />
         </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            lg: 3
+          }}>
           <StatCard
             title={t('dashboard.onlineAgents')}
             value={agentStats.online}
@@ -245,7 +263,12 @@ export default function DashboardPage() {
             loading={loading}
           />
         </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            lg: 3
+          }}>
           <StatCard
             title={t('dashboard.throughput')}
             value={0}
@@ -254,9 +277,8 @@ export default function DashboardPage() {
           />
         </Grid>
       </Grid>
-
       <Grid container spacing={2} sx={{ mt: 2 }}>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <Card>
             <CardContent>
               <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)} sx={{ mb: 2 }}>
@@ -313,14 +335,13 @@ export default function DashboardPage() {
           </Card>
         </Grid>
       </Grid>
-
       {/* Pipeline Monitor Dialog */}
       <Dialog
         open={monitorDialogOpen}
         onClose={() => setMonitorDialogOpen(false)}
         maxWidth="xl"
         fullWidth
-        PaperProps={{ sx: { height: '90vh' } }}
+        slotProps={{ paper: { sx: { height: '90vh' } } }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 1, borderBottom: 1, borderColor: 'divider' }}>
           <Typography variant="h6" sx={{ ml: 1 }}>
@@ -340,5 +361,5 @@ export default function DashboardPage() {
         </DialogContent>
       </Dialog>
     </Box>
-  )
+  );
 }

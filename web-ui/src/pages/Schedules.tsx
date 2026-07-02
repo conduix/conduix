@@ -6,9 +6,11 @@ export default function SchedulesPage() {
       <Typography variant="h5" gutterBottom>
         스케줄
       </Typography>
-      <Typography color="text.secondary">
+      <Typography sx={{
+        color: "text.secondary"
+      }}>
         스케줄 관리 기능이 구현될 예정입니다.
       </Typography>
     </Box>
-  )
+  );
 }

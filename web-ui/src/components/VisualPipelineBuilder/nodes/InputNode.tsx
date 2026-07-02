@@ -48,7 +48,9 @@ export const InputNode = memo(({ data, selected }: NodeProps<InputNodeType>) => 
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
         {icon}
-        <Typography variant="subtitle2" fontWeight="bold">
+        <Typography variant="subtitle2" sx={{
+          fontWeight: "bold"
+        }}>
           {data.label}
         </Typography>
       </Box>
@@ -62,7 +64,6 @@ export const InputNode = memo(({ data, selected }: NodeProps<InputNodeType>) => 
           height: 20,
         }}
       />
-
       {/* Output Handle */}
       <Handle
         type="source"
@@ -75,7 +76,7 @@ export const InputNode = memo(({ data, selected }: NodeProps<InputNodeType>) => 
         }}
       />
     </Box>
-  )
+  );
 })
 
 InputNode.displayName = 'InputNode'

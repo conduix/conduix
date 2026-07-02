@@ -187,7 +187,6 @@ export function StageSchemaDialog({
       <DialogTitle>
         {editingStage ? t('stage.editStage', 'Stage 수정') : t('stage.addStage', 'Stage 추가')}
       </DialogTitle>
-
       <DialogContent>
         <Stack spacing={3} sx={{ mt: 1 }}>
           {/* Stage 이름 */}
@@ -233,17 +232,21 @@ export function StageSchemaDialog({
                   </ListSubheader>,
                   ...categorySchemas.map((schema) => (
                     <MenuItem key={schema.type} value={schema.type}>
-                      <Stack direction="row" spacing={1} alignItems="center">
+                      <Stack direction="row" spacing={1} sx={{
+                        alignItems: "center"
+                      }}>
                         <Typography>{schema.display_name}</Typography>
                         {schema.description && (
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={{
+                            color: "text.secondary"
+                          }}>
                             - {schema.description}
                           </Typography>
                         )}
                       </Stack>
                     </MenuItem>
                   )),
-                ]
+                ];
               })}
             </Select>
             {errors.type && (
@@ -276,7 +279,6 @@ export function StageSchemaDialog({
           )}
         </Stack>
       </DialogContent>
-
       <DialogActions>
         <Button onClick={onClose}>
           {t('common.cancel', '취소')}
@@ -286,7 +288,7 @@ export function StageSchemaDialog({
         </Button>
       </DialogActions>
     </Dialog>
-  )
+  );
 }
 
 export default StageSchemaDialog

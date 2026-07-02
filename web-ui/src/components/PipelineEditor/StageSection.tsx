@@ -475,7 +475,7 @@ export function StageSection() {
                 type="number"
                 value={config.rate || 100}
                 onChange={(e) => handleConfigChange('rate', Number(e.target.value))}
-                inputProps={{ min: 1 }}
+                slotProps={{ htmlInput: { min: 1 } }}
                 sx={{ width: 120 }}
                 required
               />
@@ -574,12 +574,14 @@ export function StageSection() {
 
       default:
         return (
-          <Typography color="text.secondary">
+          <Typography sx={{
+            color: "text.secondary"
+          }}>
             {stageForm.type
               ? t('pipelineEditor.stage.configNotSupported')
               : t('pipelineEditor.stage.selectType')}
           </Typography>
-        )
+        );
     }
   }
 
@@ -588,7 +590,9 @@ export function StageSection() {
       <Accordion expanded={expanded} onChange={(_, isExpanded) => setExpanded(isExpanded)}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="subtitle1" fontWeight="medium">
+            <Typography variant="subtitle1" sx={{
+              fontWeight: "medium"
+            }}>
               {t('pipelineEditor.stage.title')}
             </Typography>
             <Chip label={stages.length} size="small" color="primary" variant="outlined" />
@@ -618,7 +622,12 @@ export function StageSection() {
                 onDragEnd={handleDragEnd}
               >
                 <DragHandleIcon sx={{ color: 'text.secondary' }} />
-                <Typography variant="body2" color="text.secondary" sx={{ width: 24 }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: "text.secondary",
+                    width: 24
+                  }}>
                   {index + 1}
                 </Typography>
                 {stageTypeConfig[stage.type as StageType] && (
@@ -651,7 +660,6 @@ export function StageSection() {
           </Stack>
         </AccordionDetails>
       </Accordion>
-
       {/* Stage 편집 모달 */}
       <Dialog open={modalOpen} onClose={() => setModalOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>
@@ -677,7 +685,9 @@ export function StageSection() {
                   const config = stageTypeConfig[type]
                   return (
                     <MenuItem key={type} value={type}>
-                      <Stack direction="row" spacing={1} alignItems="center">
+                      <Stack direction="row" spacing={1} sx={{
+                        alignItems: "center"
+                      }}>
                         <Chip
                           icon={config.icon as React.ReactElement}
                           label={config.label}
@@ -686,7 +696,7 @@ export function StageSection() {
                         />
                       </Stack>
                     </MenuItem>
-                  )
+                  );
                 })}
               </Select>
             </FormControl>
@@ -713,7 +723,6 @@ export function StageSection() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* 삭제 확인 다이얼로그 */}
       <ConfirmDialog
         open={deleteDialogOpen}
@@ -726,5 +735,5 @@ export function StageSection() {
         severity="error"
       />
     </>
-  )
+  );
 }

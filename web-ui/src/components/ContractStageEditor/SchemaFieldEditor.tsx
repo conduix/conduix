@@ -51,7 +51,9 @@ export function SchemaFieldEditor({ field, onChange, onDelete }: SchemaFieldEdit
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      <Stack direction="row" spacing={2} alignItems="center">
+      <Stack direction="row" spacing={2} sx={{
+        alignItems: "center"
+      }}>
         {/* 필드명 */}
         <TextField
           label={t('contract.fieldName', '필드명')}
@@ -102,7 +104,6 @@ export function SchemaFieldEditor({ field, onChange, onDelete }: SchemaFieldEdit
           <DeleteIcon fontSize="small" />
         </IconButton>
       </Stack>
-
       {/* 확장된 제약조건 영역 */}
       <Collapse in={expanded}>
         <Box sx={{ mt: 2, pl: 2 }}>
@@ -188,7 +189,7 @@ export function SchemaFieldEditor({ field, onChange, onDelete }: SchemaFieldEdit
         </Box>
       </Collapse>
     </Paper>
-  )
+  );
 }
 
 export default SchemaFieldEditor

@@ -15,20 +15,47 @@
 
 ## 2. 모듈 구성
 
-```
-shared/         공통 타입·유틸 (Redis ResilientClient, 메트릭, 타입)  — 의존 없음
-pipeline-core/  실행 엔진 (GroupExecutor, source/stage/output, 체크포인트)  — shared
-pipeline-agent/ 실행 에이전트 (워크플로우 수신·실행, 하트비트)  — shared, pipeline-core
-control-plane/  운영 백엔드 (Gin+GORM+MySQL, 스케줄러, Redis pub/sub)  — shared, pipeline-core
-web-ui/         프론트엔드 (React+TS+MUI)
-plugin-sdk/     네이티브 stage 인터페이스 (NativeStage)
+| 모듈 | 역할 | 의존 |
+|------|------|------|
+| `shared/` | 공통 타입·유틸 (Redis ResilientClient, 메트릭) | 없음 |
+| `plugin-sdk/` | 네이티브 stage 인터페이스 (`NativeStage`) | 없음 |
+| `pipeline-core/` | 실행 엔진 (GroupExecutor, source/stage/output, 체크포인트) | shared, plugin-sdk |
+| `pipeline-runner/` | 배치용 실행 바이너리 (K8s Job에서 GroupExecutor 구동) | shared, pipeline-core |
+| `pipeline-agent/` | 실행 에이전트 (워크플로우 수신·실행, 하트비트) | shared, pipeline-core |
+| `control-plane/` | 운영 백엔드 (Gin+GORM+MySQL, 스케줄러, Redis pub/sub) | shared, pipeline-core |
+| `web-ui/` | 프론트엔드 (React+TS+MUI) | control-plane REST |
+
+### 모듈 의존 관계
+
+```mermaid
+graph TD
+    webui["web-ui (React)"] -->|REST| cp["control-plane<br/>(API·스케줄러·pub/sub)"]
+    cp -->|Redis pub/sub| agent["pipeline-agent"]
+    cp -->|K8s Job 생성| runner["pipeline-runner<br/>(batch 바이너리)"]
+    agent --> core["pipeline-core<br/>(GroupExecutor)"]
+    runner --> core
+    core --> sdk["plugin-sdk<br/>(NativeStage)"]
+    core --> shared["shared<br/>(types·redis·metrics)"]
+    cp --> shared
+    agent --> shared
+
+    classDef svc fill:#e3f2fd,stroke:#1976d2
+    classDef lib fill:#f1f8e9,stroke:#689f38
+    class webui,cp,agent,runner svc
+    class core,sdk,shared lib
 ```
 
 ## 3. 파이프라인 모델
 
+```mermaid
+flowchart LR
+    IN[Input<br/>kafka·rest·sql·cdc·file] --> S1[공통 Stage 1..N<br/>filter·cast·js_script...]
+    S1 --> FO{Output별 분기}
+    FO --> P1[PreStages A] --> O1[(Output A<br/>sql·es·kafka)]
+    FO --> P2[PreStages B] --> O2[(Output B<br/>s3·mongo...)]
 ```
-Input → [공통 Stage] → [Output별 PreStages] → Output (bulk|individual)
-```
+
+- 공통 Stage는 모든 Output 공유, PreStages는 Output 전용 변환. bulk(배치 벌크쓰기)/individual(건별) 선택.
 
 - **Input**: kafka, rest_api, sql, sql_event, cdc, file, k8s_logs, mqtt, rabbitmq, sqs, websocket, redis_stream, pubsub 등
 - **Stage**: filter, remap, cast, timestamp, encrypt, dedupe, validate, throttle, route, aggregate, enrich, js_script(goja) 등 28종
@@ -54,6 +81,45 @@ Input → [공통 Stage] → [Output별 PreStages] → Output (bulk|individual)
 - **배치 단위**: 워크플로우 → 클러스터 채널(`cluster:<id>:execute`). **여러 에이전트 중 하나가 SETNX claim**으로 단독 실행 (중복 실행 방지).
 - **파이프라인 = 서버-로컬**: stage 간 레코드가 인프로세스로 흐름(네트워크 홉 없음). 수평 확장은 Kafka 컨슈머 그룹(파티션 분산) 또는 워크플로우 배치로.
 - **고아 실행 감지**: 담당 에이전트 크래시 시 scheduler가 running 실행을 failed로 전이(조용한 유실 방지).
+
+### 실행 트리거 흐름 (start → 실행)
+
+```mermaid
+sequenceDiagram
+    participant U as web-ui / YAML(AI)
+    participant CP as control-plane
+    participant R as Redis
+    participant A as agent (1..N in cluster)
+    participant GE as GroupExecutor
+
+    U->>CP: POST /workflows/:id/start
+    CP->>CP: execution 레코드 생성(running)
+    alt batch + JobConfig
+        CP->>CP: K8s Job 생성 → pipeline-runner 구동
+    else realtime / agent
+        CP->>R: publish cluster:<id>:execute
+        R-->>A: 명령 fan-out (전 에이전트 수신)
+        A->>R: SETNX execution:claim (단독 실행 획득)
+        Note over A: 획득한 1대만 실행, 나머지 skip
+        A->>GE: executeGroup → 파이프라인 실행
+    end
+    A-->>CP: 결과/하트비트(RunningExecs)
+    Note over CP: 하트비트 소실 시 고아 실행 → failed 전이
+```
+
+### 실행 프로세스 종류
+
+```mermaid
+flowchart TD
+    W{워크플로우 type}
+    W -->|realtime<br/>kafka·cdc·ws| AG[agent 상주 프로세스<br/>장기 실행 + pause/resume]
+    W -->|batch + JobConfig| KJ[K8s Job<br/>pipeline-runner 일회성]
+    W -->|batch<br/>기본| AG2[agent 프로세스<br/>소스 소진 시 완료]
+    AG --> GE[GroupExecutor]
+    KJ --> GE
+    AG2 --> GE
+    GE -->|병렬/순차/DAG| PIPE[파이프라인들<br/>서버-로컬 인프로세스]
+```
 
 ## 6. 복원력 · 안전
 

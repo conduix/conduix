@@ -71,6 +71,7 @@ Input → [공통 Stage] → [Output별 PreStages] → Output (bulk|individual)
 
 - **web-ui**: 워크플로우 생성·제어(start/stop/pause/resume), 처리량·실행상태 모니터링, YAML 내보내기/복제/가져오기.
 - **YAML(프로그래밍/AI)**: `GET /workflows/:id/yaml`(export), `POST /workflows/import`(생성). export→id/project 교체→import = 템플릿 인스턴스화. web-ui와 동일 모델(`buildWorkflowModel`로 일원화).
+- **샘플**: 첫 실행 시 "Sample Pipelines" 프로젝트에 6종(bulk 3 + cdc 3) 워크플로우가 자동 등록된다(삭제 가능, 삭제 후 재시딩 안 함). 각 샘플은 `js_script` 커스텀 stage(text→number, json 가공, json 추출)를 포함해 빌드 없이 즉시 실행된다. (`control-plane/internal/seed`)
 
 ## 9. 알려진 제약 (정직한 현황)
 

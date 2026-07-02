@@ -41,3 +41,6 @@
 - [x] retry (FailureActionRetry 구현)
 - [x] web-ui: pause/resume·처리량·YAML export/clone
 - [x] 관측성: Prometheus 메트릭 + 구조화 로깅
+- [x] 실패 처리: 서킷브레이커 + DLQ + 고아 실행 감지 + 백오프/jitter + panic recover
+- [x] 샘플 파이프라인 6종 + 커스텀(js_script) stage 샘플: 첫 실행 시 자동 등록(삭제 가능), 실행 검증 (internal/seed)
+- [x] 문서 정리: ARCHITECTURE.md 요약 + archive 분리, docs/README 인덱스

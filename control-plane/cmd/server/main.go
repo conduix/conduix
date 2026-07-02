@@ -11,6 +11,7 @@ import (
 	"github.com/caarlos0/env/v10"
 
 	"github.com/conduix/conduix/control-plane/internal/api"
+	"github.com/conduix/conduix/control-plane/internal/seed"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/config"
 	"github.com/conduix/conduix/control-plane/pkg/database"
@@ -135,6 +136,11 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("Migrations completed")
+
+		// 첫 실행 시 샘플 파이프라인 기본 등록 (삭제 가능, 재시딩 안 함)
+		if err := seed.Run(db); err != nil {
+			fmt.Printf("Warning: sample seed failed (non-fatal): %v\n", err)
+		}
 	}
 
 	// Redis 서비스 생성 (선택적 - 실패해도 서버 시작)

@@ -13,7 +13,7 @@
 - **DLQ 설정이 있으면** 실패 내역을 DLQ로 적재. **DLQ 여부와 무관하게 서킷 브레이크는 설정으로 제어.**
 - 추가 방어/안전운영 기법 조사·적용.
 
-- [ ] **claim 재배치**: SETNX claim한 에이전트 크래시 시 실행 유실 → 제어면이 claim/heartbeat 만료 감지 후 재발행 (또는 재시도 정책)
+- [x] **claim 재배치(고아 실행 감지)**: SchedulerService.detectStaleExecutions — 주기적으로 running 실행 중 살아있는 에이전트 하트비트에 없는(고아) 실행을 failed로 전이 + 로그. 조용한 유실 방지. 완전 자동 재실행은 checkpoint 중복 위험으로 보류(failed 전이로 인지 가능하게). 판정 로직 테스트.
 - [x] **실패 카운트 + 서킷 브레이크**: `failureGuard`(pkg/executor/failure_guard.go) — 연속/누적 실패 카운트, CircuitBreakerPolicy 임계 초과 시 서킷 오픈 → 실행 에러 종료. record/batch 양 경로 적용. 테스트 4건.
 - [x] **DLQ 연동**: FailurePolicy.DLQ 설정 시 실패 레코드를 DLQOutput으로 적재. 서킷과 독립 동작.
 - [x] **구조화 로그**: 실패/서킷트립 이벤트를 workflow_id/pipeline_id 상관키 포함 slog로 기록. Prometheus circuit_tripped_total 메트릭.

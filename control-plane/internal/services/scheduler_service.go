@@ -18,14 +18,16 @@ import (
 
 // SchedulerService 배치 워크플로우 스케줄러 서비스
 type SchedulerService struct {
-	db           *database.DB
-	redisService *RedisService
-	cron         *cron.Cron
-	jobs         map[string]cron.EntryID // workflowID -> cron entry ID
-	mu           sync.RWMutex
-	ctx          context.Context
-	cancel       context.CancelFunc
-	running      bool
+	db              *database.DB
+	redisService    *RedisService
+	cron            *cron.Cron
+	jobs            map[string]cron.EntryID // workflowID -> cron entry ID
+	mu              sync.RWMutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	running         bool
+	refreshInterval time.Duration // stale 실행 감지 주기
+	staleGrace      time.Duration // 실행 시작 후 이 시간 이전은 감지 대상 제외(하트비트 등록 유예)
 }
 
 // SchedulerConfig 스케줄러 설정
@@ -45,18 +47,18 @@ func NewSchedulerService(db *database.DB, redisService *RedisService, cfg *Sched
 	if cfg == nil {
 		cfg = DefaultSchedulerConfig()
 	}
-	// TODO: cfg.RefreshInterval을 사용한 DB 변경 감지 구현
-	_ = cfg
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &SchedulerService{
-		db:           db,
-		redisService: redisService,
-		cron:         cron.New(cron.WithLocation(time.UTC)),
-		jobs:         make(map[string]cron.EntryID),
-		ctx:          ctx,
-		cancel:       cancel,
+		db:              db,
+		redisService:    redisService,
+		cron:            cron.New(cron.WithLocation(time.UTC)),
+		jobs:            make(map[string]cron.EntryID),
+		ctx:             ctx,
+		cancel:          cancel,
+		refreshInterval: cfg.RefreshInterval,
+		staleGrace:      2 * time.Minute, // 실행 직후 하트비트 등록 유예
 	}
 }
 
@@ -79,7 +81,80 @@ func (s *SchedulerService) Start() error {
 	s.cron.Start()
 	fmt.Printf("[Scheduler] Started with %d active schedules\n", len(s.jobs))
 
+	// stale 실행 감지 루프 시작 (claim한 에이전트 크래시로 유실된 실행 복구)
+	go s.staleExecutionLoop()
+
 	return nil
+}
+
+// staleExecutionLoop은 주기적으로 stale(담당 에이전트가 사라진) running 실행을 감지해 정리한다.
+func (s *SchedulerService) staleExecutionLoop() {
+	interval := s.refreshInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.detectStaleExecutions()
+		}
+	}
+}
+
+// detectStaleExecutions는 DB의 running 실행 중, 살아있는 에이전트 하트비트에 없고
+// 유예시간(staleGrace)을 지난 것을 stale로 판정하여 failed로 전이한다.
+// SETNX claim은 TTL로 자연 만료되므로 별도 해제는 불필요하다.
+func (s *SchedulerService) detectStaleExecutions() {
+	// 살아있는 에이전트들이 현재 실행 중이라고 보고한 execution 집합
+	heartbeats, err := s.redisService.GetAllAgentHeartbeats()
+	if err != nil {
+		fmt.Printf("[Scheduler] stale-check: failed to get heartbeats: %v\n", err)
+		return
+	}
+	liveExecs := make(map[string]struct{})
+	for _, hb := range heartbeats {
+		for _, re := range hb.RunningExecs {
+			liveExecs[re.ExecutionID] = struct{}{}
+		}
+	}
+
+	// DB에서 running 실행 조회 (유예시간 지난 것만)
+	cutoff := time.Now().Add(-s.staleGrace)
+	var execs []models.WorkflowExecution
+	if err := s.db.Where("status = ? AND started_at < ?",
+		string(types.PipelineGroupStatusRunning), cutoff).Find(&execs).Error; err != nil {
+		fmt.Printf("[Scheduler] stale-check: query failed: %v\n", err)
+		return
+	}
+
+	now := time.Now()
+	for i := range execs {
+		exec := &execs[i]
+		if !isStaleExecution(exec.ID, liveExecs) {
+			continue // 담당 에이전트가 살아있고 실행 중 → 정상
+		}
+		// stale: 담당 에이전트 없음 → failed 전이 (조용한 유실 방지)
+		exec.Status = string(types.PipelineGroupStatusError)
+		exec.CompletedAt = &now
+		exec.ErrorMessage = "execution orphaned: owning agent is no longer running it (agent crash or claim expiry)"
+		if err := s.db.Save(exec).Error; err != nil {
+			fmt.Printf("[Scheduler] stale-check: failed to mark execution %s failed: %v\n", exec.ID, err)
+			continue
+		}
+		fmt.Printf("[Scheduler] marked orphaned execution %s (workflow %s) as failed\n", exec.ID, exec.WorkflowID)
+	}
+}
+
+// isStaleExecution은 execution이 살아있는 에이전트 집합에 없으면 stale로 판정한다.
+// (순수 함수 — DB 없이 판정 로직을 테스트할 수 있도록 분리)
+func isStaleExecution(executionID string, liveExecs map[string]struct{}) bool {
+	_, live := liveExecs[executionID]
+	return !live
 }
 
 // Stop 스케줄러 중지

@@ -75,8 +75,8 @@ worker의 정체는 단순 "실행 데몬"이 아니다:
 |---|---|---|
 | cluster별 worker 그룹핑 | ✅ 있음 | `cluster_id` register/heartbeat, `cluster:<id>:execute` 채널 pub/sub |
 | 그룹 내 중복 실행 방지 | ✅ 있음 | SETNX claim (`agent.go:627`) |
-| worker가 자기 cluster에 Job 생성하는 능력 | ⚠️ **데드코드** | `pipeline-worker/internal/k8s/job_manager.go` (in-cluster client, 호출처 0) |
-| cluster당 대표 1대 선출 | ⚠️ **데드코드** | `pipeline-worker/internal/leader/election.go` (K8s Lease, 호출처 0) |
+| worker가 자기 cluster에 Job 생성하는 능력 | ✅ **활성화됨** | `job_manager.go`를 `delegateBatchJob`이 호출(구 데드코드) |
+| cluster당 대표 1대 선출 | ❌ **삭제됨** | `leader/election.go` 제거(D1: claim 단일화, dead code 정리) |
 | Cluster 메타데이터 모델 | ✅ 있음(위임에 적합) | `models.go` Cluster (kubeconfig 미보관) |
 | Job 결과 콜백 수신 | ✅ 있음 | `workflow.go` HandleJobResultCallback (`/internal/job-result`) |
 | **실제 살아있는 Job 생성 주체** | ❌ **의도와 반대** | control-plane 직접 생성 (`kubernetes_job_service.go:248`), `workflow.ClusterID` 무시 |
@@ -86,7 +86,7 @@ worker의 정체는 단순 "실행 데몬"이 아니다:
 ### 구현 gap 목록 (§6 결정 반영) — 진행 현황
 
 - **G1 ✅**: control-plane이 직접 K8s Job 생성하던 분기 제거. realtime·batch 모두 대상 cluster 채널(`cluster:<id>:execute`)로 실행 명령 발행. batch 표시는 `WorkflowConfig.Type`, 리소스 스펙은 `cmd.JobConfig`로 전달. (`workflow.go` StartWorkflow, `agent.go` 추가 필드)
-- **G2 ✅**: worker가 batch 명령 수신 시 SETNX claim 후 `delegateBatchJob`이 `job_manager.go`(in-cluster client)로 자기 cluster에 Job 생성. realtime은 기존 in-process `executeGroup`. leader election 대신 claim 단일화(D1). (`agent.go` handleGroupExecution 분기 + delegateBatchJob + getJobManager)
+- **G2 ✅**: worker가 batch 명령 수신 시 SETNX claim 후 `delegateBatchJob`이 `job_manager.go`(in-cluster client)로 자기 cluster에 Job 생성. realtime은 기존 in-process `executeGroup`. leader election 대신 claim 단일화(D1) — **`leader/election.go` 삭제**. 사용되지 않던 `k8s/deployment_manager.go`도 함께 제거(D6로 자기 스케일 안 하므로 불필요).
 - **G3 ✅**: Job Pod(pipeline-batch-job)가 `CALLBACK_URL`(`/internal/job-result`)로 결과 콜백 — 기존 `HandleJobResultCallback` 재사용. worker는 Job 생성만 하고 결과 감시는 안 함(control-plane이 콜백 수신).
 - **G4 ✅**: control-plane WorkflowHandler에서 `startBatchJob`/`jobService`/Watch 제거(D2). **`KubernetesJobService`(파일 전체) 삭제** — `ClusterHandler.ScaleAgents`/`UpdateAgentConfig`도 K8s 직접 호출 제거하고 DB의 `DesiredAgents`(의도)만 기록. **control-plane은 이제 K8s 클라이언트를 전혀 갖지 않는다.** (실제 replica는 배포 차트가 반영 — [D6](#) 아래.)
 - **G5 ✅**: RBAC — cluster-wide `pod-log-reader` ClusterRole(jobs/deployments/pods 포함)을 제거하고, 네임스페이스 한정 `worker-job-manager` **Role**(jobs create + pods/log read)로 교체. 최소 권한. control-plane 몫의 deployment-scale 권한 삭제.

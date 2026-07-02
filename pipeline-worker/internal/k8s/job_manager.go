@@ -80,11 +80,11 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 	}
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":       "conduix-worker",
-		"app.kubernetes.io/component":  "batch-job",
-		labelManagedByKey:              managedByValue,
-		"conduix.io/workflow-id":       sanitizeLabel(spec.WorkflowID),
-		"conduix.io/execution-id":      sanitizeLabel(spec.ExecutionID),
+		"app.kubernetes.io/name":      "conduix-worker",
+		"app.kubernetes.io/component": "batch-job",
+		labelManagedByKey:             managedByValue,
+		"conduix.io/workflow-id":      sanitizeLabel(spec.WorkflowID),
+		"conduix.io/execution-id":     sanitizeLabel(spec.ExecutionID),
 	}
 
 	callbackURL := fmt.Sprintf("%s/api/v1/internal/job-result", m.controlPlaneURL)
@@ -191,10 +191,10 @@ func (m *JobManager) CreateCronJob(ctx context.Context, spec *CronJobSpec) (*bat
 	}
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":       "conduix-worker",
-		"app.kubernetes.io/component":  "cron-job",
-		labelManagedByKey:              managedByValue,
-		"conduix.io/workflow-id":       sanitizeLabel(spec.WorkflowID),
+		"app.kubernetes.io/name":      "conduix-worker",
+		"app.kubernetes.io/component": "cron-job",
+		labelManagedByKey:             managedByValue,
+		"conduix.io/workflow-id":      sanitizeLabel(spec.WorkflowID),
 	}
 
 	callbackURL := fmt.Sprintf("%s/api/v1/internal/job-result", m.controlPlaneURL)

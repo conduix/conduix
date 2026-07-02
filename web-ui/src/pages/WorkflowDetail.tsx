@@ -195,12 +195,20 @@ interface MonitoringStage {
   samples?: MonitoringSample[]
 }
 
+interface MonitoringStatistics {
+  records_collected: number
+  records_processed: number
+  collection_errors: number
+  processing_errors: number
+}
+
 interface MonitoringPipeline {
   pipeline_id: string
   pipeline_name?: string
   status: string
   checkpoints?: MonitoringCheckpoint[]
   stages?: MonitoringStage[]
+  statistics?: MonitoringStatistics
 }
 
 interface MonitoringResponse {
@@ -450,6 +458,44 @@ export default function WorkflowDetailPage() {
     } catch (error: unknown) {
       const err = error as { response?: { data?: { error?: { message?: string } } } }
       showError(err.response?.data?.error?.message || t('workflow.stopError'))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handlePauseWorkflow = async () => {
+    if (!effectiveId) return
+    try {
+      setActionLoading(true)
+      const res = await api.pauseWorkflow(effectiveId)
+      if (res.success) {
+        showSuccess(t('workflow.pauseSuccess'))
+        fetchWorkflowData()
+      } else {
+        showError(res.error?.message || t('workflow.pauseError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.pauseError'))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleResumeWorkflow = async () => {
+    if (!effectiveId) return
+    try {
+      setActionLoading(true)
+      const res = await api.resumeWorkflow(effectiveId)
+      if (res.success) {
+        showSuccess(t('workflow.resumeSuccess'))
+        fetchWorkflowData()
+      } else {
+        showError(res.error?.message || t('workflow.resumeError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.resumeError'))
     } finally {
       setActionLoading(false)
     }
@@ -823,15 +869,46 @@ export default function WorkflowDetailPage() {
             <Chip label={statusConfig.text} color={statusConfig.color} size="small" />
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
-            {workflow.status === 'running' ? (
-              <Button
-                startIcon={<PauseCircleIcon />}
-                onClick={handleStopWorkflow}
-                disabled={actionLoading}
-              >
-                {actionLoading ? <CircularProgress size={20} /> : t('workflow.stop')}
-              </Button>
-            ) : (
+            {workflow.status === 'running' && (
+              <>
+                <Button
+                  startIcon={<PauseCircleIcon />}
+                  onClick={handlePauseWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.pause')}
+                </Button>
+                <Button
+                  color="error"
+                  startIcon={<StopIcon />}
+                  onClick={handleStopWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.stop')}
+                </Button>
+              </>
+            )}
+            {workflow.status === 'paused' && (
+              <>
+                <Button
+                  variant="contained"
+                  startIcon={<PlayCircleIcon />}
+                  onClick={handleResumeWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.resume')}
+                </Button>
+                <Button
+                  color="error"
+                  startIcon={<StopIcon />}
+                  onClick={handleStopWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.stop')}
+                </Button>
+              </>
+            )}
+            {workflow.status !== 'running' && workflow.status !== 'paused' && (
               <Button
                 variant="contained"
                 startIcon={<PlayCircleIcon />}
@@ -1144,6 +1221,31 @@ export default function WorkflowDetailPage() {
                         titleTypographyProps={{ variant: 'subtitle1' }}
                       />
                       <CardContent>
+                        {/* Throughput 통계 */}
+                        {pipeline.statistics && (
+                          <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              label={`${t('workflow.recordsCollected')}: ${pipeline.statistics.records_collected.toLocaleString()}`}
+                            />
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              color="success"
+                              label={`${t('workflow.recordsProcessed')}: ${pipeline.statistics.records_processed.toLocaleString()}`}
+                            />
+                            {(pipeline.statistics.collection_errors > 0 || pipeline.statistics.processing_errors > 0) && (
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                label={`${t('workflow.errors')}: ${(pipeline.statistics.collection_errors + pipeline.statistics.processing_errors).toLocaleString()}`}
+                              />
+                            )}
+                          </Box>
+                        )}
+
                         {/* Source Checkpoints */}
                         {(pipeline.checkpoints?.length ?? 0) > 0 && (
                           <Box sx={{ mb: 2 }}>

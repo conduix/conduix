@@ -559,6 +559,29 @@ class ApiService {
     return response.data
   }
 
+  async pauseWorkflow(id: string) {
+    const response = await this.client.post(`/workflows/${id}/pause`)
+    return response.data
+  }
+
+  async resumeWorkflow(id: string) {
+    const response = await this.client.post(`/workflows/${id}/resume`)
+    return response.data
+  }
+
+  async exportWorkflowYAML(id: string): Promise<string> {
+    const response = await this.client.get(`/workflows/${id}/yaml`, { responseType: 'text' })
+    return response.data
+  }
+
+  async importWorkflowYAML(yaml: string, projectId?: string) {
+    const url = projectId ? `/workflows/import?project_id=${encodeURIComponent(projectId)}` : '/workflows/import'
+    const response = await this.client.post(url, yaml, {
+      headers: { 'Content-Type': 'application/x-yaml' },
+    })
+    return response.data
+  }
+
   async getWorkflowExecutions(id: string) {
     const response = await this.client.get(`/workflows/${id}/executions`)
     return response.data

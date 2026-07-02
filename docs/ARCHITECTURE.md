@@ -30,8 +30,10 @@
 ```mermaid
 graph TD
     webui["web-ui (React)"] -->|REST| cp["control-plane<br/>(API·스케줄러·pub/sub)"]
-    cp -->|Redis pub/sub| agent["pipeline-agent"]
+    cp -->|"명령: Redis pub/sub<br/>(폴백 REST 폴링)"| agent["pipeline-agent"]
+    agent -->|"REST: 등록·하트비트·결과보고"| cp
     cp -->|K8s Job 생성| runner["pipeline-runner<br/>(batch 바이너리)"]
+    runner -->|"REST: job-result 콜백"| cp
     agent --> core["pipeline-core<br/>(GroupExecutor)"]
     runner --> core
     core --> sdk["plugin-sdk<br/>(NativeStage)"]
@@ -77,7 +79,16 @@ flowchart LR
 
 ## 5. 분산 · 통신
 
-- **통신**: control-plane → Redis Pub/Sub → agent (REST 폴백). ResilientClient(재연결·서킷브레이커·로컬캐시).
+**통신은 하이브리드** — 방향에 따라 채널이 다르다:
+
+| 방향 | 채널 | 용도 |
+|------|------|------|
+| control-plane → agent | **Redis Pub/Sub** (주), REST 폴링(폴백) | 워크플로우 실행·제어 명령(start/stop/pause/resume/throttle) |
+| agent → control-plane | **REST API** | 등록(`/agents/register`), 하트비트(`/agents/:id/heartbeat`), 실행 결과(`/workflows/:id/executions/:eid/result`) |
+| K8s Job(runner) → control-plane | **REST API** | 배치 결과 콜백(`/internal/job-result`) |
+
+- **모드 폴백**: agent는 `ModeRedis → ModeHybrid → ModeREST`. Redis 불가 시 명령을 `GET /agents/:id/commands`로 폴링. ResilientClient(재연결·서킷브레이커·로컬캐시).
+- Redis Pub/Sub은 명령 fan-out에만 쓰고, 결과·상태는 REST로 DB에 직접 반영(진실원 = control-plane DB).
 - **배치 단위**: 워크플로우 → 클러스터 채널(`cluster:<id>:execute`). **여러 에이전트 중 하나가 SETNX claim**으로 단독 실행 (중복 실행 방지).
 - **파이프라인 = 서버-로컬**: stage 간 레코드가 인프로세스로 흐름(네트워크 홉 없음). 수평 확장은 Kafka 컨슈머 그룹(파티션 분산) 또는 워크플로우 배치로.
 - **고아 실행 감지**: 담당 에이전트 크래시 시 scheduler가 running 실행을 failed로 전이(조용한 유실 방지).

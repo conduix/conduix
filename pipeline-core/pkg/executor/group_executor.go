@@ -18,6 +18,7 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
 	"github.com/conduix/conduix/pipeline-core/pkg/output"
 	"github.com/conduix/conduix/pipeline-core/pkg/source"
+	"github.com/conduix/conduix/pipeline-core/pkg/stream"
 	"github.com/conduix/conduix/pipeline-core/pkg/validator"
 	"github.com/conduix/conduix/shared/types"
 )
@@ -32,6 +33,12 @@ type GroupExecutor struct {
 	cancelFunc      context.CancelFunc
 	resultCh        chan *types.PipelineExecutionResult
 	errorCh         chan error
+
+	// 일시정지 게이트: paused가 true인 동안 처리 루프는 waitIfPaused에서 대기한다.
+	// resumeCh는 Resume/Stop 시 close되어 대기 중인 루프를 깨운다(재개마다 새 채널로 교체).
+	pauseMu  sync.Mutex
+	paused   bool
+	resumeCh chan struct{}
 
 	// Checkpoint 관련
 	checkpointClient *checkpoint.Client
@@ -49,6 +56,13 @@ type GroupExecutor struct {
 	parentToChilds map[string][]link.PipelineLink
 	childToParents map[string][]link.PipelineLink
 	linkMu         sync.RWMutex
+
+	// Stage 레지스트리 브리지: applyStage가 내장 구현하지 않는 타입(throttle, dedupe,
+	// cast, encrypt, validate, route, native plugin 등)을 stream 레지스트리로 위임한다.
+	// 파이프라인 실행당 stage 인스턴스를 1회 생성해 재사용하고, 실행 종료 시 Close한다.
+	// key: "<pipelineID>\x00<stageName>\x00<stageType>"
+	streamStages   map[string]stream.Stage
+	streamStagesMu sync.Mutex
 }
 
 // GroupExecutorOption GroupExecutor 옵션
@@ -81,8 +95,8 @@ func NewGroupExecutor(group *types.PipelineGroup, opts ...GroupExecutorOption) *
 		statsCollectors: make(map[string]*StatsCollector),
 		parentToChilds:  make(map[string][]link.PipelineLink),
 		childToParents:  make(map[string][]link.PipelineLink),
+		streamStages:    make(map[string]stream.Stage),
 	}
-
 	for _, opt := range opts {
 		opt(e)
 	}
@@ -252,7 +266,7 @@ func (e *GroupExecutor) runSequential(ctx context.Context) error {
 		default:
 		}
 
-		result, err := e.runPipeline(ctx, pipeline)
+		result, err := e.runPipelineWithRetry(ctx, pipeline)
 		if result != nil {
 			e.mu.Lock()
 			e.execution.PipelineResults = append(e.execution.PipelineResults, *result)
@@ -262,15 +276,10 @@ func (e *GroupExecutor) runSequential(ctx context.Context) error {
 		}
 
 		if err != nil {
-			// FailurePolicy에 따라 처리
+			// FailurePolicy에 따라 처리 (retry는 runPipelineWithRetry에서 이미 소진됨)
 			if e.group.FailurePolicy != nil {
 				switch e.group.FailurePolicy.Action {
-				case types.FailureActionContinue:
-					continue
-				case types.FailureActionSkip:
-					continue
-				case types.FailureActionRetry:
-					// TODO: 재시도 로직
+				case types.FailureActionContinue, types.FailureActionSkip, types.FailureActionRetry:
 					continue
 				default:
 					return fmt.Errorf("pipeline %s failed: %w", pipeline.Name, err)
@@ -281,6 +290,48 @@ func (e *GroupExecutor) runSequential(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// runPipelineWithRetry는 FailurePolicy.Action이 retry일 때 MaxRetries만큼 재시도한다.
+// retry가 아니면 1회만 실행한다. RetryDelay(예: "5s","1m")를 재시도 간 대기로 쓴다.
+// ctx가 취소되면 즉시 중단한다.
+func (e *GroupExecutor) runPipelineWithRetry(ctx context.Context, pipeline types.GroupedPipeline) (*types.PipelineExecutionResult, error) {
+	fp := e.group.FailurePolicy
+	maxAttempts := 1
+	var retryDelay time.Duration
+	if fp != nil && fp.Action == types.FailureActionRetry {
+		if fp.MaxRetries > 0 {
+			maxAttempts = fp.MaxRetries + 1 // 최초 1회 + 재시도 N회
+		}
+		if fp.RetryDelay != "" {
+			if d, perr := time.ParseDuration(fp.RetryDelay); perr == nil {
+				retryDelay = d
+			}
+		}
+	}
+
+	var result *types.PipelineExecutionResult
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result, err = e.runPipeline(ctx, pipeline)
+		if err == nil {
+			return result, nil
+		}
+		if attempt < maxAttempts {
+			fmt.Printf("[runSequential] pipeline %s failed (attempt %d/%d), retrying: %v\n",
+				pipeline.Name, attempt, maxAttempts, err)
+			if retryDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return result, ctx.Err()
+				case <-time.After(retryDelay):
+				}
+			} else if ctx.Err() != nil {
+				return result, ctx.Err()
+			}
+		}
+	}
+	return result, err
 }
 
 // runDAG DAG 기반 의존성 실행
@@ -521,8 +572,10 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}()
 
-	// outputsWithSinks를 사용하여 PreStages 처리
-	_ = outputsWithSinks // TODO: 레코드 처리 시 PreStages 적용
+	// stream 레지스트리로 위임된 Stage 인스턴스 정리 (리소스 보유 stage: enrich/aggregate 등)
+	defer e.closeStreamStages()
+
+	// outputsWithSinks는 아래 배치/레코드 처리 루프에서 Output별 PreStages 적용에 사용된다.
 
 	// 링크 기반 동적 Kafka Input 주입 (자식 파이프라인인 경우)
 	inputConfig := e.injectKafkaInputForChild(&pipeline)
@@ -602,7 +655,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 		fmt.Printf("[runPipeline] Using batch mode for pipeline %s (output_mode=%s, size=%d, workers=%d)\n",
 			pipeline.Name, outputMode, pipeline.Batch.Size, pipeline.Batch.Workers)
-		return e.runPipelineBatch(ctx, pipeline, records, errs, outputSinks,
+		return e.runPipelineBatch(ctx, pipeline, records, errs, outputsWithSinks,
 			statsCollector, sampleBuffer, sourceValidator, saveCheckpoints)
 	}
 
@@ -647,6 +700,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				saveCheckpoints() // 완료 시 체크포인트 저장
 				return result, nil
 			}
+
+			e.waitIfPaused(ctx) // 일시정지 중이면 재개/중지될 때까지 대기
 
 			// 수집량 카운트
 			statsCollector.RecordCollected()
@@ -1030,8 +1085,66 @@ func (e *GroupExecutor) applyStage(data map[string]any, stage types.Stage) (map[
 		return data, nil
 
 	default:
-		// 기타 타입은 통과
+		// 내장 구현이 없는 타입(throttle, dedupe, cast, encrypt, validate, route, timestamp,
+		// aggregate, enrich, native plugin 등)은 stream 레지스트리로 위임한다.
+		return e.applyStreamStage(stage, data)
+	}
+}
+
+// applyStreamStage는 stream 레지스트리의 Stage로 데이터를 변환한다.
+// 등록되지 않은(=아직 미구현) 타입은 안전하게 통과시켜 하위호환을 유지한다.
+// stage 인스턴스는 실행당 1회 생성되어 재사용되며, Close는 closeStreamStages에서 처리한다.
+func (e *GroupExecutor) applyStreamStage(stage types.Stage, data map[string]any) (map[string]any, error) {
+	s, err := e.getOrCreateStreamStage(stage)
+	if err != nil {
+		// 알 수 없는 타입: 통과(레거시 default 동작 보존)
 		return data, nil
+	}
+
+	result, err := s.Process(context.Background(), &stream.Record{Data: data})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		// 필터링됨
+		return nil, nil
+	}
+	return result.Data, nil
+}
+
+// getOrCreateStreamStage는 stage에 대한 stream.Stage 인스턴스를 캐시에서 얻거나 생성한다.
+// 동시 호출(배치 워커) 안전. 생성 실패(미등록 타입)는 에러로 반환한다.
+func (e *GroupExecutor) getOrCreateStreamStage(stage types.Stage) (stream.Stage, error) {
+	key := stage.Type + "\x00" + stage.Name
+
+	e.streamStagesMu.Lock()
+	defer e.streamStagesMu.Unlock()
+
+	if s, ok := e.streamStages[key]; ok {
+		return s, nil
+	}
+
+	s, err := stream.NewStage(stream.StageConfig{
+		Name:   stage.Name,
+		Type:   stage.Type,
+		Config: stage.Config,
+	})
+	if err != nil {
+		return nil, err
+	}
+	e.streamStages[key] = s
+	return s, nil
+}
+
+// closeStreamStages는 실행 중 생성된 모든 stream.Stage를 닫는다(리소스 보유 stage 정리).
+func (e *GroupExecutor) closeStreamStages() {
+	e.streamStagesMu.Lock()
+	defer e.streamStagesMu.Unlock()
+	for key, s := range e.streamStages {
+		if err := s.Close(); err != nil {
+			fmt.Printf("[stream-stage] close error (%s): %v\n", key, err)
+		}
+		delete(e.streamStages, key)
 	}
 }
 
@@ -1251,34 +1364,74 @@ type OutputWithSink struct {
 // Stop 그룹 실행 중지
 func (e *GroupExecutor) Stop() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
 	e.status = types.PipelineGroupStatusStopped
+	e.mu.Unlock()
+
+	// 일시정지 대기 중인 루프를 깨워 취소를 관측하게 한다(paused 상태로 멈춘 실행도 중지되도록).
+	e.clearPause()
 	return nil
 }
 
-// Pause 그룹 실행 일시정지
+// Pause 그룹 실행 일시정지. 처리 루프는 다음 waitIfPaused 지점에서 블록된다.
 func (e *GroupExecutor) Pause() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.status = types.PipelineGroupStatusPaused
-	// TODO: 실제 일시정지 로직
+	e.mu.Unlock()
+
+	e.pauseMu.Lock()
+	if !e.paused {
+		e.paused = true
+		e.resumeCh = make(chan struct{})
+	}
+	e.pauseMu.Unlock()
 	return nil
 }
 
 // Resume 그룹 실행 재개
 func (e *GroupExecutor) Resume() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.status != types.PipelineGroupStatusPaused {
+		e.mu.Unlock()
 		return fmt.Errorf("group is not paused")
 	}
 	e.status = types.PipelineGroupStatusRunning
-	// TODO: 실제 재개 로직
+	e.mu.Unlock()
+
+	e.clearPause()
 	return nil
+}
+
+// clearPause는 일시정지를 해제하고 대기 중인 루프를 깨운다(멱등).
+func (e *GroupExecutor) clearPause() {
+	e.pauseMu.Lock()
+	if e.paused {
+		e.paused = false
+		if e.resumeCh != nil {
+			close(e.resumeCh)
+			e.resumeCh = nil
+		}
+	}
+	e.pauseMu.Unlock()
+}
+
+// waitIfPaused는 일시정지 상태인 동안 블록한다.
+// Resume/Stop이 호출되거나 ctx가 취소되면 반환한다(취소 시 처리 루프가 종료를 관측하도록).
+func (e *GroupExecutor) waitIfPaused(ctx context.Context) {
+	e.pauseMu.Lock()
+	if !e.paused {
+		e.pauseMu.Unlock()
+		return
+	}
+	ch := e.resumeCh
+	e.pauseMu.Unlock()
+
+	select {
+	case <-ch:
+	case <-ctx.Done():
+	}
 }
 
 // Status 현재 상태 반환
@@ -1549,12 +1702,55 @@ func (e *GroupExecutor) injectKafkaInputForChild(pipeline *types.GroupedPipeline
 // runPipelineBatch 배치 처리 모드로 파이프라인 실행
 // Stage는 항상 병렬 처리, Output은 output_mode에 따라 bulk 또는 individual 처리
 // 구조: 소스 → [N개 수집] → [병렬 Stage] → [결과 모음] → [Output bulk/individual]
+// applyPreStages는 한 Output의 PreStages를 배치 레코드에 적용한다.
+// PreStage가 에러를 내거나 nil을 반환하면 해당 레코드는 이 Output 대상에서 제외된다.
+// PreStages가 없으면 입력을 그대로 반환한다(공통 Stage 결과 공유이므로 방어적으로 복사).
+func (e *GroupExecutor) applyPreStages(
+	ows OutputWithSink,
+	transformed []map[string]any,
+	statsCollector *StatsCollector,
+	sampleBuffer *SampleBuffer,
+) []map[string]any {
+	if len(ows.PreStages) == 0 {
+		return transformed
+	}
+
+	out := make([]map[string]any, 0, len(transformed))
+	for _, data := range transformed {
+		outputData := data
+		dropped := false
+		for _, preStage := range ows.PreStages {
+			label := fmt.Sprintf("%s.%s", ows.Output.Name, preStage.Name)
+			statsCollector.RecordTransformInput(label, preStage.Type)
+
+			result, err := e.applyStage(outputData, preStage)
+			if err != nil {
+				statsCollector.RecordTransformError(label)
+				dropped = true
+				break
+			}
+			if result == nil {
+				dropped = true
+				break
+			}
+
+			statsCollector.RecordTransformOutput(label)
+			sampleBuffer.AddSample(label, result)
+			outputData = result
+		}
+		if !dropped {
+			out = append(out, outputData)
+		}
+	}
+	return out
+}
+
 func (e *GroupExecutor) runPipelineBatch(
 	ctx context.Context,
 	pipeline types.GroupedPipeline,
 	records <-chan source.Record,
 	errs <-chan error,
-	outputSinks map[string]output.Output,
+	outputsWithSinks []OutputWithSink,
 	statsCollector *StatsCollector,
 	sampleBuffer *SampleBuffer,
 	sourceValidator *validator.SchemaValidator,
@@ -1699,26 +1895,35 @@ func (e *GroupExecutor) runPipelineBatch(
 
 		fmt.Printf("[runPipelineBatch] %d records passed transform, sending to outputs (%s mode)\n", len(transformed), outputMode)
 
-		// 각 Sink에 전송
-		for stageName, s := range outputSinks {
+		// 각 Output에 대해 Output별 PreStages 적용 후 전송
+		for _, ows := range outputsWithSinks {
+			stageName := ows.Output.Name
+			s := ows.Sink
+
+			// Output별 PreStages를 배치에 적용 (nil 반환 시 해당 레코드는 이 Output에서 제외)
+			outputData := e.applyPreStages(ows, transformed, statsCollector, sampleBuffer)
+			if len(outputData) == 0 {
+				continue
+			}
+
 			if outputMode == types.OutputModeBulk {
 				// Bulk 모드: BatchSink 인터페이스 사용
 				if batchSink, ok := s.(output.BatchOutput); ok && batchSink.SupportsBatch() {
-					batchRecords := make([]source.Record, len(transformed))
-					for i, data := range transformed {
+					batchRecords := make([]source.Record, len(outputData))
+					for i, data := range outputData {
 						batchRecords[i] = source.Record{Data: data}
 					}
 					if err := batchSink.WriteBatch(ctx, batchRecords); err != nil {
 						statsCollector.RecordProcessingError()
 						addSinkError(fmt.Sprintf("[%s] batch write error: %v", stageName, err))
 					} else {
-						for range transformed {
+						for range outputData {
 							statsCollector.RecordProcessed()
 						}
 					}
 				} else {
 					// Bulk 미지원 Sink는 개별 처리로 fallback
-					for _, data := range transformed {
+					for _, data := range outputData {
 						if err := e.sendToSink(ctx, data, s); err != nil {
 							statsCollector.RecordProcessingError()
 							addSinkError(fmt.Sprintf("[%s] %v", stageName, err))
@@ -1729,7 +1934,7 @@ func (e *GroupExecutor) runPipelineBatch(
 				}
 			} else {
 				// Individual 모드: 1건씩 개별 전송
-				for _, data := range transformed {
+				for _, data := range outputData {
 					if err := e.sendToSink(ctx, data, s); err != nil {
 						statsCollector.RecordProcessingError()
 						addSinkError(fmt.Sprintf("[%s] %v", stageName, err))
@@ -1795,6 +2000,8 @@ func (e *GroupExecutor) runPipelineBatch(
 				saveCheckpoints()
 				return result, nil
 			}
+
+			e.waitIfPaused(ctx) // 일시정지 중이면 재개/중지될 때까지 대기
 
 			statsCollector.RecordCollected()
 			batch = append(batch, record)

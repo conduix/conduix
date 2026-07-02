@@ -188,3 +188,53 @@ func TestThrottleStage_FallbackStrategy(t *testing.T) {
 		t.Fatal("expected record to pass")
 	}
 }
+
+// SetRate로 처리율을 올리면 이전 rate에서 드롭되던 레코드가 통과해야 한다.
+func TestThrottleStage_SetRate(t *testing.T) {
+	stage, err := NewThrottleStage("throttle-setrate", map[string]any{
+		"rate":          1,
+		"interval":      "second",
+		"burst":         1,
+		"drop_on_limit": true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create stage: %v", err)
+	}
+	ctx := context.Background()
+
+	// burst=1 소진
+	if r, _ := stage.Process(ctx, &Record{Data: map[string]any{}}); r == nil {
+		t.Fatal("first record should pass (burst)")
+	}
+	if r, _ := stage.Process(ctx, &Record{Data: map[string]any{}}); r != nil {
+		t.Fatal("second record should drop at rate=1")
+	}
+
+	// 런타임에 rate/burst 상향 (1000/s → 토큰이 ~1ms마다 1개씩 충전)
+	if err := stage.SetRate(1000, 1000); err != nil {
+		t.Fatalf("SetRate failed: %v", err)
+	}
+
+	// 토큰 버킷이 상향된 rate로 재충전되므로, 잠시 후 다시 통과해야 한다.
+	// (SetBurst는 상한만 올리고 토큰은 rate에 따라 시간이 지나며 충전됨 - 정상 동작)
+	time.Sleep(20 * time.Millisecond)
+	passed := 0
+	for range 10 {
+		if r, _ := stage.Process(ctx, &Record{Data: map[string]any{}}); r != nil {
+			passed++
+		}
+	}
+	if passed == 0 {
+		t.Errorf("after SetRate(1000) + refill, expected records to pass again, got 0")
+	}
+}
+
+func TestThrottleStage_SetRate_Invalid(t *testing.T) {
+	stage, err := NewThrottleStage("throttle-setrate-invalid", map[string]any{"rate": 10})
+	if err != nil {
+		t.Fatalf("failed to create stage: %v", err)
+	}
+	if err := stage.SetRate(0, 0); err == nil {
+		t.Error("expected error for rate <= 0")
+	}
+}

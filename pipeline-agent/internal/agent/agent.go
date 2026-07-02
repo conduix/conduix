@@ -13,10 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/conduix/conduix/pipeline-core/pkg/config"
 	"github.com/conduix/conduix/pipeline-core/pkg/executor"
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
-	"github.com/conduix/conduix/pipeline-core/pkg/pipeline"
 	redisclient "github.com/conduix/conduix/shared/redis"
 	"github.com/conduix/conduix/shared/types"
 )
@@ -44,7 +42,6 @@ type Agent struct {
 	Hostname        string
 	Status          types.AgentStatus
 	config          *Config
-	pipelines       map[string]*PipelineInstance
 	runningExecs    map[string]*RunningExecution // executionID -> RunningExecution
 	mu              sync.RWMutex
 	execMu          sync.RWMutex
@@ -73,16 +70,6 @@ type Config struct {
 	EnableRESTFallback  bool          `json:"enable_rest_fallback"`  // REST 폴백 활성화
 }
 
-// PipelineInstance 파이프라인 인스턴스
-type PipelineInstance struct {
-	ID        string
-	Config    *config.PipelineConfig
-	Runner    *pipeline.Runner
-	Status    types.PipelineStatus
-	StartTime time.Time
-	StopTime  time.Time
-}
-
 // NewAgent 새 에이전트 생성
 func NewAgent(cfg *Config) (*Agent, error) {
 	hostname, _ := os.Hostname()
@@ -99,7 +86,6 @@ func NewAgent(cfg *Config) (*Agent, error) {
 		Hostname:        hostname,
 		Status:          types.AgentStatusOffline,
 		config:          cfg,
-		pipelines:       make(map[string]*PipelineInstance),
 		runningExecs:    make(map[string]*RunningExecution),
 		ctx:             ctx,
 		cancel:          cancel,
@@ -225,14 +211,20 @@ func (a *Agent) registerToControlPlane() error {
 func (a *Agent) Stop() error {
 	a.cancel()
 
-	// 모든 파이프라인 중지
-	a.mu.Lock()
-	for id, instance := range a.pipelines {
-		if instance.Runner != nil {
-			_ = instance.Runner.Stop()
-		}
-		delete(a.pipelines, id)
+	// 실행 중인 워크플로우(그룹) 중지
+	a.execMu.RLock()
+	execs := make([]*RunningExecution, 0, len(a.runningExecs))
+	for _, exec := range a.runningExecs {
+		execs = append(execs, exec)
 	}
+	a.execMu.RUnlock()
+	for _, exec := range execs {
+		if exec.GroupExecutor != nil {
+			_ = exec.GroupExecutor.Stop()
+		}
+	}
+
+	a.mu.Lock()
 	a.Status = types.AgentStatusOffline
 	a.mu.Unlock()
 
@@ -240,124 +232,51 @@ func (a *Agent) Stop() error {
 	return nil
 }
 
-// StartPipeline 파이프라인 시작
-func (a *Agent) StartPipeline(pipelineID string, cfg *config.PipelineConfig) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+// findGroupExecutor는 executionID 또는 workflowID로 실행 중인 GroupExecutor를 찾는다.
+// executionID가 우선하며, 비어 있으면 workflowID로 매칭한다.
+func (a *Agent) findGroupExecutor(executionID, workflowID string) *executor.GroupExecutor {
+	a.execMu.RLock()
+	defer a.execMu.RUnlock()
 
-	if _, exists := a.pipelines[pipelineID]; exists {
-		return fmt.Errorf("pipeline %s is already running", pipelineID)
+	if executionID != "" {
+		if exec, ok := a.runningExecs[executionID]; ok {
+			return exec.GroupExecutor
+		}
+		return nil
 	}
-
-	runner, err := pipeline.NewRunner(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create runner: %w", err)
-	}
-
-	if err := runner.Start(); err != nil {
-		return fmt.Errorf("failed to start pipeline: %w", err)
-	}
-
-	a.pipelines[pipelineID] = &PipelineInstance{
-		ID:        pipelineID,
-		Config:    cfg,
-		Runner:    runner,
-		Status:    types.PipelineStatusRunning,
-		StartTime: time.Now(),
-	}
-
-	fmt.Printf("Pipeline started: %s\n", pipelineID)
-	return nil
-}
-
-// StopPipeline 파이프라인 중지
-func (a *Agent) StopPipeline(pipelineID string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	instance, exists := a.pipelines[pipelineID]
-	if !exists {
-		return fmt.Errorf("pipeline %s not found", pipelineID)
-	}
-
-	if instance.Runner != nil {
-		if err := instance.Runner.Stop(); err != nil {
-			return fmt.Errorf("failed to stop pipeline: %w", err)
+	for _, exec := range a.runningExecs {
+		if exec.WorkflowID == workflowID {
+			return exec.GroupExecutor
 		}
 	}
-
-	instance.Status = types.PipelineStatusStopped
-	instance.StopTime = time.Now()
-	delete(a.pipelines, pipelineID)
-
-	fmt.Printf("Pipeline stopped: %s\n", pipelineID)
 	return nil
 }
 
-// PausePipeline 파이프라인 일시중지
-func (a *Agent) PausePipeline(pipelineID string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	instance, exists := a.pipelines[pipelineID]
-	if !exists {
-		return fmt.Errorf("pipeline %s not found", pipelineID)
+// StopGroupExecution 워크플로우(그룹) 실행을 중지한다.
+func (a *Agent) StopGroupExecution(executionID, workflowID string) error {
+	ge := a.findGroupExecutor(executionID, workflowID)
+	if ge == nil {
+		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
 	}
-
-	if instance.Runner != nil {
-		if err := instance.Runner.Pause(); err != nil {
-			return fmt.Errorf("failed to pause pipeline: %w", err)
-		}
-	}
-
-	instance.Status = types.PipelineStatusPaused
-	return nil
+	return ge.Stop()
 }
 
-// ResumePipeline 파이프라인 재개
-func (a *Agent) ResumePipeline(pipelineID string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	instance, exists := a.pipelines[pipelineID]
-	if !exists {
-		return fmt.Errorf("pipeline %s not found", pipelineID)
+// PauseGroupExecution 워크플로우(그룹) 실행을 일시정지한다.
+func (a *Agent) PauseGroupExecution(executionID, workflowID string) error {
+	ge := a.findGroupExecutor(executionID, workflowID)
+	if ge == nil {
+		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
 	}
-
-	if instance.Runner != nil {
-		if err := instance.Runner.Resume(); err != nil {
-			return fmt.Errorf("failed to resume pipeline: %w", err)
-		}
-	}
-
-	instance.Status = types.PipelineStatusRunning
-	return nil
+	return ge.Pause()
 }
 
-// GetPipelineStatus 파이프라인 상태 조회
-func (a *Agent) GetPipelineStatus(pipelineID string) (*PipelineInstance, error) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	instance, exists := a.pipelines[pipelineID]
-	if !exists {
-		return nil, fmt.Errorf("pipeline %s not found", pipelineID)
+// ResumeGroupExecution 워크플로우(그룹) 실행을 재개한다.
+func (a *Agent) ResumeGroupExecution(executionID, workflowID string) error {
+	ge := a.findGroupExecutor(executionID, workflowID)
+	if ge == nil {
+		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
 	}
-
-	return instance, nil
-}
-
-// ListPipelines 파이프라인 목록 조회
-func (a *Agent) ListPipelines() []*PipelineInstance {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	pipelines := make([]*PipelineInstance, 0, len(a.pipelines))
-	for _, instance := range a.pipelines {
-		pipelines = append(pipelines, instance)
-	}
-
-	return pipelines
+	return ge.Resume()
 }
 
 // GetStatus 에이전트 상태 조회
@@ -397,18 +316,6 @@ func (a *Agent) heartbeatLoop() {
 
 // sendHeartbeat 하트비트 전송
 func (a *Agent) sendHeartbeat() {
-	a.mu.RLock()
-	pipelineIDs := make([]string, 0, len(a.pipelines))
-	pipelineStats := make([]types.PipelineStatShort, 0, len(a.pipelines))
-	for id, instance := range a.pipelines {
-		pipelineIDs = append(pipelineIDs, id)
-		pipelineStats = append(pipelineStats, types.PipelineStatShort{
-			PipelineID: id,
-			Status:     instance.Status,
-		})
-	}
-	a.mu.RUnlock()
-
 	// 실행 중인 워크플로우 정보 수집
 	a.execMu.RLock()
 	runningExecs := make([]types.RunningExecutionInfo, 0, len(a.runningExecs))
@@ -422,13 +329,11 @@ func (a *Agent) sendHeartbeat() {
 	a.execMu.RUnlock()
 
 	heartbeat := types.AgentHeartbeat{
-		AgentID:       a.ID,
-		ClusterID:     a.config.ClusterID,
-		Hostname:      a.Hostname,
-		Timestamp:     time.Now(),
-		Pipelines:     pipelineIDs,
-		PipelineStats: pipelineStats,
-		RunningExecs:  runningExecs,
+		AgentID:      a.ID,
+		ClusterID:    a.config.ClusterID,
+		Hostname:     a.Hostname,
+		Timestamp:    time.Now(),
+		RunningExecs: runningExecs,
 	}
 
 	var redisErr, restErr error
@@ -568,6 +473,17 @@ func (a *Agent) commandLoop() {
 				fmt.Printf("Subscribed to Redis channel: %s\n", groupChannel)
 			}
 		}
+
+		// 워크플로우 제어 명령 채널 (stop/pause/resume). handleCommand로 라우팅한다.
+		cmdChannel := "workflow:commands:broadcast"
+		if a.config.ClusterID != "" {
+			cmdChannel = fmt.Sprintf("cluster:%s:commands", a.config.ClusterID)
+		}
+		if err = a.redisClient.Subscribe(a.ctx, cmdChannel, a.handleCommand); err != nil {
+			fmt.Printf("Failed to subscribe to workflow command channel: %v\n", err)
+		} else {
+			fmt.Printf("Subscribed to Redis channel: %s\n", cmdChannel)
+		}
 	}
 
 	// REST 폴링 (폴백 또는 하이브리드 모드)
@@ -657,23 +573,17 @@ func (a *Agent) handleCommand(message string) {
 	}
 
 	switch cmd.Type {
-	case types.CommandStartPipeline:
-		if cfg, ok := cmd.Payload.(*config.PipelineConfig); ok {
-			if err := a.StartPipeline(cmd.PipelineID, cfg); err != nil {
-				fmt.Printf("Failed to start pipeline: %v\n", err)
-			}
+	case types.CommandStopWorkflow:
+		if err := a.StopGroupExecution(cmd.ExecutionID, cmd.WorkflowID); err != nil {
+			fmt.Printf("Failed to stop workflow: %v\n", err)
 		}
-	case types.CommandStopPipeline:
-		if err := a.StopPipeline(cmd.PipelineID); err != nil {
-			fmt.Printf("Failed to stop pipeline: %v\n", err)
+	case types.CommandPauseWorkflow:
+		if err := a.PauseGroupExecution(cmd.ExecutionID, cmd.WorkflowID); err != nil {
+			fmt.Printf("Failed to pause workflow: %v\n", err)
 		}
-	case types.CommandPausePipeline:
-		if err := a.PausePipeline(cmd.PipelineID); err != nil {
-			fmt.Printf("Failed to pause pipeline: %v\n", err)
-		}
-	case types.CommandResumePipeline:
-		if err := a.ResumePipeline(cmd.PipelineID); err != nil {
-			fmt.Printf("Failed to resume pipeline: %v\n", err)
+	case types.CommandResumeWorkflow:
+		if err := a.ResumeGroupExecution(cmd.ExecutionID, cmd.WorkflowID); err != nil {
+			fmt.Printf("Failed to resume workflow: %v\n", err)
 		}
 	default:
 		fmt.Printf("Unknown command type: %s\n", cmd.Type)
@@ -699,8 +609,37 @@ func (a *Agent) handleGroupExecution(message string) {
 		return
 	}
 
+	// 실행 소유권 claim: 한 클러스터의 여러 에이전트가 같은 명령을 수신하므로,
+	// Redis SETNX로 한 execution을 정확히 한 에이전트만 실행하도록 보장한다(중복 실행 방지).
+	if !a.claimExecution(cmd.ExecutionID) {
+		fmt.Printf("Execution %s already claimed by another agent, skipping\n", cmd.ExecutionID)
+		return
+	}
+
 	// 그룹 실행 시작 (비동기)
 	go a.executeGroup(&cmd)
+}
+
+// claimExecution은 Redis SETNX로 execution 소유권을 원자적으로 획득한다.
+// true면 이 에이전트가 실행 담당이다. Redis 미가용 시 false(실행 안 함) — 중복보다 미실행이 안전.
+// ExecutionID가 없으면(레거시/브로드캐스트) claim 없이 true (기존 동작 보존).
+func (a *Agent) claimExecution(executionID string) bool {
+	if executionID == "" {
+		return true
+	}
+	if a.redisClient == nil {
+		// Redis 없는 standalone 모드: 단일 에이전트 전제이므로 실행 허용
+		return true
+	}
+
+	key := fmt.Sprintf("execution:claim:%s", executionID)
+	// TTL은 실행 최대 시간(10분)보다 넉넉히. 담당 에이전트 크래시 시 만료되어 재배치 가능.
+	acquired, err := a.redisClient.SetNX(a.ctx, key, a.ID, 15*time.Minute)
+	if err != nil {
+		fmt.Printf("Failed to claim execution %s: %v (skipping to avoid duplicate)\n", executionID, err)
+		return false
+	}
+	return acquired
 }
 
 // executeGroup 파이프라인 그룹 실행

@@ -123,6 +123,29 @@ func (s *RedisService) SendCommandToAgent(agentID string, cmdType types.CommandT
 	return nil
 }
 
+// PublishWorkflowCommand 워크플로우 제어 명령(stop/pause/resume)을 클러스터의 에이전트들에게 발행한다.
+// 실행 중인 GroupExecutor를 가진 에이전트만 해당 execution/workflow에 반응한다.
+func (s *RedisService) PublishWorkflowCommand(clusterID string, cmdType types.CommandType, workflowID, executionID string) error {
+	cmd := types.AgentCommand{
+		ID:          uuid.New().String(),
+		Type:        cmdType,
+		WorkflowID:  workflowID,
+		ExecutionID: executionID,
+		Timestamp:   time.Now(),
+	}
+
+	channel := "workflow:commands:broadcast"
+	if clusterID != "" {
+		channel = fmt.Sprintf("cluster:%s:commands", clusterID)
+	}
+
+	if err := s.client.Publish(s.ctx, channel, cmd); err != nil {
+		return fmt.Errorf("failed to publish workflow command to %s: %w", channel, err)
+	}
+	fmt.Printf("[RedisService] Workflow command %s sent to %s (workflow=%s execution=%s)\n", cmdType, channel, workflowID, executionID)
+	return nil
+}
+
 // queuePendingCommand 대기 큐에 명령 추가
 func (s *RedisService) queuePendingCommand(agentID string, cmd types.AgentCommand) {
 	s.commandMu.Lock()

@@ -109,20 +109,6 @@ func TestAgentGetStatus(t *testing.T) {
 	}
 }
 
-func TestAgentListPipelinesEmpty(t *testing.T) {
-	cfg := &Config{
-		ID:                 "test-agent",
-		EnableRESTFallback: true,
-	}
-
-	agent, _ := NewAgent(cfg)
-	pipelines := agent.ListPipelines()
-
-	if len(pipelines) != 0 {
-		t.Errorf("expected 0 pipelines, got %d", len(pipelines))
-	}
-}
-
 func TestAgentStartStop(t *testing.T) {
 	cfg := &Config{
 		ID:                 "test-agent",
@@ -148,62 +134,6 @@ func TestAgentStartStop(t *testing.T) {
 	}
 	if agent.Status != types.AgentStatusOffline {
 		t.Errorf("status should be offline after stop")
-	}
-}
-
-func TestAgentGetPipelineStatusNotFound(t *testing.T) {
-	cfg := &Config{
-		ID:                 "test-agent",
-		EnableRESTFallback: true,
-	}
-
-	agent, _ := NewAgent(cfg)
-
-	_, err := agent.GetPipelineStatus("nonexistent")
-	if err == nil {
-		t.Error("expected error for nonexistent pipeline")
-	}
-}
-
-func TestAgentStopPipelineNotFound(t *testing.T) {
-	cfg := &Config{
-		ID:                 "test-agent",
-		EnableRESTFallback: true,
-	}
-
-	agent, _ := NewAgent(cfg)
-
-	err := agent.StopPipeline("nonexistent")
-	if err == nil {
-		t.Error("expected error for nonexistent pipeline")
-	}
-}
-
-func TestAgentPausePipelineNotFound(t *testing.T) {
-	cfg := &Config{
-		ID:                 "test-agent",
-		EnableRESTFallback: true,
-	}
-
-	agent, _ := NewAgent(cfg)
-
-	err := agent.PausePipeline("nonexistent")
-	if err == nil {
-		t.Error("expected error for nonexistent pipeline")
-	}
-}
-
-func TestAgentResumePipelineNotFound(t *testing.T) {
-	cfg := &Config{
-		ID:                 "test-agent",
-		EnableRESTFallback: true,
-	}
-
-	agent, _ := NewAgent(cfg)
-
-	err := agent.ResumePipeline("nonexistent")
-	if err == nil {
-		t.Error("expected error for nonexistent pipeline")
 	}
 }
 
@@ -249,22 +179,6 @@ func TestAgentGetRedisMetricsNil(t *testing.T) {
 	}
 }
 
-func TestPipelineInstance(t *testing.T) {
-	now := time.Now()
-	instance := &PipelineInstance{
-		ID:        "pipeline-1",
-		Status:    types.PipelineStatusRunning,
-		StartTime: now,
-	}
-
-	if instance.ID != "pipeline-1" {
-		t.Errorf("ID mismatch")
-	}
-	if instance.Status != types.PipelineStatusRunning {
-		t.Errorf("status mismatch")
-	}
-}
-
 func BenchmarkAgentGetStatus(b *testing.B) {
 	cfg := &Config{
 		ID:                 "test-agent",
@@ -280,16 +194,18 @@ func BenchmarkAgentGetStatus(b *testing.B) {
 	}
 }
 
-func BenchmarkAgentListPipelines(b *testing.B) {
-	cfg := &Config{
-		ID:                 "test-agent",
-		EnableRESTFallback: true,
+// claimExecution: Redis 미설정(standalone) 시 실행 허용, 단일 에이전트 전제.
+func TestClaimExecution_StandaloneAllows(t *testing.T) {
+	agent, _ := NewAgent(&Config{ID: "a1", EnableRESTFallback: true})
+	if !agent.claimExecution("exec-1") {
+		t.Error("standalone (no redis) agent should be allowed to run the execution")
 	}
+}
 
-	agent, _ := NewAgent(cfg)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		agent.ListPipelines()
+// claimExecution: ExecutionID가 비면 claim 없이 허용(레거시/브로드캐스트 하위호환).
+func TestClaimExecution_EmptyIDAllows(t *testing.T) {
+	agent, _ := NewAgent(&Config{ID: "a1", EnableRESTFallback: true})
+	if !agent.claimExecution("") {
+		t.Error("empty executionID should be allowed (legacy compatibility)")
 	}
 }

@@ -441,6 +441,40 @@ func (rc *ResilientClient) Set(ctx context.Context, key string, value interface{
 	return nil
 }
 
+// SetNX는 키가 없을 때만 원자적으로 설정한다(분산 락/claim 용도).
+// acquired=true면 이 호출자가 소유권을 획득한 것이다.
+// 배타성을 보장할 수 없으므로 로컬 캐시 폴백을 쓰지 않는다 — Redis 미연결 시 에러를 반환한다.
+func (rc *ResilientClient) SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) (bool, error) {
+	rc.metrics.mu.Lock()
+	rc.metrics.TotalRequests++
+	rc.metrics.mu.Unlock()
+
+	if !rc.canExecute() {
+		return false, fmt.Errorf("circuit breaker is open")
+	}
+	if rc.GetConnectionState() != StateConnected {
+		return false, fmt.Errorf("redis not connected (state: %s)", rc.GetConnectionState())
+	}
+
+	start := time.Now()
+	// go-redis v9: SetNX는 deprecated. Set + SetArgs{Mode:"NX"} 사용.
+	// 키가 이미 있으면 redis.Nil을 반환하므로 acquired=false로 해석한다.
+	err := rc.client.SetArgs(ctx, key, value, redis.SetArgs{Mode: "NX", TTL: expiration}).Err()
+	rc.recordLatency(time.Since(start))
+
+	if err == redis.Nil {
+		rc.recordSuccess()
+		return false, nil // 이미 다른 소유자가 있음
+	}
+	if err != nil {
+		rc.recordFailure(err)
+		return false, fmt.Errorf("redis setnx failed: %w", err)
+	}
+
+	rc.recordSuccess()
+	return true, nil
+}
+
 // Get 값 조회
 func (rc *ResilientClient) Get(ctx context.Context, key string) (string, error) {
 	rc.metrics.mu.Lock()

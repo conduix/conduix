@@ -54,11 +54,13 @@ type PipelineStatShort struct {
 
 // AgentCommand 에이전트로 전송되는 명령
 type AgentCommand struct {
-	ID         string      `json:"id"`
-	Type       CommandType `json:"type"`
-	PipelineID string      `json:"pipeline_id,omitempty"`
-	Payload    any         `json:"payload,omitempty"`
-	Timestamp  time.Time   `json:"timestamp"`
+	ID          string      `json:"id"`
+	Type        CommandType `json:"type"`
+	PipelineID  string      `json:"pipeline_id,omitempty"`
+	WorkflowID  string      `json:"workflow_id,omitempty"`  // 워크플로우 단위 명령 대상
+	ExecutionID string      `json:"execution_id,omitempty"` // 특정 실행 대상 (stop/pause/resume)
+	Payload     any         `json:"payload,omitempty"`
+	Timestamp   time.Time   `json:"timestamp"`
 }
 
 // CommandType 명령 타입
@@ -150,7 +152,7 @@ type Affinity struct {
 
 // NodeAffinity 노드 어피니티
 type NodeAffinity struct {
-	RequiredDuringSchedulingIgnoredDuringExecution  *NodeSelector `json:"required,omitempty"`
+	RequiredDuringSchedulingIgnoredDuringExecution  *NodeSelector          `json:"required,omitempty"`
 	PreferredDuringSchedulingIgnoredDuringExecution []WeightedNodeSelector `json:"preferred,omitempty"`
 }
 
@@ -185,9 +187,9 @@ type PodAntiAffinity struct {
 
 // WeightedPodAffinityTerm 가중치 Pod 어피니티 조건
 type WeightedPodAffinityTerm struct {
-	Weight          int32  `json:"weight"`
-	TopologyKey     string `json:"topology_key"` // kubernetes.io/hostname
-	LabelSelector   string `json:"label_selector,omitempty"`
+	Weight        int32  `json:"weight"`
+	TopologyKey   string `json:"topology_key"` // kubernetes.io/hostname
+	LabelSelector string `json:"label_selector,omitempty"`
 }
 
 // ResourceRequirements 리소스 요구사항

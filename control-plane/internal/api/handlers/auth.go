@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -218,15 +220,30 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	// 프론트엔드 콜백 URL로 리다이렉트 (쿼리 파라미터에서 확인하거나 기본값 사용)
-	frontendURL := c.Query("redirect_uri")
-	if frontendURL == "" {
-		frontendURL = h.frontendURL + "/login"
+	// 프론트엔드 콜백 URL로 리다이렉트.
+	// redirect_uri는 신뢰된 frontendURL과 동일 Origin일 때만 허용한다(open redirect + 토큰 유출 방지).
+	redirectTarget := h.frontendURL + "/login"
+	if requested := c.Query("redirect_uri"); requested != "" && h.isTrustedRedirect(requested) {
+		redirectTarget = requested
 	}
 
 	// 토큰을 쿼리 파라미터로 전달
-	redirectURL := fmt.Sprintf("%s?token=%s", frontendURL, authToken.AccessToken)
+	redirectURL := fmt.Sprintf("%s?token=%s", redirectTarget, authToken.AccessToken)
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+}
+
+// isTrustedRedirect은 요청된 redirect_uri가 신뢰된 frontendURL과 같은 Origin인지 검증한다.
+// scheme+host가 정확히 일치해야 하며, 파싱 불가하거나 다른 Origin이면 거부한다.
+func (h *AuthHandler) isTrustedRedirect(requested string) bool {
+	reqURL, err := url.Parse(requested)
+	if err != nil || reqURL.Scheme == "" || reqURL.Host == "" {
+		return false
+	}
+	trusted, err := url.Parse(h.frontendURL)
+	if err != nil {
+		return false
+	}
+	return reqURL.Scheme == trusted.Scheme && reqURL.Host == trusted.Host
 }
 
 // fetchUserInfo OAuth2 프로바이더에서 사용자 정보 조회
@@ -243,15 +260,9 @@ func (h *AuthHandler) fetchUserInfo(ctx context.Context, provider *OAuth2Provide
 		return nil, fmt.Errorf("user info request failed with status %d", resp.StatusCode)
 	}
 
-	var data []byte
-	data = make([]byte, 0)
-	buf := make([]byte, 1024)
-	for {
-		n, err := resp.Body.Read(buf)
-		data = append(data, buf[:n]...)
-		if err != nil {
-			break
-		}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read user info response: %w", err)
 	}
 
 	// JSON path 기반 파싱

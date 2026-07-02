@@ -99,15 +99,25 @@ func AuthMiddleware(jwtSecret []byte) gin.HandlerFunc {
 			return
 		}
 
-		// 클레임에서 사용자 정보 추출
+		// 클레임에서 사용자 정보 추출.
+		// 핸들러들이 user_id/user_role을 string으로 단언(assert)하므로,
+		// 비정상 클레임 타입으로 인한 panic을 막기 위해 여기서 string으로만 저장한다.
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			c.Set("user_id", claims["sub"])
-			c.Set("user_email", claims["email"])
-			c.Set("user_role", claims["role"])
+			c.Set("user_id", claimString(claims["sub"]))
+			c.Set("user_email", claimString(claims["email"]))
+			c.Set("user_role", claimString(claims["role"]))
 		}
 
 		c.Next()
 	}
+}
+
+// claimString은 JWT 클레임 값을 string으로 변환한다. string이 아니면 빈 문자열을 반환한다.
+func claimString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // RoleMiddleware 역할 기반 접근 제어 미들웨어
@@ -120,7 +130,12 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 			return
 		}
 
-		roleStr := role.(string)
+		roleStr, ok := role.(string)
+		if !ok {
+			ErrorResponseWithCode(c, http.StatusForbidden, types.ErrCodeForbidden, "Invalid role claim")
+			c.Abort()
+			return
+		}
 		if slices.Contains(allowedRoles, roleStr) {
 			c.Next()
 			return
@@ -131,11 +146,30 @@ func RoleMiddleware(allowedRoles ...string) gin.HandlerFunc {
 	}
 }
 
-// CORSMiddleware CORS 미들웨어
-func CORSMiddleware() gin.HandlerFunc {
+// CORSMiddleware CORS 미들웨어.
+// Access-Control-Allow-Credentials: true 와 Allow-Origin: * 조합은 명세 위반이고
+// 브라우저가 거부하므로, 요청 Origin이 allowlist에 있을 때만 그 Origin을 그대로 반영한다.
+// allowedOrigins가 비어 있으면(설정 누락) credential 미허용 상태로 * 를 반영해 안전측으로 동작한다.
+func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		if o != "" {
+			allowed[o] = struct{}{}
+		}
+	}
+
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		origin := c.Request.Header.Get("Origin")
+
+		if len(allowed) == 0 {
+			// Origin allowlist 미설정: credential 없이 공개 API로만 동작 (자격증명 탈취 방지)
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if _, ok := allowed[origin]; ok {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Writer.Header().Add("Vary", "Origin")
+		}
+
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 

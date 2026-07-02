@@ -203,29 +203,75 @@ func TestRoleMiddleware_NoRole(t *testing.T) {
 	}
 }
 
-func TestCORSMiddleware(t *testing.T) {
+// allowlist 미설정 시: * 를 반영하되 credential은 허용하지 않는다.
+func TestCORSMiddleware_NoAllowlist(t *testing.T) {
 	router := gin.New()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(nil))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
 
 	req := httptest.NewRequest("GET", "/test", http.NoBody)
+	req.Header.Set("Origin", "https://evil.example.com")
 	w := httptest.NewRecorder()
-
 	router.ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("CORS header not set")
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("expected * when no allowlist, got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("credentials must NOT be allowed with wildcard origin, got %q", got)
 	}
 	if w.Header().Get("Access-Control-Allow-Methods") == "" {
 		t.Error("CORS methods header not set")
 	}
 }
 
+// allowlist에 있는 Origin: 그 Origin을 반영하고 credential을 허용한다.
+func TestCORSMiddleware_AllowedOrigin(t *testing.T) {
+	router := gin.New()
+	router.Use(CORSMiddleware([]string{"https://app.example.com"}))
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	req := httptest.NewRequest("GET", "/test", http.NoBody)
+	req.Header.Set("Origin", "https://app.example.com")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Errorf("expected echoed origin, got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("expected credentials allowed for allowlisted origin, got %q", got)
+	}
+}
+
+// allowlist에 없는 Origin: ACAO 헤더를 내보내지 않아 브라우저가 차단한다.
+func TestCORSMiddleware_DisallowedOrigin(t *testing.T) {
+	router := gin.New()
+	router.Use(CORSMiddleware([]string{"https://app.example.com"}))
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+	})
+
+	req := httptest.NewRequest("GET", "/test", http.NoBody)
+	req.Header.Set("Origin", "https://evil.example.com")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("disallowed origin must not receive ACAO header, got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("disallowed origin must not receive credentials header, got %q", got)
+	}
+}
+
 func TestCORSMiddleware_Options(t *testing.T) {
 	router := gin.New()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(nil))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
@@ -349,7 +395,7 @@ func BenchmarkAuthMiddleware(b *testing.B) {
 
 func BenchmarkCORSMiddleware(b *testing.B) {
 	router := gin.New()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware([]string{"https://app.example.com"}))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})

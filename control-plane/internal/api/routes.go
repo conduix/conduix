@@ -1,8 +1,10 @@
 package api
 
 import (
+	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,6 +45,7 @@ type Server struct {
 	lspHandler          *handlers.LSPHandler
 	startTime           time.Time
 	version             string
+	allowedOrigins      []string
 }
 
 // Version 버전 정보 (빌드 시 설정)
@@ -92,17 +95,46 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		lspHandler:          handlers.NewLSPHandler(os.Getenv("CONDUIX_SDK_PATH")),
 		startTime:           time.Now(),
 		version:             Version,
+		allowedOrigins:      buildAllowedOrigins(frontendURL),
 	}
 
 	s.setupRoutes()
 	return s
 }
 
+// buildAllowedOrigins CORS allowlist를 구성한다.
+// frontendURL(스킴+호스트)과 CORS_ALLOWED_ORIGINS(콤마 구분) 환경변수를 합친다.
+func buildAllowedOrigins(frontendURL string) []string {
+	origins := make([]string, 0, 2)
+	if o := originFromURL(frontendURL); o != "" {
+		origins = append(origins, o)
+	}
+	for _, extra := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if trimmed := strings.TrimSpace(extra); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
+}
+
+// originFromURL은 URL에서 CORS Origin(scheme://host[:port])만 추출한다.
+func originFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
 // setupRoutes 라우트 설정
 func (s *Server) setupRoutes() {
 	// 미들웨어
 	s.router.Use(gin.Recovery())
-	s.router.Use(middleware.CORSMiddleware())
+	s.router.Use(middleware.CORSMiddleware(s.allowedOrigins))
 	s.router.Use(middleware.RequestIDMiddleware())
 
 	// Index (서비스 정보)
@@ -189,7 +221,10 @@ func (s *Server) setupRoutes() {
 			{
 				workflows.GET("", s.workflowHandler.ListWorkflows)
 				workflows.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.CreateWorkflow)
+				// YAML import/export (템플릿·GitOps·AI 제어용). import는 :id 라우트보다 먼저 등록.
+				workflows.POST("/import", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.ImportWorkflowYAML)
 				workflows.GET("/:id", s.workflowHandler.GetWorkflow)
+				workflows.GET("/:id/yaml", s.workflowHandler.ExportWorkflowYAML)
 				workflows.PUT("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.UpdateWorkflow)
 				workflows.DELETE("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.workflowHandler.DeleteWorkflow)
 				workflows.POST("/:id/start", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.StartWorkflow)

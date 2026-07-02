@@ -85,55 +85,21 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		userIDStr = userID.(string)
 	}
 
-	// 기본값 설정
-	executionMode := req.ExecutionMode
-	if executionMode == "" {
-		executionMode = types.ExecutionModeParallel
-	}
-
-	// 파이프라인에 ID 할당 (있는 경우)
-	if req.Pipelines == nil {
-		req.Pipelines = []types.GroupedPipeline{}
-	}
-	for i := range req.Pipelines {
-		if req.Pipelines[i].ID == "" {
-			req.Pipelines[i].ID = uuid.New().String()
-		}
-	}
-
-	// JSON 직렬화
-	pipelinesJSON, _ := json.Marshal(req.Pipelines)
-	failurePolicyJSON, _ := json.Marshal(req.FailurePolicy)
-	metadataJSON, _ := json.Marshal(req.Metadata)
-	tagsJSON, _ := json.Marshal(req.Tags)
-
-	workflow := &models.Workflow{
-		ID:              uuid.New().String(),
-		ProjectID:       req.ProjectID,
-		ClusterID:       req.ClusterID,
-		Name:            req.Name,
-		Slug:            req.Slug,
-		Description:     req.Description,
-		Type:            string(req.Type),
-		ExecutionMode:   string(executionMode),
-		Status:          string(types.PipelineGroupStatusIdle),
-		PipelinesConfig: string(pipelinesJSON),
-		FailurePolicy:   string(failurePolicyJSON),
-		Metadata:        string(metadataJSON),
-		Tags:            string(tagsJSON),
-		CreatedBy:       userIDStr,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
-	}
-
-	// 스케줄 설정
-	if req.Schedule != nil {
-		workflow.ScheduleType = string(req.Schedule.Type)
-		workflow.ScheduleCron = req.Schedule.Cron
-		workflow.ScheduleInterval = req.Schedule.Interval
-		workflow.ScheduleTimezone = req.Schedule.Timezone
-		workflow.ScheduleEnabled = req.Schedule.Enabled
-	}
+	// JSON create와 YAML import가 동일 로직을 쓰도록 buildWorkflowModel로 일원화(동작 divergence 방지).
+	workflow := h.buildWorkflowModel(&WorkflowSpec{
+		ProjectID:     req.ProjectID,
+		ClusterID:     req.ClusterID,
+		Name:          req.Name,
+		Slug:          req.Slug,
+		Description:   req.Description,
+		Type:          req.Type,
+		ExecutionMode: req.ExecutionMode,
+		Schedule:      req.Schedule,
+		Pipelines:     req.Pipelines,
+		FailurePolicy: req.FailurePolicy,
+		Metadata:      req.Metadata,
+		Tags:          req.Tags,
+	}, userIDStr)
 
 	if err := h.db.Create(workflow).Error; err != nil {
 		h.logger.Error("Failed to create workflow",
@@ -656,6 +622,14 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 	workflow.Status = string(types.PipelineGroupStatusStopped)
 	h.db.Save(&workflow)
 
+	// 현재 실행 중인 execution 조회 (에이전트에 중지 명령 전송용 ID 확보)
+	var runningExec models.WorkflowExecution
+	execID := ""
+	if err := h.db.Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
+		First(&runningExec).Error; err == nil {
+		execID = runningExec.ID
+	}
+
 	// 현재 실행 중인 execution 업데이트
 	now := time.Now()
 	h.db.Model(&models.WorkflowExecution{}).
@@ -665,7 +639,10 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 			"completed_at": now,
 		})
 
-	// TODO: 에이전트에 중지 명령 전송
+	// 에이전트에 중지 명령 전송 (실행 중인 GroupExecutor를 취소)
+	if err := h.redisService.PublishWorkflowCommand(workflow.ClusterID, types.CommandStopWorkflow, workflowID, execID); err != nil {
+		fmt.Printf("[StopWorkflow] Failed to publish stop command: %v\n", err)
+	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
@@ -691,12 +668,26 @@ func (h *WorkflowHandler) PauseWorkflow(c *gin.Context) {
 	workflow.Status = string(types.PipelineGroupStatusPaused)
 	h.db.Save(&workflow)
 
-	// TODO: 에이전트에 일시정지 명령 전송
+	// 에이전트에 일시정지 명령 전송
+	execID := h.runningExecutionID(workflowID)
+	if err := h.redisService.PublishWorkflowCommand(workflow.ClusterID, types.CommandPauseWorkflow, workflowID, execID); err != nil {
+		fmt.Printf("[PauseWorkflow] Failed to publish pause command: %v\n", err)
+	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
 		Message: "Workflow paused",
 	})
+}
+
+// runningExecutionID는 워크플로우의 현재 실행 중 execution ID를 반환한다(없으면 빈 문자열).
+func (h *WorkflowHandler) runningExecutionID(workflowID string) string {
+	var exec models.WorkflowExecution
+	if err := h.db.Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
+		First(&exec).Error; err != nil {
+		return ""
+	}
+	return exec.ID
 }
 
 // ResumeWorkflow POST /api/v1/workflows/:id/resume
@@ -717,7 +708,16 @@ func (h *WorkflowHandler) ResumeWorkflow(c *gin.Context) {
 	workflow.Status = string(types.PipelineGroupStatusRunning)
 	h.db.Save(&workflow)
 
-	// TODO: 에이전트에 재개 명령 전송
+	// 에이전트에 재개 명령 전송 (일시정지 execution을 다시 running으로)
+	execID := ""
+	var exec models.WorkflowExecution
+	if err := h.db.Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusPaused)).
+		First(&exec).Error; err == nil {
+		execID = exec.ID
+	}
+	if err := h.redisService.PublishWorkflowCommand(workflow.ClusterID, types.CommandResumeWorkflow, workflowID, execID); err != nil {
+		fmt.Printf("[ResumeWorkflow] Failed to publish resume command: %v\n", err)
+	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,

@@ -24,7 +24,7 @@
 ## 남은 작업 (우선순위)
 
 - [x] **목록 페이지 YAML 가져오기 다이얼로그**: Workflows 목록에 "YAML 가져오기" 버튼 + 다이얼로그(YAML 붙여넣기 + project_id override). 재사용 기능 완결(상세=export/clone, 목록=import).
-- [ ] **PostgreSQL CDC** (M): cdc.go:206 스텁 → pglogrepl 구현 또는 명시적 미지원 처리
+- [x] **PostgreSQL CDC 처리**: 실제 pglogrepl 구현은 무거운 투자(새 의존성+PG 복제 인프라)라 실사용 확인 전 보류. 대신 NewCDCSource에서 postgres/미지원 드라이버를 **생성 시점 조기 거부** + 명확한 대안 안내(Kafka/Debezium 경유). "실행 후 미동작 발견" 방지. 테스트 갱신.
 - [ ] **e2e 통합 테스트** (L): MySQL+Redis+control-plane+agent 기동 후 실제 워크플로우 실행 검증
 - [~] **stage 하드코딩 완전통일** (보류 결정): 조사 결과 stream registry에 select/exclude/schema_validate가 없고 filter/remap 시맨틱도 executor와 상이. 흡수하려면 stream에 3개 stage 신규 + remap/filter 시맨틱 확장 필요 → 회귀 위험 큼, 순이득 작음. executor 5개 case가 canonical(우선 적용)이라 divergence는 잠재 리스크일 뿐 실버그 아님. 강제 통합은 "과도한 추상화" 리스크로 보류. (통합하려면 stream 쪽을 executor 시맨틱에 맞춰 확장하는 방향)
 - [ ] **나머지 fmt.Printf → slog 전면 전환** (M, 선택): 추적 핵심은 이미 커버, 나머지는 저가치

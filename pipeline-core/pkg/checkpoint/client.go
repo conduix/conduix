@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -202,7 +203,7 @@ func (c *Client) StartPeriodicFlush(ctx context.Context, interval time.Duration)
 				return
 			case <-ticker.C:
 				if err := c.FlushCheckpoints(ctx); err != nil {
-					fmt.Printf("[checkpoint] Flush error: %v\n", err)
+					slog.Default().Error("checkpoint flush error", "base_url", c.baseURL, "error", err)
 				}
 			}
 		}

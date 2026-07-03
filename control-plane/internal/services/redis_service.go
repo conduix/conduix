@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -61,7 +62,7 @@ func NewRedisService(cfg *RedisServiceConfig) (*RedisService, error) {
 		svc.isHealthy = (new == redisclient.StateConnected)
 		svc.mu.Unlock()
 
-		fmt.Printf("[RedisService] Connection state: %s -> %s\n", old, new)
+		slog.Info("Redis connection state changed", "from", old, "to", new)
 
 		// 연결 복구 시 대기 중인 명령 재전송
 		if new == redisclient.StateConnected && cfg.EnableRetryQueue {
@@ -73,7 +74,7 @@ func NewRedisService(cfg *RedisServiceConfig) (*RedisService, error) {
 		}
 	}
 	redisConfig.OnError = func(err error) {
-		fmt.Printf("[RedisService] Error: %v\n", err)
+		slog.Error("Redis error", "error", err)
 	}
 
 	var err error
@@ -112,14 +113,14 @@ func (s *RedisService) SendCommandToAgent(agentID string, cmdType types.CommandT
 	// Redis 전송 시도
 	err := s.client.Publish(s.ctx, channel, cmd)
 	if err != nil {
-		fmt.Printf("[RedisService] Failed to publish command to %s: %v\n", agentID, err)
+		slog.Error("Failed to publish command", "agent_id", agentID, "pipeline_id", pipelineID, "command", cmdType, "error", err)
 
 		// 대기 큐에 추가
 		s.queuePendingCommand(agentID, cmd)
 		return fmt.Errorf("command queued for retry: %w", err)
 	}
 
-	fmt.Printf("[RedisService] Command sent to agent %s: %s\n", agentID, cmdType)
+	slog.Info("Command sent to agent", "agent_id", agentID, "command", cmdType)
 	return nil
 }
 
@@ -142,7 +143,7 @@ func (s *RedisService) PublishWorkflowCommand(clusterID string, cmdType types.Co
 	if err := s.client.Publish(s.ctx, channel, cmd); err != nil {
 		return fmt.Errorf("failed to publish workflow command to %s: %w", channel, err)
 	}
-	fmt.Printf("[RedisService] Workflow command %s sent to %s (workflow=%s execution=%s)\n", cmdType, channel, workflowID, executionID)
+	slog.Info("Workflow command sent", "command", cmdType, "channel", channel, "workflow_id", workflowID, "execution_id", executionID)
 	return nil
 }
 
@@ -189,7 +190,7 @@ func (s *RedisService) retryPendingCommands() {
 		delete(s.pendingCommands, pending.Command.ID)
 		s.commandMu.Unlock()
 
-		fmt.Printf("[RedisService] Retried command sent to agent %s: %s\n", pending.AgentID, pending.Command.Type)
+		slog.Info("Retried command sent to agent", "agent_id", pending.AgentID, "command", pending.Command.Type)
 	}
 }
 
@@ -207,12 +208,12 @@ func (s *RedisService) PublishWorkflowExecution(cmd *types.WorkflowExecutionComm
 
 	err := s.client.Publish(s.ctx, channel, cmd)
 	if err != nil {
-		fmt.Printf("[RedisService] Failed to publish workflow execution command: %v\n", err)
+		slog.Error("Failed to publish workflow execution command", "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID, "channel", channel, "error", err)
 		return fmt.Errorf("failed to publish workflow execution: %w", err)
 	}
 
-	fmt.Printf("[RedisService] Workflow execution command published for workflow %s (execution: %s) to channel %s\n",
-		cmd.WorkflowID, cmd.ExecutionID, channel)
+	slog.Info("Workflow execution command published",
+		"workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID, "channel", channel)
 	return nil
 }
 
@@ -222,12 +223,12 @@ func (s *RedisService) PublishWorkflowExecutionToCluster(clusterID string, cmd *
 
 	err := s.client.Publish(s.ctx, channel, cmd)
 	if err != nil {
-		fmt.Printf("[RedisService] Failed to publish workflow execution to cluster %s: %v\n", clusterID, err)
+		slog.Error("Failed to publish workflow execution to cluster", "workflow_id", cmd.WorkflowID, "cluster_id", clusterID, "error", err)
 		return fmt.Errorf("failed to publish workflow execution to cluster: %w", err)
 	}
 
-	fmt.Printf("[RedisService] Workflow execution command published for workflow %s to cluster %s\n",
-		cmd.WorkflowID, clusterID)
+	slog.Info("Workflow execution command published to cluster",
+		"workflow_id", cmd.WorkflowID, "cluster_id", clusterID)
 	return nil
 }
 

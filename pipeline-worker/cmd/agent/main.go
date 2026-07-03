@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/conduix/conduix/pipeline-worker/api"
 	"github.com/conduix/conduix/pipeline-worker/internal/agent"
+	"github.com/conduix/conduix/shared/logging"
 )
 
 var (
@@ -36,20 +38,21 @@ func main() {
 
 // runBatchMode Kubernetes Job용 1회 실행 모드
 func runBatchMode() {
-	fmt.Println("Starting in batch mode...")
+	logging.Setup("pipeline-worker")
+	slog.Info("starting in batch mode")
 
 	batchRunner, err := agent.NewBatchRunner()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating batch runner: %v\n", err)
+		slog.Error("failed to create batch runner", "error", err)
 		os.Exit(1)
 	}
 
 	if err := batchRunner.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Batch execution failed: %v\n", err)
+		slog.Error("batch execution failed", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("Batch execution completed successfully")
+	slog.Info("batch execution completed successfully")
 }
 
 // runAgentMode 기존 상주 Agent 모드
@@ -69,6 +72,8 @@ func runAgentMode() {
 		fmt.Printf("Conduix Pipeline Agent %s (built: %s)\n", version, buildTime)
 		os.Exit(0)
 	}
+
+	logging.Setup("pipeline-worker")
 
 	// 환경변수에서 설정 읽기
 	if env := os.Getenv("AGENT_ID"); env != "" && *agentID == "" {
@@ -100,13 +105,13 @@ func runAgentMode() {
 	// 에이전트 생성
 	a, err := agent.NewAgent(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating agent: %v\n", err)
+		slog.Error("failed to create agent", "error", err)
 		os.Exit(1)
 	}
 
 	// 에이전트 시작
 	if err := a.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting agent: %v\n", err)
+		slog.Error("failed to start agent", "error", err)
 		os.Exit(1)
 	}
 
@@ -120,9 +125,9 @@ func runAgentMode() {
 
 	go func() {
 		addr := fmt.Sprintf(":%d", *apiPort)
-		fmt.Printf("API server listening on %s\n", addr)
+		slog.Info("API server listening", "addr", addr)
 		if err := router.Run(addr); err != nil {
-			fmt.Fprintf(os.Stderr, "API server error: %v\n", err)
+			slog.Error("API server error", "error", err)
 		}
 	}()
 
@@ -131,14 +136,12 @@ func runAgentMode() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	sig := <-sigChan
-	fmt.Printf("\nReceived signal: %v\n", sig)
+	slog.Info("received signal, stopping agent", "signal", sig.String())
 
-	// 에이전트 종료
-	fmt.Println("Stopping agent...")
 	if err := a.Stop(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error stopping agent: %v\n", err)
+		slog.Error("failed to stop agent", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("Agent stopped")
+	slog.Info("agent stopped")
 }

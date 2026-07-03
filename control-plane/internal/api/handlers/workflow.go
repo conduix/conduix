@@ -426,16 +426,16 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("[StartWorkflow] Workflow status updated to running: %s\n", workflowID)
+	h.logger.Info("Workflow status updated to running", "workflow_id", workflowID)
 
 	// 파이프라인 설정 파싱
 	var pipelines []types.GroupedPipeline
 	if workflow.PipelinesConfig != "" {
 		if err := json.Unmarshal([]byte(workflow.PipelinesConfig), &pipelines); err != nil {
-			fmt.Printf("[StartWorkflow] Failed to parse pipelines config: %v\n", err)
+			h.logger.Error("Failed to parse pipelines config", "workflow_id", workflowID, "error", err)
 		}
 	}
-	fmt.Printf("[StartWorkflow] Parsed %d pipelines\n", len(pipelines))
+	h.logger.Info("Parsed pipelines", "workflow_id", workflowID, "count", len(pipelines))
 
 	// 위임 실행: realtime·batch 모두 대상 cluster 채널로 실행 명령을 발행한다.
 	// 실행 주체는 그 cluster의 worker다 — realtime은 in-process 상주 실행, batch는
@@ -481,8 +481,8 @@ func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 		return
 	}
 
-	fmt.Printf("[handleJobResult] Received job result: workflow=%s, execution=%s, status=%s\n",
-		result.WorkflowID, result.ExecutionID, result.Status)
+	h.logger.Info("Received job result",
+		"workflow_id", result.WorkflowID, "execution_id", result.ExecutionID, "status", result.Status)
 
 	// 워크플로우 상태 업데이트
 	var newStatus string
@@ -523,7 +523,7 @@ func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 		Where("id = ?", result.ExecutionID).
 		Updates(updates)
 
-	fmt.Printf("[handleJobResult] Updated workflow %s status to: %s\n", result.WorkflowID, newStatus)
+	h.logger.Info("Updated workflow status", "workflow_id", result.WorkflowID, "status", newStatus)
 }
 
 // HandleJobResultCallback POST /api/v1/internal/job-result
@@ -541,8 +541,8 @@ func (h *WorkflowHandler) HandleJobResultCallback(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("[HandleJobResultCallback] Received job result: workflow=%s, execution=%s, status=%s\n",
-		result.WorkflowID, result.ExecutionID, result.Status)
+	h.logger.Info("Received job result callback",
+		"workflow_id", result.WorkflowID, "execution_id", result.ExecutionID, "status", result.Status)
 
 	// 결과 처리 (Job 생성·감시는 worker가 담당하므로 control-plane은 콜백만 반영)
 	h.handleJobResult(&result)
@@ -595,7 +595,7 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 	// 실행 시점 확정 cluster(execution.ClusterID)로 라우팅해야 한다 — 실행 후 워크플로우 그룹이
 	// 바뀌었어도 진행 중 execution은 시작 당시 cluster에 묶여 있으므로(D5).
 	if err := h.redisService.PublishWorkflowCommand(runningExec.ClusterID, types.CommandStopWorkflow, workflowID, execID); err != nil {
-		fmt.Printf("[StopWorkflow] Failed to publish stop command: %v\n", err)
+		h.logger.Error("Failed to publish stop command", "workflow_id", workflowID, "execution_id", execID, "cluster_id", runningExec.ClusterID, "error", err)
 	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
@@ -625,7 +625,7 @@ func (h *WorkflowHandler) PauseWorkflow(c *gin.Context) {
 	// 에이전트에 일시정지 명령 전송 (execution의 확정 cluster로 라우팅, D5)
 	execID, execClusterID := h.runningExecution(workflowID)
 	if err := h.redisService.PublishWorkflowCommand(execClusterID, types.CommandPauseWorkflow, workflowID, execID); err != nil {
-		fmt.Printf("[PauseWorkflow] Failed to publish pause command: %v\n", err)
+		h.logger.Error("Failed to publish pause command", "workflow_id", workflowID, "execution_id", execID, "cluster_id", execClusterID, "error", err)
 	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
@@ -683,7 +683,7 @@ func (h *WorkflowHandler) ResumeWorkflow(c *gin.Context) {
 		execClusterID = exec.ClusterID
 	}
 	if err := h.redisService.PublishWorkflowCommand(execClusterID, types.CommandResumeWorkflow, workflowID, execID); err != nil {
-		fmt.Printf("[ResumeWorkflow] Failed to publish resume command: %v\n", err)
+		h.logger.Error("Failed to publish resume command", "workflow_id", workflowID, "execution_id", execID, "cluster_id", execClusterID, "error", err)
 	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
@@ -1035,8 +1035,8 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("[ReceiveExecutionResult] Received result for workflow=%s, execution=%s, status=%s, records=%d\n",
-		workflowID, executionID, result.Status, result.TotalRecords)
+	h.logger.Info("Received execution result",
+		"workflow_id", workflowID, "execution_id", executionID, "status", result.Status, "records", result.TotalRecords)
 
 	// 워크플로우 상태 업데이트
 	var newStatus string
@@ -1055,7 +1055,7 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 	if err := h.db.Model(&models.Workflow{}).
 		Where("id = ?", workflowID).
 		Update("status", newStatus).Error; err != nil {
-		fmt.Printf("[ReceiveExecutionResult] Failed to update workflow status: %v\n", err)
+		h.logger.Error("Failed to update workflow status", "workflow_id", workflowID, "execution_id", executionID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success":    false,
 			"error":      gin.H{"code": "DB_ERROR", "message": "Failed to update workflow status"},
@@ -1086,10 +1086,10 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 	if err := h.db.Model(&models.WorkflowExecution{}).
 		Where("id = ?", executionID).
 		Updates(updates).Error; err != nil {
-		fmt.Printf("[ReceiveExecutionResult] Failed to update execution: %v\n", err)
+		h.logger.Error("Failed to update execution", "workflow_id", workflowID, "execution_id", executionID, "error", err)
 	}
 
-	fmt.Printf("[ReceiveExecutionResult] Workflow %s status updated to: %s\n", workflowID, newStatus)
+	h.logger.Info("Workflow status updated", "workflow_id", workflowID, "status", newStatus)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,

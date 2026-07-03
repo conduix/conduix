@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -128,8 +129,9 @@ func (s *PubSubSource) Open(ctx context.Context) error {
 
 	s.subscription = sub
 
-	fmt.Printf("[pubsub] Connected to project: %s, subscription: %s, max_outstanding_messages: %d\n",
-		s.projectID, s.subscriptionID, s.maxOutstandingMessages)
+	slog.Default().Info("PubSub connected",
+		"project", s.projectID, "subscription", s.subscriptionID,
+		"max_outstanding_messages", s.maxOutstandingMessages)
 
 	return nil
 }
@@ -155,7 +157,8 @@ func (s *PubSubSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 		err := sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
 			record, err := s.convertMessage(msg)
 			if err != nil {
-				fmt.Printf("[pubsub] Error converting message: %v\n", err)
+				slog.Default().Error("PubSub error converting message",
+					"subscription", s.subscriptionID, "error", err)
 				msg.Nack()
 				return
 			}
@@ -258,7 +261,8 @@ func (s *PubSubSource) GetSourceCheckpoints() []*SourceCheckpoint {
 func (s *PubSubSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
 	// Pub/Sub은 메시지 기반 ack를 사용하므로 체크포인트 복원이 의미 없음
 	// ack되지 않은 메시지는 acknowledgement deadline 후 다시 수신 가능
-	fmt.Printf("[pubsub] Checkpoint restoration not supported for Pub/Sub (ack deadline based)\n")
+	slog.Default().Info("PubSub checkpoint restoration not supported (ack deadline based)",
+		"subscription", s.subscriptionID)
 	return nil
 }
 
@@ -268,7 +272,7 @@ func (s *PubSubSource) Close() error {
 
 	if s.client != nil {
 		if err := s.client.Close(); err != nil {
-			fmt.Printf("[pubsub] Warning: error closing client: %v\n", err)
+			slog.Default().Warn("PubSub error closing client", "subscription", s.subscriptionID, "error", err)
 		}
 		s.client = nil
 	}
@@ -278,7 +282,8 @@ func (s *PubSubSource) Close() error {
 	count := atomic.LoadInt64(&s.processedCount)
 	s.checkpointMu.RUnlock()
 
-	fmt.Printf("[pubsub] Closed. Last message ID: %s, Processed: %d\n", lastID, count)
+	slog.Default().Info("PubSub closed",
+		"subscription", s.subscriptionID, "last_message_id", lastID, "processed", count)
 	return nil
 }
 

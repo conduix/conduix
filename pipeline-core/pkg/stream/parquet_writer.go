@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -161,7 +162,7 @@ func (w *ParquetWriter) createNewFile() error {
 	w.parquetWriter = pw
 	w.recordCount = 0
 
-	fmt.Printf("[parquet] Created new file: %s\n", filename)
+	slog.Info("created new parquet file", "file", filename)
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -86,7 +87,7 @@ func buildMySQLTLSDSN(dsn string, tlsCfg *config.DBTLSConfig) (string, error) {
 		dsn = dsn + "?tls=" + tlsConfigName
 	}
 
-	fmt.Printf("[sql] MySQL TLS enabled: mode=%s\n", tlsCfg.Mode)
+	slog.Default().Info("SQL MySQL TLS enabled", "mode", tlsCfg.Mode)
 	return dsn, nil
 }
 
@@ -130,7 +131,7 @@ func buildPostgreSQLTLSDSN(dsn string, tlsCfg *config.DBTLSConfig) (string, erro
 		}
 	}
 
-	fmt.Printf("[sql] PostgreSQL TLS enabled: sslmode=%s\n", sslMode)
+	slog.Default().Info("SQL PostgreSQL TLS enabled", "sslmode", sslMode)
 	return dsn, nil
 }
 

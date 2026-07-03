@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -84,10 +85,10 @@ func (s *PartitionedSQLSource) Read(ctx context.Context) (<-chan Record, <-chan 
 		}
 
 		if len(partitions) == 0 {
-			fmt.Println("[PartitionedSQL] No partitions found")
+			slog.Default().Warn("PartitionedSQL no partitions found")
 			return
 		}
-		fmt.Printf("[PartitionedSQL] Discovered %d partitions: %v\n", len(partitions), partitions)
+		slog.Default().Info("PartitionedSQL discovered partitions", "count", len(partitions), "partitions", partitions)
 
 		// 2. 파티션 병렬 처리
 		s.fetchPartitions(ctx, partitions, records, errs)
@@ -146,7 +147,7 @@ func (s *PartitionedSQLSource) fetchPartitions(ctx context.Context, partitions [
 			defer func() { <-sem }()
 
 			if err := s.fetchPartition(ctx, partitionID, records); err != nil {
-				fmt.Printf("[PartitionedSQL] Partition %s error: %v\n", partitionID, err)
+				slog.Default().Error("PartitionedSQL partition failed", "partition", partitionID, "error", err)
 			}
 		}(partition)
 	}
@@ -164,7 +165,7 @@ func (s *PartitionedSQLSource) fetchPartition(ctx context.Context, partitionID s
 	query = strings.ReplaceAll(query, "${partition}", partitionID)
 	query = strings.ReplaceAll(query, "{partition}", partitionID)
 
-	fmt.Printf("[PartitionedSQL] Fetching partition %s\n", partitionID)
+	slog.Default().Info("PartitionedSQL fetching partition", "partition", partitionID)
 
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
@@ -220,7 +221,7 @@ func (s *PartitionedSQLSource) fetchPartition(ctx context.Context, partitionID s
 		return fmt.Errorf("rows error: %w", err)
 	}
 
-	fmt.Printf("[PartitionedSQL] Partition %s: %d rows\n", partitionID, rowCount)
+	slog.Default().Info("PartitionedSQL partition fetched", "partition", partitionID, "rows", rowCount)
 	return nil
 }
 

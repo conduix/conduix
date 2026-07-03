@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -123,7 +124,7 @@ func NewAgent(cfg *Config) (*Agent, error) {
 		var err error
 		agent.redisClient, err = redisclient.NewResilientClient(redisConfig)
 		if err != nil {
-			fmt.Printf("Warning: Redis connection failed, using REST fallback: %v\n", err)
+			slog.Warn("redis connection failed, using REST fallback", "error", err, "agent_id", agent.ID)
 			if cfg.EnableRESTFallback {
 				agent.commMode = ModeREST
 			}
@@ -141,23 +142,23 @@ func (a *Agent) onRedisStateChange(old, new redisclient.ConnectionState) {
 	a.redisHealthy = (new == redisclient.StateConnected)
 	a.healthMu.Unlock()
 
-	fmt.Printf("Redis connection state changed: %s -> %s\n", old, new)
+	slog.Info("redis connection state changed", "from", old, "to", new, "agent_id", a.ID)
 
 	// 연결 복구 시 Redis 모드로 전환
 	if new == redisclient.StateConnected {
 		if a.commMode == ModeREST && a.config.EnableRESTFallback {
-			fmt.Println("Redis reconnected, switching back to Redis mode")
+			slog.Info("redis reconnected, switching back to redis mode", "agent_id", a.ID)
 			a.commMode = ModeHybrid // 안정화될 때까지 하이브리드 모드
 		}
 	} else if new == redisclient.StateDisconnected && a.config.EnableRESTFallback {
-		fmt.Println("Redis disconnected, switching to REST fallback mode")
+		slog.Warn("redis disconnected, switching to REST fallback mode", "agent_id", a.ID)
 		a.commMode = ModeREST
 	}
 }
 
 // onRedisError Redis 에러 콜백
 func (a *Agent) onRedisError(err error) {
-	fmt.Printf("Redis error: %v\n", err)
+	slog.Error("redis error", "error", err, "agent_id", a.ID)
 }
 
 // Start 에이전트 시작
@@ -168,7 +169,7 @@ func (a *Agent) Start() error {
 
 	// Control Plane에 등록
 	if err := a.registerToControlPlane(); err != nil {
-		fmt.Printf("Warning: Failed to register to control plane: %v\n", err)
+		slog.Warn("failed to register to control plane", "error", err, "agent_id", a.ID)
 	}
 
 	// 하트비트 시작
@@ -177,7 +178,7 @@ func (a *Agent) Start() error {
 	// 명령 수신 시작
 	go a.commandLoop()
 
-	fmt.Printf("Agent started: %s (%s)\n", a.ID, a.Hostname)
+	slog.Info("agent started", "agent_id", a.ID, "hostname", a.Hostname)
 	return nil
 }
 
@@ -218,7 +219,7 @@ func (a *Agent) registerToControlPlane() error {
 		return fmt.Errorf("server returned error %d: %s", resp.StatusCode, string(body))
 	}
 
-	fmt.Printf("Agent registered to control plane: %s\n", a.ID)
+	slog.Info("agent registered to control plane", "agent_id", a.ID)
 	return nil
 }
 
@@ -243,7 +244,7 @@ func (a *Agent) Stop() error {
 	a.Status = types.AgentStatusOffline
 	a.mu.Unlock()
 
-	fmt.Printf("Agent stopped: %s\n", a.ID)
+	slog.Info("agent stopped", "agent_id", a.ID)
 	return nil
 }
 
@@ -360,20 +361,20 @@ func (a *Agent) sendHeartbeat() {
 		if redisErr == nil {
 			return // Redis 성공
 		}
-		fmt.Printf("Redis heartbeat failed: %v\n", redisErr)
+		slog.Warn("redis heartbeat failed", "error", redisErr, "agent_id", a.ID)
 	}
 
 	// REST 폴백
 	if a.config.EnableRESTFallback && (a.commMode == ModeREST || a.commMode == ModeHybrid || redisErr != nil) {
 		restErr = a.sendHeartbeatREST(heartbeat)
 		if restErr != nil {
-			fmt.Printf("REST heartbeat failed: %v\n", restErr)
+			slog.Warn("REST heartbeat failed", "error", restErr, "agent_id", a.ID)
 		}
 	}
 
 	// 둘 다 실패한 경우 로깅
 	if redisErr != nil && restErr != nil {
-		fmt.Printf("All heartbeat methods failed - Redis: %v, REST: %v\n", redisErr, restErr)
+		slog.Error("all heartbeat methods failed", "redis_error", redisErr, "rest_error", restErr, "agent_id", a.ID)
 	}
 
 	// 모니터링 정보도 Redis에 저장 (하트비트와 별도로 업데이트)
@@ -462,9 +463,9 @@ func (a *Agent) commandLoop() {
 		channel := fmt.Sprintf("agent:commands:%s", a.ID)
 		err := a.redisClient.Subscribe(a.ctx, channel, a.handleCommand)
 		if err != nil {
-			fmt.Printf("Failed to subscribe to commands via Redis: %v\n", err)
+			slog.Error("failed to subscribe to commands via redis", "error", err, "channel", channel, "agent_id", a.ID)
 		} else {
-			fmt.Printf("Subscribed to Redis channel: %s\n", channel)
+			slog.Info("subscribed to redis channel", "channel", channel, "agent_id", a.ID)
 		}
 
 		// 클러스터별 실행 채널 (ClusterID가 있는 경우)
@@ -472,9 +473,9 @@ func (a *Agent) commandLoop() {
 			clusterChannel := fmt.Sprintf("cluster:%s:execute", a.config.ClusterID)
 			err = a.redisClient.Subscribe(a.ctx, clusterChannel, a.handleGroupExecution)
 			if err != nil {
-				fmt.Printf("Failed to subscribe to cluster execution channel: %v\n", err)
+				slog.Error("failed to subscribe to cluster execution channel", "error", err, "channel", clusterChannel, "cluster_id", a.config.ClusterID, "agent_id", a.ID)
 			} else {
-				fmt.Printf("Subscribed to Redis channel: %s\n", clusterChannel)
+				slog.Info("subscribed to redis channel", "channel", clusterChannel, "cluster_id", a.config.ClusterID, "agent_id", a.ID)
 			}
 		}
 
@@ -483,9 +484,9 @@ func (a *Agent) commandLoop() {
 			groupChannel := "group:execute:broadcast"
 			err = a.redisClient.Subscribe(a.ctx, groupChannel, a.handleGroupExecution)
 			if err != nil {
-				fmt.Printf("Failed to subscribe to group execution channel: %v\n", err)
+				slog.Error("failed to subscribe to group execution channel", "error", err, "channel", groupChannel, "agent_id", a.ID)
 			} else {
-				fmt.Printf("Subscribed to Redis channel: %s\n", groupChannel)
+				slog.Info("subscribed to redis channel", "channel", groupChannel, "agent_id", a.ID)
 			}
 		}
 
@@ -495,9 +496,9 @@ func (a *Agent) commandLoop() {
 			cmdChannel = fmt.Sprintf("cluster:%s:commands", a.config.ClusterID)
 		}
 		if err = a.redisClient.Subscribe(a.ctx, cmdChannel, a.handleCommand); err != nil {
-			fmt.Printf("Failed to subscribe to workflow command channel: %v\n", err)
+			slog.Error("failed to subscribe to workflow command channel", "error", err, "channel", cmdChannel, "agent_id", a.ID)
 		} else {
-			fmt.Printf("Subscribed to Redis channel: %s\n", cmdChannel)
+			slog.Info("subscribed to redis channel", "channel", cmdChannel, "agent_id", a.ID)
 		}
 	}
 
@@ -534,7 +535,7 @@ func (a *Agent) commandPollLoop() {
 			// REST API로 명령 조회
 			commands, err := a.fetchCommandsREST()
 			if err != nil {
-				fmt.Printf("Failed to fetch commands via REST: %v\n", err)
+				slog.Error("failed to fetch commands via REST", "error", err, "agent_id", a.ID)
 				continue
 			}
 
@@ -579,55 +580,54 @@ func (a *Agent) fetchCommandsREST() ([]string, error) {
 
 // handleCommand 명령 처리
 func (a *Agent) handleCommand(message string) {
-	fmt.Printf("Received command: %s\n", message)
+	slog.Info("received command", "message", message, "agent_id", a.ID)
 
 	var cmd types.AgentCommand
 	if err := json.Unmarshal([]byte(message), &cmd); err != nil {
-		fmt.Printf("Failed to parse command: %v\n", err)
+		slog.Error("failed to parse command", "error", err, "agent_id", a.ID)
 		return
 	}
 
 	switch cmd.Type {
 	case types.CommandStopWorkflow:
 		if err := a.StopGroupExecution(cmd.ExecutionID, cmd.WorkflowID); err != nil {
-			fmt.Printf("Failed to stop workflow: %v\n", err)
+			slog.Error("failed to stop workflow", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 		}
 	case types.CommandPauseWorkflow:
 		if err := a.PauseGroupExecution(cmd.ExecutionID, cmd.WorkflowID); err != nil {
-			fmt.Printf("Failed to pause workflow: %v\n", err)
+			slog.Error("failed to pause workflow", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 		}
 	case types.CommandResumeWorkflow:
 		if err := a.ResumeGroupExecution(cmd.ExecutionID, cmd.WorkflowID); err != nil {
-			fmt.Printf("Failed to resume workflow: %v\n", err)
+			slog.Error("failed to resume workflow", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 		}
 	default:
-		fmt.Printf("Unknown command type: %s\n", cmd.Type)
+		slog.Warn("unknown command type", "type", cmd.Type, "agent_id", a.ID)
 	}
 }
 
 // handleGroupExecution 그룹 실행 명령 처리
 func (a *Agent) handleGroupExecution(message string) {
-	fmt.Printf("Received group execution command: %s\n", message)
+	slog.Info("received group execution command", "message", message, "agent_id", a.ID)
 
 	var cmd types.GroupExecutionCommand
 	if err := json.Unmarshal([]byte(message), &cmd); err != nil {
-		fmt.Printf("Failed to parse group execution command: %v\n", err)
+		slog.Error("failed to parse group execution command", "error", err, "agent_id", a.ID)
 		return
 	}
 
-	fmt.Printf("Group execution: workflow=%s, execution=%s, triggered_by=%s\n",
-		cmd.WorkflowID, cmd.ExecutionID, cmd.TriggeredBy)
+	slog.Info("group execution", "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID, "triggered_by", cmd.TriggeredBy)
 
 	// 워크플로우 설정이 없으면 처리 불가
 	if cmd.WorkflowConfig == nil {
-		fmt.Printf("Group execution command missing group config\n")
+		slog.Error("group execution command missing group config", "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 		return
 	}
 
 	// 실행 소유권 claim: 한 클러스터의 여러 에이전트가 같은 명령을 수신하므로,
 	// Redis SETNX로 한 execution을 정확히 한 에이전트만 실행하도록 보장한다(중복 실행 방지).
 	if !a.claimExecution(cmd.ExecutionID) {
-		fmt.Printf("Execution %s already claimed by another agent, skipping\n", cmd.ExecutionID)
+		slog.Info("execution already claimed by another agent, skipping", "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID, "agent_id", a.ID)
 		return
 	}
 
@@ -667,7 +667,7 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	var jobConfig types.JobConfig
 	if cmd.JobConfig != "" {
 		if err := json.Unmarshal([]byte(cmd.JobConfig), &jobConfig); err != nil {
-			fmt.Printf("Invalid job_config for execution %s, using defaults: %v\n", cmd.ExecutionID, err)
+			slog.Warn("invalid job_config, using defaults", "error", err, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
 		}
 	}
 
@@ -705,7 +705,7 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	}
 
 	// Job 생성 성공. 이후 상태·결과는 Job Pod가 control-plane에 직접 콜백한다.
-	fmt.Printf("Delegated batch job %s for execution %s (workflow=%s)\n", job.Name, cmd.ExecutionID, cmd.WorkflowID)
+	slog.Info("delegated batch job", "job", job.Name, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
 }
 
 // getJobManager는 batch 위임용 JobManager를 지연 생성한다(in-cluster K8s 클라이언트).
@@ -718,7 +718,7 @@ func (a *Agent) getJobManager() *k8s.JobManager {
 	}
 	client, err := k8s.NewClient(a.config.Namespace)
 	if err != nil {
-		fmt.Printf("K8s client unavailable, batch delegation disabled: %v\n", err)
+		slog.Warn("K8s client unavailable, batch delegation disabled", "error", err, "agent_id", a.ID)
 		return nil
 	}
 	a.jobManager = k8s.NewJobManager(client, a.controlPlaneURL, a.config.RunnerImage)
@@ -741,7 +741,7 @@ func (a *Agent) claimExecution(executionID string) bool {
 	// TTL은 실행 최대 시간(10분)보다 넉넉히. 담당 에이전트 크래시 시 만료되어 재배치 가능.
 	acquired, err := a.redisClient.SetNX(a.ctx, key, a.ID, 15*time.Minute)
 	if err != nil {
-		fmt.Printf("Failed to claim execution %s: %v (skipping to avoid duplicate)\n", executionID, err)
+		slog.Error("failed to claim execution, skipping to avoid duplicate", "error", err, "execution_id", executionID, "agent_id", a.ID)
 		return false
 	}
 	return acquired
@@ -755,7 +755,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	// panic이 에이전트 전체를 죽이지 않도록 복구하고 실행을 실패로 보고한다.
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("PANIC in executeGroup (workflow=%s execution=%s): %v\n", cmd.WorkflowID, cmd.ExecutionID, r)
+			slog.Error("panic in executeGroup", "panic", r, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 			completedAt := time.Now()
 			_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
 				ExecutionID:  cmd.ExecutionID,
@@ -768,7 +768,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 		}
 	}()
 
-	fmt.Printf("Starting group execution: %s (%s)\n", workflow.Name, workflow.ID)
+	slog.Info("starting group execution", "name", workflow.Name, "workflow_id", workflow.ID, "execution_id", cmd.ExecutionID)
 
 	// Link Client 생성
 	linkClient := link.NewClient(a.controlPlaneURL)
@@ -803,7 +803,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 
 	_, err := groupExecutor.Start(ctx, cmd.TriggeredBy)
 	if err != nil {
-		fmt.Printf("Failed to start group execution: %v\n", err)
+		slog.Error("failed to start group execution", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 
 		// 실패 결과 보고
 		completedAt := time.Now()
@@ -816,7 +816,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 			ErrorMessage: err.Error(),
 		}
 		if err := a.reportGroupExecutionResult(executionResult); err != nil {
-			fmt.Printf("Failed to report group execution result: %v\n", err)
+			slog.Error("failed to report group execution result", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 		}
 		return
 	}
@@ -828,7 +828,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("Group execution timed out: %s\n", workflow.Name)
+			slog.Error("group execution timed out", "name", workflow.Name, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 			_ = groupExecutor.Stop()
 
 			completedAt := time.Now()
@@ -841,7 +841,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 				ErrorMessage: "execution timed out",
 			}
 			if err := a.reportGroupExecutionResult(executionResult); err != nil {
-				fmt.Printf("Failed to report group execution result: %v\n", err)
+				slog.Error("failed to report group execution result", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 			}
 			return
 
@@ -874,11 +874,12 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 				}
 
 				if err := a.reportGroupExecutionResult(executionResult); err != nil {
-					fmt.Printf("Failed to report group execution result: %v\n", err)
+					slog.Error("failed to report group execution result", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 				}
 
-				fmt.Printf("Group execution completed: %s (status: %s, duration: %v, records: %d)\n",
-					workflow.Name, currentExec.Status, duration, currentExec.TotalRecords)
+				slog.Info("group execution completed",
+					"name", workflow.Name, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID,
+					"status", currentExec.Status, "duration", duration, "records", currentExec.TotalRecords)
 				return
 			}
 		}
@@ -887,8 +888,8 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 
 // reportGroupExecutionResult 그룹 실행 결과 보고
 func (a *Agent) reportGroupExecutionResult(result *types.GroupExecutionResult) error {
-	fmt.Printf("[reportGroupExecutionResult] Reporting result for workflow=%s, execution=%s, status=%s\n",
-		result.WorkflowID, result.ExecutionID, result.Status)
+	slog.Info("reporting group execution result",
+		"workflow_id", result.WorkflowID, "execution_id", result.ExecutionID, "status", result.Status)
 
 	// REST API로 결과 보고 (직접 DB 업데이트를 위해 우선 사용)
 	if a.controlPlaneURL != "" {
@@ -908,14 +909,14 @@ func (a *Agent) reportGroupExecutionResult(result *types.GroupExecutionResult) e
 
 		resp, err := a.httpClient.Do(req)
 		if err != nil {
-			fmt.Printf("[reportGroupExecutionResult] REST API failed: %v\n", err)
+			slog.Error("report result REST API failed", "error", err, "workflow_id", result.WorkflowID, "execution_id", result.ExecutionID)
 		} else {
 			defer resp.Body.Close()
 			if resp.StatusCode >= 400 {
 				body, _ := io.ReadAll(resp.Body)
-				fmt.Printf("[reportGroupExecutionResult] REST API error: %s\n", string(body))
+				slog.Error("report result REST API error", "status_code", resp.StatusCode, "body", string(body), "workflow_id", result.WorkflowID, "execution_id", result.ExecutionID)
 			} else {
-				fmt.Printf("[reportGroupExecutionResult] Result reported successfully via REST API\n")
+				slog.Info("result reported successfully via REST API", "workflow_id", result.WorkflowID, "execution_id", result.ExecutionID)
 				return nil
 			}
 		}
@@ -925,9 +926,9 @@ func (a *Agent) reportGroupExecutionResult(result *types.GroupExecutionResult) e
 	if a.redisClient != nil && a.redisHealthy {
 		channel := fmt.Sprintf("workflow:result:%s", result.WorkflowID)
 		if err := a.redisClient.Publish(a.ctx, channel, result); err != nil {
-			fmt.Printf("[reportGroupExecutionResult] Failed to publish result via Redis: %v\n", err)
+			slog.Error("failed to publish result via redis", "error", err, "workflow_id", result.WorkflowID, "execution_id", result.ExecutionID)
 		} else {
-			fmt.Printf("[reportGroupExecutionResult] Result published via Redis\n")
+			slog.Info("result published via redis", "workflow_id", result.WorkflowID, "execution_id", result.ExecutionID)
 			return nil
 		}
 	}

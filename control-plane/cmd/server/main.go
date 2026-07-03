@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/config"
 	"github.com/conduix/conduix/control-plane/pkg/database"
+	"github.com/conduix/conduix/shared/logging"
 )
 
 var (
@@ -96,23 +98,24 @@ func main() {
 		os.Exit(0)
 	}
 
+	logging.Setup("control-plane")
+
 	// 사용자 설정 로드 (파일 + 환경변수)
 	usersConfig := config.LoadUsersConfigFromEnv()
 	if cfg.UsersConfigPath != "" {
 		fileCfg, err := config.LoadUsersConfig(cfg.UsersConfigPath)
 		if err != nil {
-			fmt.Printf("Warning: Failed to load users config from %s: %v\n", cfg.UsersConfigPath, err)
+			slog.Warn("failed to load users config", "path", cfg.UsersConfigPath, "error", err)
 		} else {
 			usersConfig.Merge(fileCfg)
 		}
 	}
 
-	// 관리자 목록 출력
 	if len(usersConfig.AdminEmails) > 0 {
-		fmt.Printf("Admin users configured: %v\n", usersConfig.AdminEmails)
+		slog.Info("admin users configured", "emails", usersConfig.AdminEmails)
 	}
 	if len(usersConfig.OperatorEmails) > 0 {
-		fmt.Printf("Operator users configured: %v\n", usersConfig.OperatorEmails)
+		slog.Info("operator users configured", "emails", usersConfig.OperatorEmails)
 	}
 
 	// 데이터베이스 연결
@@ -127,29 +130,29 @@ func main() {
 
 	db, err := database.New(dbConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error connecting to database: %v\n", err)
+		slog.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = db.Close() }()
 
 	// 마이그레이션 (환경변수 또는 플래그로 활성화)
 	if cfg.AutoMigrate || cfg.Migrate {
-		fmt.Println("Running database migrations...")
+		slog.Info("running database migrations")
 		if err := db.Migrate(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running migrations: %v\n", err)
+			slog.Error("failed to run migrations", "error", err)
 			os.Exit(1)
 		}
-		fmt.Println("Migrations completed")
+		slog.Info("migrations completed")
 
 		// 첫 실행 시 샘플 파이프라인 기본 등록 (삭제 가능, 재시딩 안 함)
 		if err := seed.Run(db); err != nil {
-			fmt.Printf("Warning: sample seed failed (non-fatal): %v\n", err)
+			slog.Warn("sample seed failed (non-fatal)", "error", err)
 		}
 
 		// --migrate 는 마이그레이션 전용 1회 실행(K8s Job 등). 완료 후 종료한다.
 		// AUTO_MIGRATE 는 서버 기동 시 자동 마이그레이션이므로 계속 진행한다.
 		if cfg.Migrate {
-			fmt.Println("Migration-only mode: exiting")
+			slog.Info("migration-only mode: exiting")
 			os.Exit(0)
 		}
 	}
@@ -164,7 +167,7 @@ func main() {
 	}
 	redisService, err = services.NewRedisService(redisConfig)
 	if err != nil {
-		fmt.Printf("Warning: Redis connection failed: %v (continuing without Redis)\n", err)
+		slog.Warn("Redis connection failed, continuing without Redis", "error", err)
 		redisService = nil
 	} else {
 		defer func() { _ = redisService.Close() }()
@@ -173,7 +176,7 @@ func main() {
 	// 스케줄러 서비스 생성 및 시작
 	schedulerService := services.NewSchedulerService(db, redisService, nil)
 	if err := schedulerService.Start(); err != nil {
-		fmt.Printf("Warning: Scheduler service failed to start: %v\n", err)
+		slog.Warn("scheduler service failed to start", "error", err)
 	} else {
 		defer func() { _ = schedulerService.Stop() }()
 	}
@@ -187,7 +190,7 @@ func main() {
 		var err error
 		oauthConfig, err = config.LoadOAuthConfigWithEnv(cfg.OAuthConfigPath, cfg.OAuthDefaultRedirect)
 		if err != nil {
-			fmt.Printf("Warning: Failed to load OAuth config from %s: %v\n", cfg.OAuthConfigPath, err)
+			slog.Warn("failed to load OAuth config", "path", cfg.OAuthConfigPath, "error", err)
 			oauthConfig = config.GetDefaultOAuthConfig()
 		}
 	} else {
@@ -210,22 +213,21 @@ func main() {
 	server.RegisterOAuthProviders(oauthConfig)
 	enabledProviders := oauthConfig.GetEnabledProviders()
 	if len(enabledProviders) > 0 {
-		fmt.Printf("OAuth2 providers registered: ")
 		names := make([]string, 0, len(enabledProviders))
 		for id := range enabledProviders {
 			names = append(names, id)
 		}
-		fmt.Println(strings.Join(names, ", "))
+		slog.Info("OAuth2 providers registered", "providers", strings.Join(names, ", "))
 	} else {
-		fmt.Println("Warning: No OAuth2 providers configured")
+		slog.Warn("no OAuth2 providers configured")
 	}
 
 	// 서버 시작
 	go func() {
 		addr := fmt.Sprintf(":%d", cfg.Port)
-		fmt.Printf("Control plane server listening on %s\n", addr)
+		slog.Info("control plane server listening", "addr", addr)
 		if err := server.Run(addr); err != nil {
-			fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+			slog.Error("server error", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -235,6 +237,5 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	sig := <-sigChan
-	fmt.Printf("\nReceived signal: %v\n", sig)
-	fmt.Println("Shutting down...")
+	slog.Info("received signal, shutting down", "signal", sig.String())
 }

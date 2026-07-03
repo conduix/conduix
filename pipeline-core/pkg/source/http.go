@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -105,7 +106,7 @@ func buildHTTPClient(auth *config.AuthConfig) (*http.Client, error) {
 		client.Transport = &http.Transport{
 			TLSClientConfig: tlsConfig,
 		}
-		fmt.Println("[http] mTLS enabled")
+		slog.Default().Info("HTTP mTLS enabled")
 	}
 
 	return client, nil
@@ -300,13 +301,15 @@ func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<
 		// 데이터가 없으면 종료
 		if len(items) == 0 {
 			if respObj != nil {
-				fmt.Printf("[HTTP] No items found on page %d (dataField=%s, response keys=%v)\n", page, s.pagination.DataField, getMapKeys(respObj))
+				slog.Default().Info("HTTP no items found on page",
+					"url", s.url, "page", page, "data_field", s.pagination.DataField, "response_keys", getMapKeys(respObj))
 			} else {
-				fmt.Printf("[HTTP] No items found on page %d (response is not array or object)\n", page)
+				slog.Default().Info("HTTP no items found on page (response is not array or object)",
+					"url", s.url, "page", page)
 			}
 			return
 		}
-		fmt.Printf("[HTTP] Page %d: found %d items\n", page, len(items))
+		slog.Default().Info("HTTP page fetched", "url", s.url, "page", page, "items", len(items))
 
 		for _, item := range items {
 			if m, ok := item.(map[string]any); ok {
@@ -538,8 +541,9 @@ func (s *HTTPSource) waitForRateLimit(ctx context.Context) error {
 	if s.requestCount >= s.rateLimit.Rate {
 		waitTime := windowDuration - now.Sub(s.windowStart)
 		if waitTime > 0 {
-			fmt.Printf("[HTTP] Rate limit reached (%d/%d per %s), waiting %v\n",
-				s.requestCount, s.rateLimit.Rate, s.rateLimit.Interval, waitTime)
+			slog.Default().Info("HTTP rate limit reached, waiting",
+				"url", s.url, "request_count", s.requestCount, "rate", s.rateLimit.Rate,
+				"interval", s.rateLimit.Interval, "wait", waitTime)
 
 			select {
 			case <-ctx.Done():
@@ -702,7 +706,8 @@ func (s *HTTPSource) getOAuth2Token(ctx context.Context) (string, error) {
 		if err != nil {
 			// Refresh token 실패 시 client_credentials로 폴백 (가능한 경우)
 			if s.auth.ClientSecret != "" {
-				fmt.Printf("[oauth2] Refresh token failed, falling back to client_credentials: %v\n", err)
+				slog.Default().Warn("OAuth2 refresh token failed, falling back to client_credentials",
+					"url", s.url, "error", err)
 				tokenResp, err = s.requestTokenWithClientCredentials(ctx)
 			}
 		}

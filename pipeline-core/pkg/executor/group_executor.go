@@ -117,7 +117,7 @@ func (e *GroupExecutor) loadPipelineLinks() {
 
 	links, err := e.linkClient.GetLinksByWorkflow(ctx, e.group.ID)
 	if err != nil {
-		fmt.Printf("[GroupExecutor] Failed to load pipeline links: %v\n", err)
+		slog.Error("failed to load pipeline links", "workflow_id", e.group.ID, "error", err)
 		return
 	}
 
@@ -133,7 +133,7 @@ func (e *GroupExecutor) loadPipelineLinks() {
 	}
 
 	if len(links) > 0 {
-		fmt.Printf("[GroupExecutor] Loaded %d pipeline links for workflow %s\n", len(links), e.group.ID)
+		slog.Info("loaded pipeline links", "workflow_id", e.group.ID, "count", len(links))
 	}
 }
 
@@ -553,8 +553,9 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 
 	// 1. Outputs 배열에서 Sink 생성 (권장 방식)
 	for _, output := range pipeline.Outputs {
-		fmt.Printf("[runPipeline] Creating output: %s (type: %s), pre_stages: %d\n",
-			output.Name, output.Type, len(output.PreStages))
+		slog.Info("creating output",
+			"workflow_id", e.group.ID, "pipeline_id", pipeline.ID,
+			"output", output.Name, "type", output.Type, "pre_stages", len(output.PreStages))
 		s, err := e.createSinkFromOutput(output)
 		if err != nil {
 			result.Status = "failed"
@@ -572,13 +573,15 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			Sink:      s,
 			PreStages: output.PreStages,
 		})
-		fmt.Printf("[runPipeline] Output opened: %s (type: %s)\n", output.Name, output.Type)
+		slog.Info("output opened",
+			"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", output.Name, "type", output.Type)
 	}
 
 	// 2. Stages 배열에서 Output 타입 찾기 (레거시 호환)
 	for _, stage := range pipeline.Stages {
 		if isOutputType(stage.Type) {
-			fmt.Printf("[runPipeline] Creating output from stages (legacy): %s (type: %s)\n", stage.Name, stage.Type)
+			slog.Info("creating output from stages (legacy)",
+				"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", stage.Name, "type", stage.Type)
 			s, err := e.createSinkFromStage(stage)
 			if err != nil {
 				result.Status = "failed"
@@ -602,7 +605,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				Sink:      s,
 				PreStages: nil,
 			})
-			fmt.Printf("[runPipeline] Output opened (legacy): %s (type: %s)\n", stage.Name, stage.Type)
+			slog.Info("output opened (legacy)",
+				"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", stage.Name, "type", stage.Type)
 		}
 	}
 
@@ -613,10 +617,12 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	defer func() {
 		for name, s := range outputSinks {
 			if err := s.Flush(ctx); err != nil {
-				fmt.Printf("[runPipeline] Flush error for %s: %v\n", name, err)
+				slog.Error("output flush error",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", name, "error", err)
 			}
 			if err := s.Close(); err != nil {
-				fmt.Printf("[runPipeline] Close error for %s: %v\n", name, err)
+				slog.Error("output close error",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", name, "error", err)
 			}
 		}
 	}()
@@ -630,17 +636,19 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	inputConfig := e.injectKafkaInputForChild(&pipeline)
 
 	// Input 소스 생성 및 실행
-	fmt.Printf("[runPipeline] Creating input source: %s (type: %s)\n", inputConfig.Name, inputConfig.Type)
+	slog.Info("creating input source",
+		"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "source", inputConfig.Name, "type", inputConfig.Type)
 	records, errs, src, err := e.createAndRunSource(ctx, pipeline.ID, inputConfig)
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = err.Error()
 		statsCollector.RecordCollectionError()
 		result.Statistics = statsCollector.GetStatistics()
-		fmt.Printf("[runPipeline] Source creation failed: %v\n", err)
+		slog.Error("source creation failed",
+			"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "error", err)
 		return result, err
 	}
-	fmt.Printf("[runPipeline] Source created successfully\n")
+	slog.Info("source created successfully", "workflow_id", e.group.ID, "pipeline_id", pipeline.ID)
 
 	// 활성 소스 추적
 	if src != nil {
@@ -675,9 +683,11 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				e.checkpointClient.UpdateCheckpoint(cp)
 			}
 			if err := e.checkpointClient.FlushCheckpoints(context.Background()); err != nil {
-				fmt.Printf("[checkpoint] Warning: Failed to flush checkpoints: %v\n", err)
+				slog.Warn("failed to flush checkpoints",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "error", err)
 			} else if len(sourceCheckpoints) > 0 {
-				fmt.Printf("[checkpoint] Saved %d checkpoints for pipeline %s\n", len(sourceCheckpoints), pipeline.ID)
+				slog.Info("saved checkpoints",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "count", len(sourceCheckpoints))
 			}
 		}
 	}
@@ -688,11 +698,12 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	if input.JSONSchema != "" {
 		sourceValidator, err = validator.NewSchemaValidator(input.JSONSchema)
 		if err != nil {
-			fmt.Printf("[runPipeline] Source schema validator creation failed: %v\n", err)
+			slog.Warn("source schema validator creation failed",
+				"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "error", err)
 			// 스키마 파싱 실패는 경고로만 처리, 검증 없이 계속 진행
 			sourceValidator = nil
 		} else {
-			fmt.Printf("[runPipeline] Source schema validator created\n")
+			slog.Info("source schema validator created", "workflow_id", e.group.ID, "pipeline_id", pipeline.ID)
 		}
 	}
 
@@ -702,8 +713,9 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		if outputMode == "" {
 			outputMode = types.OutputModeBulk // 기본값: bulk 모드
 		}
-		fmt.Printf("[runPipeline] Using batch mode for pipeline %s (output_mode=%s, size=%d, workers=%d)\n",
-			pipeline.Name, outputMode, pipeline.Batch.Size, pipeline.Batch.Workers)
+		slog.Info("using batch mode",
+			"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "pipeline", pipeline.Name,
+			"output_mode", outputMode, "size", pipeline.Batch.Size, "workers", pipeline.Batch.Workers)
 		return e.runPipelineBatch(ctx, pipeline, records, errs, outputsWithSinks,
 			statsCollector, sampleBuffer, sourceValidator, saveCheckpoints, guard)
 	}
@@ -762,7 +774,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 				validationResult := sourceValidator.Validate(record.Data)
 				if !validationResult.Valid {
 					statsCollector.RecordProcessingError()
-					fmt.Printf("[runPipeline] Source schema validation failed: %v\n", validationResult.Errors)
+					slog.Warn("source schema validation failed",
+						"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "errors", validationResult.Errors)
 					continue // 스키마 검증 실패 시 레코드 건너뛰기
 				}
 			}
@@ -862,7 +875,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			if err != nil {
 				statsCollector.RecordCollectionError()
 				result.ErrorMessage = err.Error()
-				fmt.Printf("[runPipeline] Source error: %v\n", err)
+				slog.Error("source error",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "error", err)
 			}
 		}
 	}
@@ -885,11 +899,13 @@ func (e *GroupExecutor) createAndRunSource(ctx context.Context, pipelineID strin
 	// 체크포인트 로드 (CheckpointableSource인 경우)
 	if e.checkpointClient != nil {
 		if cpSource, ok := src.(source.CheckpointableSource); ok {
-			fmt.Printf("[checkpoint] Loading checkpoints for pipeline %s (source type: %s)\n", pipelineID, cpSource.SourceType())
+			slog.Info("loading checkpoints",
+				"workflow_id", e.group.ID, "pipeline_id", pipelineID, "source_type", cpSource.SourceType())
 
 			dbCheckpoints, err := e.checkpointClient.LoadCheckpoints(ctx, pipelineID)
 			if err != nil {
-				fmt.Printf("[checkpoint] Warning: Failed to load checkpoints: %v\n", err)
+				slog.Warn("failed to load checkpoints",
+					"workflow_id", e.group.ID, "pipeline_id", pipelineID, "error", err)
 			} else if len(dbCheckpoints) > 0 {
 				// DB 체크포인트를 소스 체크포인트로 변환
 				sourceCheckpoints := make([]*source.SourceCheckpoint, 0, len(dbCheckpoints))
@@ -902,9 +918,11 @@ func (e *GroupExecutor) createAndRunSource(ctx context.Context, pipelineID strin
 					})
 				}
 				if err := cpSource.SetSourceCheckpoints(sourceCheckpoints); err != nil {
-					fmt.Printf("[checkpoint] Warning: Failed to set checkpoints: %v\n", err)
+					slog.Warn("failed to set checkpoints",
+						"workflow_id", e.group.ID, "pipeline_id", pipelineID, "error", err)
 				} else {
-					fmt.Printf("[checkpoint] Restored %d checkpoints for pipeline %s\n", len(sourceCheckpoints), pipelineID)
+					slog.Info("restored checkpoints",
+						"workflow_id", e.group.ID, "pipeline_id", pipelineID, "count", len(sourceCheckpoints))
 				}
 			}
 		}
@@ -1206,7 +1224,7 @@ func (e *GroupExecutor) closeStreamStages() {
 	defer e.streamStagesMu.Unlock()
 	for key, s := range e.streamStages {
 		if err := s.Close(); err != nil {
-			fmt.Printf("[stream-stage] close error (%s): %v\n", key, err)
+			slog.Error("stream stage close error", "workflow_id", e.group.ID, "stage", key, "error", err)
 		}
 		delete(e.streamStages, key)
 	}
@@ -1676,7 +1694,8 @@ func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline 
 	}
 
 	// 자식이 있으면 각 링크에 대해 Kafka Sink 생성
-	fmt.Printf("[injectKafkaSinksForParent] Pipeline %s has %d children, injecting Kafka sinks\n", pipeline.ID, len(childLinks))
+	slog.Info("injecting Kafka sinks for parent pipeline",
+		"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "children", len(childLinks))
 
 	for _, l := range childLinks {
 		// Kafka brokers 환경변수에서 동적으로 가져오기
@@ -1692,13 +1711,15 @@ func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline 
 		// Kafka Sink 생성
 		kafkaSink, err := output.NewOutput(cfg)
 		if err != nil {
-			fmt.Printf("[injectKafkaSinksForParent] Failed to create Kafka sink for link %s: %v\n", l.ID, err)
+			slog.Error("failed to create Kafka sink for link",
+				"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "link_id", l.ID, "error", err)
 			continue
 		}
 
 		// Sink 열기
 		if err := kafkaSink.Open(ctx); err != nil {
-			fmt.Printf("[injectKafkaSinksForParent] Failed to open Kafka sink for link %s: %v\n", l.ID, err)
+			slog.Error("failed to open Kafka sink for link",
+				"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "link_id", l.ID, "error", err)
 			continue
 		}
 
@@ -1706,7 +1727,8 @@ func (e *GroupExecutor) injectKafkaSinksForParent(ctx context.Context, pipeline 
 		sinkName := fmt.Sprintf("kafka_link_%s", l.ChildPipelineID[:8])
 		injectedSinks[sinkName] = kafkaSink
 
-		fmt.Printf("[injectKafkaSinksForParent] Injected Kafka sink %s -> topic: %s\n", sinkName, l.KafkaTopic)
+		slog.Info("injected Kafka sink",
+			"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "sink", sinkName, "topic", l.KafkaTopic)
 	}
 
 	return injectedSinks
@@ -1733,8 +1755,8 @@ func (e *GroupExecutor) injectKafkaInputForChild(pipeline *types.GroupedPipeline
 	// 첫 번째 부모 링크 사용 (여러 부모가 있을 경우 첫 번째 사용)
 	l := parentLinks[0]
 
-	fmt.Printf("[injectKafkaInputForChild] Pipeline %s is a child, replacing input with Kafka input (topic: %s)\n",
-		pipeline.ID, l.KafkaTopic)
+	slog.Info("replacing input with Kafka input for child pipeline",
+		"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "topic", l.KafkaTopic)
 
 	// Kafka brokers 환경변수에서 동적으로 가져오기
 	brokers := link.GetKafkaBrokers()
@@ -1849,8 +1871,9 @@ func (e *GroupExecutor) runPipelineBatch(
 		workers = 100
 	}
 
-	fmt.Printf("[runPipelineBatch] Starting (size=%d, workers=%d, output_mode=%s, flush=%v)\n",
-		batchSize, workers, outputMode, flushInterval)
+	slog.Info("starting batch pipeline",
+		"workflow_id", e.group.ID, "pipeline_id", pipeline.ID,
+		"size", batchSize, "workers", workers, "output_mode", outputMode, "flush", flushInterval)
 
 	// 에러 메시지 수집용
 	var sinkErrors []string
@@ -1871,7 +1894,8 @@ func (e *GroupExecutor) runPipelineBatch(
 			return
 		}
 
-		fmt.Printf("[runPipelineBatch] Processing %d records (parallel stage → %s output)\n", len(batch), outputMode)
+		slog.Info("processing batch",
+			"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "records", len(batch), "output_mode", outputMode)
 
 		// 병렬 Stage 처리를 위한 채널
 		type stageResult struct {
@@ -1945,11 +1969,13 @@ func (e *GroupExecutor) runPipelineBatch(
 		}
 
 		if len(transformed) == 0 {
-			fmt.Printf("[runPipelineBatch] All records filtered out\n")
+			slog.Info("all records filtered out",
+				"workflow_id", e.group.ID, "pipeline_id", pipeline.ID)
 			return
 		}
 
-		fmt.Printf("[runPipelineBatch] %d records passed transform, sending to outputs (%s mode)\n", len(transformed), outputMode)
+		slog.Info("records passed transform, sending to outputs",
+			"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "records", len(transformed), "output_mode", outputMode)
 
 		// 각 Output에 대해 Output별 PreStages 적용 후 전송
 		for _, ows := range outputsWithSinks {
@@ -2087,7 +2113,8 @@ func (e *GroupExecutor) runPipelineBatch(
 			if err != nil {
 				statsCollector.RecordCollectionError()
 				result.ErrorMessage = err.Error()
-				fmt.Printf("[runPipelineBatch] Source error: %v\n", err)
+				slog.Error("source error",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "error", err)
 			}
 		}
 	}

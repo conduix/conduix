@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -70,8 +71,7 @@ func (r *BatchRunner) Run() error {
 	startTime := time.Now()
 	podName := os.Getenv("HOSTNAME") // Kubernetes에서 Pod 이름
 
-	fmt.Printf("[BatchRunner] Starting execution: workflow=%s, execution=%s\n",
-		r.workflowID, r.executionID)
+	slog.Info("batch runner starting execution", "workflow_id", r.workflowID, "execution_id", r.executionID)
 
 	// 파이프라인 설정 파싱
 	var workflowConfig types.Workflow
@@ -115,7 +115,7 @@ func (r *BatchRunner) Run() error {
 	}
 
 	// 완료 대기
-	fmt.Println("[BatchRunner] Waiting for execution to complete...")
+	slog.Info("batch runner waiting for execution to complete", "workflow_id", r.workflowID, "execution_id", r.executionID)
 
 	result, err := r.waitForCompletion(ctx, groupExecutor, startTime, podName)
 	if err != nil {
@@ -190,8 +190,9 @@ func (r *BatchRunner) waitForCompletion(
 
 // sendResult 결과를 Control Plane으로 전송
 func (r *BatchRunner) sendResult(result *types.JobExecutionResult) error {
-	fmt.Printf("[BatchRunner] Sending result: status=%s, records=%d\n",
-		result.Status, result.TotalRecords)
+	slog.Info("batch runner sending result",
+		"execution_id", result.ExecutionID, "workflow_id", result.WorkflowID,
+		"status", result.Status, "records", result.TotalRecords)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -218,7 +219,7 @@ func (r *BatchRunner) sendResult(result *types.JobExecutionResult) error {
 		return fmt.Errorf("server returned error %d: %s", resp.StatusCode, string(body))
 	}
 
-	fmt.Printf("[BatchRunner] Result sent successfully to %s\n", r.callbackURL)
+	slog.Info("batch runner result sent successfully", "callback_url", r.callbackURL, "execution_id", r.executionID)
 	return nil
 }
 
@@ -238,7 +239,8 @@ func (r *BatchRunner) sendErrorResult(startTime time.Time, podName string, execE
 	}
 
 	if err := r.sendResult(result); err != nil {
-		fmt.Printf("[BatchRunner] Failed to send error result: %v\n", err)
+		slog.Error("batch runner failed to send error result",
+			"error", err, "execution_id", r.executionID, "workflow_id", r.workflowID)
 		return fmt.Errorf("execution failed: %w, and failed to report: %v", execErr, err)
 	}
 

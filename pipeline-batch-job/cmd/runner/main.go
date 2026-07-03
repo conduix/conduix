@@ -4,13 +4,14 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/conduix/conduix/pipeline-batch-job/internal/config"
 	"github.com/conduix/conduix/pipeline-batch-job/internal/runner"
+	"github.com/conduix/conduix/shared/logging"
 
 	// K8s CPU/메모리 limit(cgroup)을 Go 런타임에 반영: GOMAXPROCS/GOMEMLIMIT 자동 설정.
 	_ "github.com/KimMachineGun/automemlimit"
@@ -18,16 +19,17 @@ import (
 )
 
 func main() {
-	fmt.Println("[pipeline-batch-job] Starting...")
+	logging.Setup("pipeline-batch-job")
+	slog.Info("starting")
 
 	// 설정 로드
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[pipeline-batch-job] Configuration error: %v\n", err)
+		slog.Error("configuration error", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("[pipeline-batch-job] Mode=%s, WorkflowID=%s\n", cfg.Mode, cfg.WorkflowID)
+	slog.Info("config loaded", "mode", cfg.Mode, "workflow_id", cfg.WorkflowID)
 
 	// 시그널 핸들링 (graceful shutdown)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -38,16 +40,16 @@ func main() {
 
 	go func() {
 		sig := <-sigCh
-		fmt.Printf("[pipeline-batch-job] Received signal: %v, shutting down...\n", sig)
+		slog.Info("received signal, shutting down", "signal", sig.String())
 		cancel()
 	}()
 
 	// Runner 실행
 	r := runner.New(cfg)
 	if err := r.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "[pipeline-batch-job] Execution error: %v\n", err)
+		slog.Error("execution error", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("[pipeline-batch-job] Finished.")
+	slog.Info("finished")
 }

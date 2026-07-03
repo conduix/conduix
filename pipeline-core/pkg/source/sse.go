@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -92,8 +93,8 @@ func (s *SSESource) Open(ctx context.Context) error {
 	}
 
 	s.connected = true
-	fmt.Printf("[sse] Initialized for %s, reconnect_wait=%v, max_reconnect=%d\n",
-		maskSSEURL(s.url), s.reconnectWait, s.maxReconnect)
+	slog.Default().Info("SSE initialized",
+		"url", maskSSEURL(s.url), "reconnect_wait", s.reconnectWait, "max_reconnect", s.maxReconnect)
 
 	return nil
 }
@@ -131,8 +132,8 @@ func (s *SSESource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 				}
 				s.mu.Unlock()
 
-				fmt.Printf("[sse] Connection lost: %v, reconnecting... attempt %d/%d\n",
-					err, s.reconnectCount, s.maxReconnect)
+				slog.Default().Info("SSE connection lost, reconnecting",
+					"url", maskSSEURL(s.url), "attempt", s.reconnectCount, "max_reconnect", s.maxReconnect, "error", err)
 
 				select {
 				case <-ctx.Done():
@@ -199,7 +200,7 @@ func (s *SSESource) streamEvents(ctx context.Context, records chan<- Record, err
 	s.reconnectCount = 0
 	s.mu.Unlock()
 
-	fmt.Printf("[sse] Connected to %s\n", maskSSEURL(s.url))
+	slog.Default().Info("SSE connected", "url", maskSSEURL(s.url))
 
 	// 이벤트 스트림 파싱
 	return s.parseEventStream(ctx, resp.Body, records, errs)
@@ -382,7 +383,7 @@ func (s *SSESource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error 
 			s.checkpointMu.Lock()
 			s.lastEventID = cp.OffsetValue
 			s.checkpointMu.Unlock()
-			fmt.Printf("[sse] Restored checkpoint: last_event_id=%s\n", cp.OffsetValue)
+			slog.Default().Info("SSE restored checkpoint", "url", maskSSEURL(s.url), "last_event_id", cp.OffsetValue)
 			return nil
 		}
 	}
@@ -394,7 +395,7 @@ func (s *SSESource) Close() error {
 	defer s.mu.Unlock()
 
 	s.connected = false
-	fmt.Printf("[sse] Closed. Processed: %d events\n", s.processedCount)
+	slog.Default().Info("SSE closed", "url", maskSSEURL(s.url), "processed", s.processedCount)
 	return nil
 }
 

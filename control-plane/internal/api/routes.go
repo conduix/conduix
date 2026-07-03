@@ -171,6 +171,13 @@ func (s *Server) setupRoutes() {
 			internalPipelines.POST("/:id/checkpoints", s.checkpointHandler.UpdateCheckpoint)
 		}
 
+		// 파이프라인 링크 조회 내부 API (executor가 실행 시 부모-자식 링크 조회 - 인증 불필요)
+		// 쓰기(POST/DELETE)와 UI 조회는 아래 authenticated /pipeline-links 그룹에 유지.
+		internalPipelineLinks := v1.Group("/pipeline-links")
+		{
+			internalPipelineLinks.GET("/workflow/:workflow_id", s.pipelineLinkHandler.GetLinksByWorkflow)
+		}
+
 		// 에이전트 내부 API (인증 불필요 - 클러스터 내부 통신)
 		internalAgents := v1.Group("/agents")
 		{
@@ -401,7 +408,8 @@ func (s *Server) setupRoutes() {
 				pipelineLinks.DELETE("/:parent_id/:child_id", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.pipelineLinkHandler.DeleteLink)
 				pipelineLinks.GET("/parent/:parent_id", s.pipelineLinkHandler.GetLinksByParent)
 				pipelineLinks.GET("/child/:child_id", s.pipelineLinkHandler.GetLinksByChild)
-				pipelineLinks.GET("/workflow/:workflow_id", s.pipelineLinkHandler.GetLinksByWorkflow)
+				// GET /workflow/:workflow_id 는 executor(worker/batch Job)가 실행 시 호출하는
+				// 내부 API라 인증 그룹이 아닌 internalPipelineLinks(아래)에 둔다.
 			}
 		}
 	}

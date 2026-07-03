@@ -202,6 +202,33 @@ func TestPipelineLinkRoutesExist(t *testing.T) {
 	}
 }
 
+// TestGetLinksByWorkflowIsUnauthenticated는 executor(worker/batch Job)가 실행 시
+// 호출하는 링크 조회 API가 JWT 없이 접근 가능한지 검증한다.
+// (인증 그룹에 있으면 401 → DAG 워크플로우의 부모-자식 Kafka 링크가 조용히 끊긴다.)
+func TestGetLinksByWorkflowIsUnauthenticated(t *testing.T) {
+	db := &database.DB{}
+	redisService, _ := services.NewRedisService(&services.RedisServiceConfig{Addr: "localhost:6379"})
+	schedulerService := services.NewSchedulerService(db, redisService, &services.SchedulerConfig{RefreshInterval: 30 * time.Second})
+	server := NewServer(db, redisService, schedulerService, "test-secret", &config.UsersConfig{}, "http://localhost:3000")
+
+	// 토큰 없이 호출 → AuthMiddleware를 거치지 않으므로 401이 아니어야 한다.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-links/workflow/wf-123", nil)
+	rec := httptest.NewRecorder()
+	server.router.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("GET /pipeline-links/workflow/:id는 내부 API라 401이면 안 됨 (got 401). 인증 그룹에 잘못 배치됨")
+	}
+
+	// 대조군: 인증 필요한 링크 조회는 토큰 없이 401이어야 한다.
+	reqAuth := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-links", nil)
+	recAuth := httptest.NewRecorder()
+	server.router.ServeHTTP(recAuth, reqAuth)
+	if recAuth.Code != http.StatusUnauthorized {
+		t.Errorf("GET /pipeline-links(UI 조회)는 토큰 없으면 401이어야 함, got %d", recAuth.Code)
+	}
+}
+
 // TestIndexRoute tests that the index route returns service info
 func TestIndexRoute(t *testing.T) {
 	// Setup

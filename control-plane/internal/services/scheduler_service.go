@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -74,12 +75,12 @@ func (s *SchedulerService) Start() error {
 
 	// DB에서 활성화된 스케줄 로드
 	if err := s.loadSchedules(); err != nil {
-		fmt.Printf("[Scheduler] Warning: Failed to load schedules: %v\n", err)
+		slog.Warn("Failed to load schedules", "error", err)
 	}
 
 	// Cron 스케줄러 시작
 	s.cron.Start()
-	fmt.Printf("[Scheduler] Started with %d active schedules\n", len(s.jobs))
+	slog.Info("Scheduler started", "active_schedules", len(s.jobs))
 
 	// stale 실행 감지 루프 시작 (claim한 에이전트 크래시로 유실된 실행 복구)
 	go s.staleExecutionLoop()
@@ -113,7 +114,7 @@ func (s *SchedulerService) detectStaleExecutions() {
 	// 살아있는 에이전트들이 현재 실행 중이라고 보고한 execution 집합
 	heartbeats, err := s.redisService.GetAllAgentHeartbeats()
 	if err != nil {
-		fmt.Printf("[Scheduler] stale-check: failed to get heartbeats: %v\n", err)
+		slog.Error("stale-check: failed to get heartbeats", "error", err)
 		return
 	}
 	liveExecs := make(map[string]struct{})
@@ -128,7 +129,7 @@ func (s *SchedulerService) detectStaleExecutions() {
 	var execs []models.WorkflowExecution
 	if err := s.db.Where("status = ? AND started_at < ?",
 		string(types.PipelineGroupStatusRunning), cutoff).Find(&execs).Error; err != nil {
-		fmt.Printf("[Scheduler] stale-check: query failed: %v\n", err)
+		slog.Error("stale-check: query failed", "error", err)
 		return
 	}
 
@@ -143,7 +144,7 @@ func (s *SchedulerService) detectStaleExecutions() {
 		exec.CompletedAt = &now
 		exec.ErrorMessage = "execution orphaned: owning agent is no longer running it (agent crash or claim expiry)"
 		if err := s.db.Save(exec).Error; err != nil {
-			fmt.Printf("[Scheduler] stale-check: failed to mark execution %s failed: %v\n", exec.ID, err)
+			slog.Error("stale-check: failed to mark execution failed", "execution_id", exec.ID, "workflow_id", exec.WorkflowID, "error", err)
 			continue
 		}
 		// execution이 죽었으면 워크플로우도 running 에서 풀어준다.
@@ -151,9 +152,9 @@ func (s *SchedulerService) detectStaleExecutions() {
 		if err := s.db.Model(&models.Workflow{}).
 			Where("id = ? AND status = ?", exec.WorkflowID, string(types.PipelineGroupStatusRunning)).
 			Update("status", string(types.PipelineGroupStatusIdle)).Error; err != nil {
-			fmt.Printf("[Scheduler] stale-check: failed to reset workflow %s status: %v\n", exec.WorkflowID, err)
+			slog.Error("stale-check: failed to reset workflow status", "workflow_id", exec.WorkflowID, "execution_id", exec.ID, "error", err)
 		}
-		fmt.Printf("[Scheduler] marked orphaned execution %s (workflow %s) as failed\n", exec.ID, exec.WorkflowID)
+		slog.Warn("marked orphaned execution as failed", "execution_id", exec.ID, "workflow_id", exec.WorkflowID)
 	}
 }
 
@@ -178,7 +179,7 @@ func (s *SchedulerService) Stop() error {
 	<-ctx.Done()
 	s.running = false
 
-	fmt.Println("[Scheduler] Stopped")
+	slog.Info("Scheduler stopped")
 	return nil
 }
 
@@ -192,7 +193,7 @@ func (s *SchedulerService) loadSchedules() error {
 
 	for _, workflow := range workflows {
 		if err := s.addScheduleInternal(&workflow); err != nil {
-			fmt.Printf("[Scheduler] Failed to add schedule for workflow %s: %v\n", workflow.ID, err)
+			slog.Error("Failed to add schedule for workflow", "workflow_id", workflow.ID, "error", err)
 		}
 	}
 
@@ -224,7 +225,7 @@ func (s *SchedulerService) addScheduleInternal(workflow *models.Workflow) error 
 		var err error
 		loc, err = time.LoadLocation(workflow.ScheduleTimezone)
 		if err != nil {
-			fmt.Printf("[Scheduler] Invalid timezone %s for workflow %s, using UTC\n", workflow.ScheduleTimezone, workflow.ID)
+			slog.Warn("Invalid timezone, using UTC", "timezone", workflow.ScheduleTimezone, "workflow_id", workflow.ID)
 			loc = time.UTC
 		}
 	}
@@ -251,7 +252,7 @@ func (s *SchedulerService) addScheduleInternal(workflow *models.Workflow) error 
 	nextRun := entry.Next
 	s.db.Model(&models.Workflow{}).Where("id = ?", workflow.ID).Update("next_run_at", nextRun)
 
-	fmt.Printf("[Scheduler] Added schedule for workflow %s: %s (next: %s)\n", workflow.ID, cronExpr, nextRun.In(loc).Format(time.RFC3339))
+	slog.Info("Added schedule for workflow", "workflow_id", workflow.ID, "cron", cronExpr, "next_run", nextRun.In(loc).Format(time.RFC3339))
 	return nil
 }
 
@@ -263,7 +264,7 @@ func (s *SchedulerService) RemoveSchedule(workflowID string) {
 	if entryID, exists := s.jobs[workflowID]; exists {
 		s.cron.Remove(entryID)
 		delete(s.jobs, workflowID)
-		fmt.Printf("[Scheduler] Removed schedule for workflow %s\n", workflowID)
+		slog.Info("Removed schedule for workflow", "workflow_id", workflowID)
 	}
 }
 
@@ -321,7 +322,7 @@ func (s *SchedulerService) TriggerNow(workflowID, userID string) (*models.Workfl
 	// Redis로 실행 명령 발행
 	if err := s.publishWorkflowExecution(&workflow, execution, "user", userID); err != nil {
 		// Redis 실패해도 실행 레코드는 유지
-		fmt.Printf("[Scheduler] Warning: Failed to publish execution command: %v\n", err)
+		slog.Warn("Failed to publish execution command", "workflow_id", workflow.ID, "execution_id", execution.ID, "error", err)
 	}
 
 	return execution, nil
@@ -425,25 +426,25 @@ type scheduledJob struct {
 
 // Run cron job 실행
 func (j *scheduledJob) Run() {
-	fmt.Printf("[Scheduler] Executing scheduled job for workflow %s\n", j.workflowID)
+	slog.Info("Executing scheduled job", "workflow_id", j.workflowID)
 
 	// 최신 워크플로우 정보 조회
 	var workflow models.Workflow
 	if err := j.scheduler.db.First(&workflow, "id = ?", j.workflowID).Error; err != nil {
-		fmt.Printf("[Scheduler] Failed to load workflow %s: %v\n", j.workflowID, err)
+		slog.Error("Failed to load workflow", "workflow_id", j.workflowID, "error", err)
 		return
 	}
 
 	// 스케줄 비활성화 확인
 	if !workflow.ScheduleEnabled {
-		fmt.Printf("[Scheduler] Schedule disabled for workflow %s, skipping\n", j.workflowID)
+		slog.Info("Schedule disabled, skipping", "workflow_id", j.workflowID)
 		j.scheduler.RemoveSchedule(j.workflowID)
 		return
 	}
 
 	// 이미 실행 중인지 확인
 	if workflow.Status == "running" {
-		fmt.Printf("[Scheduler] Workflow %s is already running, skipping\n", j.workflowID)
+		slog.Info("Workflow already running, skipping", "workflow_id", j.workflowID)
 		return
 	}
 
@@ -457,7 +458,7 @@ func (j *scheduledJob) Run() {
 	}
 
 	if err := j.scheduler.db.Create(execution).Error; err != nil {
-		fmt.Printf("[Scheduler] Failed to create execution record for workflow %s: %v\n", j.workflowID, err)
+		slog.Error("Failed to create execution record", "workflow_id", j.workflowID, "execution_id", execution.ID, "error", err)
 		return
 	}
 
@@ -478,8 +479,8 @@ func (j *scheduledJob) Run() {
 
 	// Redis로 실행 명령 발행
 	if err := j.scheduler.publishWorkflowExecution(&workflow, execution, "schedule", ""); err != nil {
-		fmt.Printf("[Scheduler] Warning: Failed to publish execution command for workflow %s: %v\n", j.workflowID, err)
+		slog.Warn("Failed to publish execution command", "workflow_id", j.workflowID, "execution_id", execution.ID, "error", err)
 	}
 
-	fmt.Printf("[Scheduler] Scheduled execution started for workflow %s (execution: %s)\n", j.workflowID, execution.ID)
+	slog.Info("Scheduled execution started", "workflow_id", j.workflowID, "execution_id", execution.ID)
 }

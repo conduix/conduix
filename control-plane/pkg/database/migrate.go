@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log/slog"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/mysql"
@@ -45,7 +46,7 @@ func RunMigrationsWithDB(sqlDB *sql.DB) error {
 	}
 
 	version, dirty, _ := m.Version()
-	fmt.Printf("[Database] Migration version: %d, dirty: %v\n", version, dirty)
+	slog.Info("migration version", "version", version, "dirty", dirty)
 
 	return nil
 }
@@ -76,7 +77,7 @@ func (db *DB) RunMigrationsFromPath(path string) error {
 	}
 
 	version, dirty, _ := m.Version()
-	fmt.Printf("[Database] Migration version: %d, dirty: %v\n", version, dirty)
+	slog.Info("migration version", "version", version, "dirty", dirty)
 
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,7 +85,7 @@ func (h *AuthHandler) RegisterProvider(id string, cfg *config.OAuthProviderConfi
 		UserMapping: cfg.UserMapping,
 	}
 
-	fmt.Printf("[Auth] OAuth2 provider '%s' (%s) registered\n", id, cfg.Name)
+	slog.Info("OAuth2 provider registered", "provider_id", id, "provider_name", cfg.Name)
 }
 
 // RegisterProvidersFromConfig 설정에서 모든 프로바이더 등록
@@ -286,7 +287,7 @@ func (h *AuthHandler) findOrCreateUser(info *config.ParsedUserInfo, providerID s
 		// (설정 파일의 역할이 더 높은 권한인 경우에만 업데이트)
 		if shouldUpgradeRole(user.Role, configRole) {
 			user.Role = configRole
-			fmt.Printf("[Auth] User %s role upgraded to %s (from config)\n", info.Email, configRole)
+			slog.Info("User role upgraded from config", "email", info.Email, "role", configRole)
 		}
 
 		h.db.Save(&user)
@@ -309,7 +310,7 @@ func (h *AuthHandler) findOrCreateUser(info *config.ParsedUserInfo, providerID s
 		return nil, err
 	}
 
-	fmt.Printf("[Auth] New user %s created with role %s\n", info.Email, configRole)
+	slog.Info("New user created", "email", info.Email, "role", configRole)
 	return &user, nil
 }
 

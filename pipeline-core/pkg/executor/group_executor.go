@@ -615,8 +615,13 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 
 	// 싱크 정리 defer
 	defer func() {
+		// 종료 flush 는 실행 ctx 가 아닌 별도 timeout context 로 한다.
+		// stop/취소로 ctx 가 이미 canceled 면 flush 가 실패해 버퍼(batch_size 미만)
+		// 잔여 레코드가 유실되기 때문(realtime 소량 유입 시 특히).
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
 		for name, s := range outputSinks {
-			if err := s.Flush(ctx); err != nil {
+			if err := s.Flush(flushCtx); err != nil {
 				slog.Error("output flush error",
 					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", name, "error", err)
 			}

@@ -143,6 +143,11 @@ func (o *SQLOutput) Flush(ctx context.Context) error {
 
 	// 배치 INSERT 실행
 	if err := o.batchInsert(ctx, records, columns); err != nil {
+		// 실패 시 버퍼를 복원해 다음 flush(예: 종료 시 drain)가 재시도할 수 있게 한다.
+		// 복원하지 않으면 ctx 취소 등으로 실패한 배치가 조용히 유실된다.
+		o.bufMu.Lock()
+		o.buffer = append(records, o.buffer...)
+		o.bufMu.Unlock()
 		atomic.AddInt64(&o.stats.ErrorRecords, int64(len(records)))
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
@@ -90,8 +91,8 @@ func (s *WebSocketSource) Open(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Printf("[websocket] Connected to %s, ping_interval=%v, pong_wait=%v\n",
-		maskWebSocketURL(s.url), s.pingInterval, s.pongWait)
+	slog.Default().Info("WebSocket connected",
+		"url", maskWebSocketURL(s.url), "ping_interval", s.pingInterval, "pong_wait", s.pongWait)
 
 	return nil
 }
@@ -145,7 +146,7 @@ func (s *WebSocketSource) connect(ctx context.Context) error {
 			_ = conn.Close()
 			return fmt.Errorf("failed to send subscribe message: %w", err)
 		}
-		fmt.Printf("[websocket] Sent subscribe message\n")
+		slog.Default().Info("WebSocket sent subscribe message", "url", maskWebSocketURL(s.url))
 	}
 
 	s.reconnectCount = 0
@@ -195,12 +196,13 @@ func (s *WebSocketSource) Read(ctx context.Context) (<-chan Record, <-chan error
 			msgType, data, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-					fmt.Printf("[websocket] Connection closed normally\n")
+					slog.Default().Info("WebSocket connection closed normally", "url", maskWebSocketURL(s.url))
 					return
 				}
 
 				// 연결 끊김, 재연결 시도
-				fmt.Printf("[websocket] Read error: %v, attempting reconnect\n", err)
+				slog.Default().Warn("WebSocket read error, attempting reconnect",
+					"url", maskWebSocketURL(s.url), "error", err)
 				s.mu.Lock()
 				if s.conn != nil {
 					_ = s.conn.Close()
@@ -265,7 +267,8 @@ func (s *WebSocketSource) reconnect(ctx context.Context) error {
 		return fmt.Errorf("max reconnect attempts (%d) exceeded", s.maxReconnect)
 	}
 
-	fmt.Printf("[websocket] Reconnecting... attempt %d/%d\n", s.reconnectCount, s.maxReconnect)
+	slog.Default().Info("WebSocket reconnecting",
+		"url", maskWebSocketURL(s.url), "attempt", s.reconnectCount, "max_reconnect", s.maxReconnect)
 
 	// 대기
 	select {
@@ -342,7 +345,8 @@ func (s *WebSocketSource) GetSourceCheckpoints() []*SourceCheckpoint {
 // SetSourceCheckpoints 체크포인트 설정 (WebSocket은 재시작 시 체크포인트 복원 미지원)
 func (s *WebSocketSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
 	// WebSocket은 스트리밍 프로토콜이므로 체크포인트 복원 불가
-	fmt.Printf("[websocket] Checkpoint restoration not supported for WebSocket (streaming protocol)\n")
+	slog.Default().Info("WebSocket checkpoint restoration not supported (streaming protocol)",
+		"url", maskWebSocketURL(s.url))
 	return nil
 }
 
@@ -361,7 +365,7 @@ func (s *WebSocketSource) Close() error {
 		s.conn = nil
 	}
 
-	fmt.Printf("[websocket] Closed. Processed: %d messages\n", s.processedCount)
+	slog.Default().Info("WebSocket closed", "url", maskWebSocketURL(s.url), "processed", s.processedCount)
 	return nil
 }
 

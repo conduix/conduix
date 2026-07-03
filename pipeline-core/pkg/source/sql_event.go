@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -336,19 +337,23 @@ func (s *SQLEventSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) e
 		if cp.OffsetType == "numeric" {
 			lastID, err := ParseNumeric(cp.OffsetValue)
 			if err != nil {
-				fmt.Printf("[sql_event] Failed to parse checkpoint offset %s: %v\n", cp.OffsetValue, err)
+				slog.Default().Error("SQLEvent failed to parse checkpoint offset",
+					"table", s.table, "offset_value", cp.OffsetValue, "error", err)
 				continue
 			}
 			s.lastID = lastID
-			fmt.Printf("[sql_event] Restored checkpoint: %s -> %d\n", cp.PartitionKey, lastID)
+			slog.Default().Info("SQLEvent restored checkpoint",
+				"table", s.table, "partition_key", cp.PartitionKey, "last_id", lastID)
 		} else if cp.OffsetType == "timestamp" {
 			ts, err := ParseTimestamp(cp.OffsetValue)
 			if err != nil {
-				fmt.Printf("[sql_event] Failed to parse checkpoint timestamp %s: %v\n", cp.OffsetValue, err)
+				slog.Default().Error("SQLEvent failed to parse checkpoint timestamp",
+					"table", s.table, "offset_value", cp.OffsetValue, "error", err)
 				continue
 			}
 			s.lastTimestamp = ts
-			fmt.Printf("[sql_event] Restored checkpoint timestamp: %s -> %s\n", cp.PartitionKey, ts.Format(time.RFC3339Nano))
+			slog.Default().Info("SQLEvent restored checkpoint timestamp",
+				"table", s.table, "partition_key", cp.PartitionKey, "timestamp", ts.Format(time.RFC3339Nano))
 		}
 	}
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"strings"
@@ -248,7 +249,7 @@ func (s *KafkaSource) Open(ctx context.Context) error {
 				authInfo = append(authInfo, "mTLS enabled")
 			}
 		}
-		fmt.Printf("[kafka] Security: %s\n", strings.Join(authInfo, ", "))
+		slog.Default().Info("Kafka security", "brokers", s.brokers, "security", strings.Join(authInfo, ", "))
 	}
 
 	return nil
@@ -406,12 +407,14 @@ func (s *KafkaSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) erro
 
 		offset, err := ParseNumeric(cp.OffsetValue)
 		if err != nil {
-			fmt.Printf("[kafka] Failed to parse checkpoint offset %s: %v\n", cp.OffsetValue, err)
+			slog.Default().Error("Kafka failed to parse checkpoint offset",
+				"topics", s.topics, "offset_value", cp.OffsetValue, "error", err)
 			continue
 		}
 
 		s.checkpoints[cp.PartitionKey] = offset
-		fmt.Printf("[kafka] Restored checkpoint: %s -> %d\n", cp.PartitionKey, offset)
+		slog.Default().Info("Kafka restored checkpoint",
+			"topics", s.topics, "partition_key", cp.PartitionKey, "offset", offset)
 	}
 
 	return nil

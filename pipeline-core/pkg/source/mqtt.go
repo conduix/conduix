@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
@@ -108,7 +109,7 @@ func (c *DefaultMQTTClient) Connect() error {
 	// return token.Error()
 
 	c.connected = true
-	fmt.Printf("[mqtt] Connected to %s as %s\n", maskMQTTBroker(c.broker), c.clientID)
+	slog.Default().Info("MQTT connected", "broker", maskMQTTBroker(c.broker), "client_id", c.clientID)
 	return nil
 }
 
@@ -126,7 +127,7 @@ func (c *DefaultMQTTClient) Disconnect(quiesce uint) {
 	if c.cancelFunc != nil {
 		c.cancelFunc()
 	}
-	fmt.Printf("[mqtt] Disconnected\n")
+	slog.Default().Info("MQTT disconnected", "broker", maskMQTTBroker(c.broker))
 }
 
 // Subscribe 토픽 구독
@@ -145,7 +146,7 @@ func (c *DefaultMQTTClient) Subscribe(topic string, qos byte, callback func(topi
 	// token.Wait()
 	// return token.Error()
 
-	fmt.Printf("[mqtt] Subscribed to topic: %s with QoS %d\n", topic, qos)
+	slog.Default().Info("MQTT subscribed to topic", "topic", topic, "qos", qos)
 
 	// 시뮬레이션용 고루틴 - 실제 구현에서는 콜백으로 대체
 	ctx, cancel := context.WithCancel(context.Background())
@@ -193,10 +194,7 @@ func (c *DefaultMQTTClient) SubscribeMultiple(topics []string, qos byte, callbac
 	// token.Wait()
 	// return token.Error()
 
-	fmt.Printf("[mqtt] Subscribed to %d topics with QoS %d\n", len(topics), qos)
-	for _, topic := range topics {
-		fmt.Printf("[mqtt]   - %s\n", topic)
-	}
+	slog.Default().Info("MQTT subscribed to topics", "count", len(topics), "qos", qos, "topics", topics)
 
 	// 시뮬레이션용 고루틴
 	ctx, cancel := context.WithCancel(context.Background())
@@ -310,8 +308,8 @@ func (s *MQTTSource) Open(ctx context.Context) error {
 	}
 
 	s.connected = true
-	fmt.Printf("[mqtt] Connected to %s, client_id=%s, topic=%s, qos=%d\n",
-		maskMQTTBroker(s.broker), s.clientID, s.topic, s.qos)
+	slog.Default().Info("MQTT connected",
+		"broker", maskMQTTBroker(s.broker), "client_id", s.clientID, "topic", s.topic, "qos", s.qos)
 
 	return nil
 }
@@ -518,7 +516,8 @@ func (s *MQTTSource) GetSourceCheckpoints() []*SourceCheckpoint {
 
 // SetSourceCheckpoints 체크포인트 설정 (MQTT는 재시작 시 체크포인트 복원 미지원)
 func (s *MQTTSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
-	fmt.Printf("[mqtt] Checkpoint restoration not supported for MQTT (streaming protocol)\n")
+	slog.Default().Info("MQTT checkpoint restoration not supported (streaming protocol)",
+		"broker", maskMQTTBroker(s.broker), "topic", s.topic)
 	return nil
 }
 
@@ -531,7 +530,7 @@ func (s *MQTTSource) Close() error {
 	}
 
 	s.connected = false
-	fmt.Printf("[mqtt] Closed. Processed: %d messages\n", s.processedCount)
+	slog.Default().Info("MQTT closed", "broker", maskMQTTBroker(s.broker), "topic", s.topic, "processed", s.processedCount)
 	return nil
 }
 

@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -598,8 +599,10 @@ func (s *StreamJoinStage) checkAndHandleLateData(record *Record, timestamp time.
 		if !isLeft {
 			streamName = "right"
 		}
-		fmt.Printf("[stream_join] Late data detected from %s stream: timestamp=%s, watermark=%s, allowed_lateness=%s\n",
-			streamName, timestamp.Format(time.RFC3339), watermark.Format(time.RFC3339), s.allowedLateness)
+		slog.Warn("late data detected",
+			"stage", s.Name(), "stream", streamName,
+			"timestamp", timestamp.Format(time.RFC3339), "watermark", watermark.Format(time.RFC3339),
+			"allowed_lateness", s.allowedLateness)
 	}
 
 	return isLate
@@ -713,12 +716,13 @@ func (s *StreamJoinStage) Close() error {
 
 	// Log watermark info
 	s.watermarkMu.RLock()
-	fmt.Printf("[stream_join] Final watermarks - Left: %s, Right: %s\n",
-		s.leftWatermark.Format(time.RFC3339), s.rightWatermark.Format(time.RFC3339))
+	slog.Info("final watermarks",
+		"stage", s.Name(),
+		"left", s.leftWatermark.Format(time.RFC3339), "right", s.rightWatermark.Format(time.RFC3339))
 	s.watermarkMu.RUnlock()
 
 	input, output, _ := s.Stats()
-	fmt.Printf("[stream_join] Closed. Input: %d, Output: %d\n", input, output)
+	slog.Info("stream join closed", "stage", s.Name(), "input", input, "output", output)
 	return nil
 }
 

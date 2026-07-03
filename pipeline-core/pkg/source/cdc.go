@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"strings"
@@ -140,7 +141,7 @@ func (s *CDCSource) openMySQL() error {
 		}
 		if tlsCfg != nil {
 			cfg.TLSConfig = tlsCfg
-			fmt.Printf("[cdc] MySQL TLS enabled: mode=%s\n", s.tlsConfig.Mode)
+			slog.Default().Info("CDC MySQL TLS enabled", "host", s.host, "mode", s.tlsConfig.Mode)
 		}
 	}
 
@@ -394,18 +395,21 @@ func (s *CDCSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error 
 		// offsetValue 형식: "binlog_file:position"
 		parts := strings.SplitN(cp.OffsetValue, ":", 2)
 		if len(parts) != 2 {
-			fmt.Printf("[cdc] Invalid checkpoint format: %s\n", cp.OffsetValue)
+			slog.Default().Warn("CDC invalid checkpoint format", "host", s.host, "offset_value", cp.OffsetValue)
 			continue
 		}
 
 		s.position.Name = parts[0]
 		pos, err := ParseNumeric(parts[1])
 		if err != nil {
-			fmt.Printf("[cdc] Failed to parse checkpoint position %s: %v\n", parts[1], err)
+			slog.Default().Error("CDC failed to parse checkpoint position",
+				"host", s.host, "position", parts[1], "error", err)
 			continue
 		}
 		s.position.Pos = uint32(pos)
-		fmt.Printf("[cdc] Restored checkpoint: %s -> %s:%d\n", cp.PartitionKey, s.position.Name, s.position.Pos)
+		slog.Default().Info("CDC restored checkpoint",
+			"host", s.host, "partition_key", cp.PartitionKey,
+			"binlog_file", s.position.Name, "position", s.position.Pos)
 	}
 
 	return nil

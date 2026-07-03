@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -440,7 +441,8 @@ func (s *KubernetesSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint)
 
 		timestamp, err := ParseTimestamp(cp.OffsetValue)
 		if err != nil {
-			fmt.Printf("[kubernetes] Failed to parse checkpoint timestamp %s: %v\n", cp.OffsetValue, err)
+			slog.Default().Error("Kubernetes failed to parse checkpoint timestamp",
+				"namespace", s.namespace, "offset_value", cp.OffsetValue, "error", err)
 			continue
 		}
 
@@ -448,8 +450,9 @@ func (s *KubernetesSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint)
 			lastTimestamp: timestamp,
 			lineCount:     cp.RecordCount,
 		}
-		fmt.Printf("[kubernetes] Restored checkpoint: %s -> %s (records: %d)\n",
-			cp.PartitionKey, timestamp.Format(time.RFC3339Nano), cp.RecordCount)
+		slog.Default().Info("Kubernetes restored checkpoint",
+			"namespace", s.namespace, "partition_key", cp.PartitionKey,
+			"timestamp", timestamp.Format(time.RFC3339Nano), "records", cp.RecordCount)
 	}
 
 	return nil

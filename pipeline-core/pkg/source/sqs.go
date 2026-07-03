@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -117,8 +118,9 @@ func (s *SQSSource) Open(ctx context.Context) error {
 
 	s.client = sqs.NewFromConfig(cfg, sqsOpts...)
 
-	fmt.Printf("[sqs] Connected to queue: %s, region: %s, max_messages: %d, wait_time: %ds\n",
-		maskSQSURL(s.queueURL), s.region, s.maxMessages, s.waitTimeSeconds)
+	slog.Default().Info("SQS connected",
+		"queue", maskSQSURL(s.queueURL), "region", s.region,
+		"max_messages", s.maxMessages, "wait_time_seconds", s.waitTimeSeconds)
 
 	return nil
 }
@@ -192,7 +194,8 @@ func (s *SQSSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 							QueueUrl:      aws.String(s.queueURL),
 							ReceiptHandle: msg.ReceiptHandle,
 						}); err != nil {
-							fmt.Printf("[sqs] Warning: failed to delete message %s: %v\n", *msg.MessageId, err)
+							slog.Default().Warn("SQS failed to delete message",
+								"message_id", *msg.MessageId, "queue", maskSQSURL(s.queueURL), "error", err)
 						}
 					}
 				case <-ctx.Done():
@@ -298,7 +301,8 @@ func (s *SQSSource) GetSourceCheckpoints() []*SourceCheckpoint {
 func (s *SQSSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
 	// SQS는 메시지 기반 visibility timeout을 사용하므로 체크포인트 복원이 의미 없음
 	// 처리되지 않은 메시지는 visibility timeout 후 다시 수신 가능
-	fmt.Printf("[sqs] Checkpoint restoration not supported for SQS (visibility timeout based)\n")
+	slog.Default().Info("SQS checkpoint restoration not supported (visibility timeout based)",
+		"queue", maskSQSURL(s.queueURL))
 	return nil
 }
 
@@ -309,7 +313,8 @@ func (s *SQSSource) Close() error {
 	// AWS SDK 클라이언트는 명시적 close가 필요 없음
 	s.client = nil
 
-	fmt.Printf("[sqs] Closed. Last message ID: %s, Processed: %d\n", s.lastMessageID, s.processedCount)
+	slog.Default().Info("SQS closed",
+		"queue", maskSQSURL(s.queueURL), "last_message_id", s.lastMessageID, "processed", s.processedCount)
 	return nil
 }
 

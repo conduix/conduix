@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -256,7 +257,8 @@ func (s *ElasticsearchSink) writeBatch(ctx context.Context, records []*Record) e
 
 	// TODO: Send to Elasticsearch
 	// For now, just log
-	fmt.Printf("[ES] Would send %d records to %s/%s\n", len(records), s.endpoints[0], s.index)
+	slog.Info("would send records to Elasticsearch",
+		"sink", s.name, "records", len(records), "endpoint", s.endpoints[0], "index", s.index)
 
 	return nil
 }
@@ -307,7 +309,8 @@ func NewS3Sink(name string, config map[string]any) *S3Sink {
 
 func (s *S3Sink) writeBatch(ctx context.Context, records []*Record) error {
 	// TODO: Implement actual S3 upload
-	fmt.Printf("[S3] Would upload %d records to s3://%s/%s\n", len(records), s.bucket, s.prefix)
+	slog.Info("would upload records to S3",
+		"sink", s.name, "records", len(records), "bucket", s.bucket, "prefix", s.prefix)
 	return nil
 }
 
@@ -354,7 +357,8 @@ func NewKafkaSink(name string, config map[string]any) *KafkaSink {
 
 func (s *KafkaSink) writeBatch(ctx context.Context, records []*Record) error {
 	// TODO: Implement actual Kafka producer
-	fmt.Printf("[Kafka] Would send %d records to %s\n", len(records), s.topic)
+	slog.Info("would send records to Kafka",
+		"sink", s.name, "records", len(records), "topic", s.topic)
 	return nil
 }
 
@@ -391,7 +395,8 @@ func NewFileSink(name string, config map[string]any) *FileSink {
 
 func (s *FileSink) writeBatch(ctx context.Context, records []*Record) error {
 	// TODO: Implement actual file writing
-	fmt.Printf("[File] Would write %d records to %s\n", len(records), s.path)
+	slog.Info("would write records to file",
+		"sink", s.name, "records", len(records), "path", s.path)
 	return nil
 }
 

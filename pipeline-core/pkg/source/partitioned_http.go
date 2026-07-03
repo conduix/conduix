@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -92,10 +93,11 @@ func (s *PartitionedHTTPSource) Read(ctx context.Context) (<-chan Record, <-chan
 		}
 
 		if len(partitions) == 0 {
-			fmt.Println("[PartitionedHTTP] No partitions found")
+			slog.Default().Warn("PartitionedHTTP no partitions found", "discovery_url", s.partition.DiscoveryURL)
 			return
 		}
-		fmt.Printf("[PartitionedHTTP] Discovered %d partitions: %v\n", len(partitions), partitions)
+		slog.Default().Info("PartitionedHTTP discovered partitions",
+			"discovery_url", s.partition.DiscoveryURL, "count", len(partitions), "partitions", partitions)
 
 		// 2. 파티션 병렬 처리
 		s.fetchPartitions(ctx, partitions, records, errs)
@@ -204,7 +206,7 @@ func (s *PartitionedHTTPSource) fetchPartitions(ctx context.Context, partitions 
 			defer func() { <-sem }()
 
 			if err := s.fetchPartition(ctx, partitionID, records); err != nil {
-				fmt.Printf("[PartitionedHTTP] Partition %s error: %v\n", partitionID, err)
+				slog.Default().Error("PartitionedHTTP partition failed", "partition", partitionID, "error", err)
 				// 개별 파티션 실패는 계속 진행 (전체 실패 아님)
 			}
 		}(partition)
@@ -228,7 +230,7 @@ func (s *PartitionedHTTPSource) fetchPartition(ctx context.Context, partitionID 
 		method = "GET"
 	}
 
-	fmt.Printf("[PartitionedHTTP] Fetching partition %s: %s\n", partitionID, url)
+	slog.Default().Info("PartitionedHTTP fetching partition", "partition", partitionID, "url", url)
 
 	response, err := s.doRequest(ctx, url, method, s.cfg.Headers, s.auth)
 	if err != nil {

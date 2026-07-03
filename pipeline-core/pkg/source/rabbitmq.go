@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -158,8 +159,8 @@ func (s *RabbitMQSource) Open(ctx context.Context) error {
 		}
 	}
 
-	fmt.Printf("[rabbitmq] Connected to %s, queue=%s, prefetch=%d\n",
-		maskURL(s.url), s.queue, s.prefetch)
+	slog.Default().Info("RabbitMQ connected",
+		"url", maskURL(s.url), "queue", s.queue, "prefetch", s.prefetch)
 
 	return nil
 }
@@ -210,7 +211,7 @@ func (s *RabbitMQSource) Read(ctx context.Context) (<-chan Record, <-chan error)
 			return
 		}
 
-		fmt.Printf("[rabbitmq] Consumer started: queue=%s, tag=%s\n", s.queue, s.consumerTag)
+		slog.Default().Info("RabbitMQ consumer started", "queue", s.queue, "consumer_tag", s.consumerTag)
 
 		for {
 			select {
@@ -334,7 +335,7 @@ func (s *RabbitMQSource) GetSourceCheckpoints() []*SourceCheckpoint {
 func (s *RabbitMQSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error {
 	// RabbitMQ는 메시지 기반 Ack/Nack을 사용하므로 체크포인트 복원이 의미 없음
 	// 대신 메시지는 Ack되지 않으면 재전송됨
-	fmt.Printf("[rabbitmq] Checkpoint restoration not supported for RabbitMQ (message-based ack/nack)\n")
+	slog.Default().Info("RabbitMQ checkpoint restoration not supported (message-based ack/nack)", "queue", s.queue)
 	return nil
 }
 
@@ -366,7 +367,7 @@ func (s *RabbitMQSource) Close() error {
 		return fmt.Errorf("errors closing: %v", errs)
 	}
 
-	fmt.Printf("[rabbitmq] Closed. Last delivery tag: %d\n", s.lastDeliveryTag)
+	slog.Default().Info("RabbitMQ closed", "queue", s.queue, "last_delivery_tag", s.lastDeliveryTag)
 	return nil
 }
 

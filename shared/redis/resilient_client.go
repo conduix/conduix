@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -685,7 +686,7 @@ func (rc *ResilientClient) resubscribeAll() {
 			info.pubsub.Close()
 		}
 		// subscribeLoop이 자동으로 재연결함
-		fmt.Printf("Resubscribing to channel: %s\n", channel)
+		slog.Info("resubscribing to channel", "channel", channel)
 	}
 }
 

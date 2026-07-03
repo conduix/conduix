@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -338,15 +339,15 @@ func NewWindowedAggregateStage(name string, config map[string]any) (*WindowedAgg
 
 				// Restore state from Redis
 				if err := s.restoreStateFromRedis(); err != nil {
-					fmt.Printf("[windowed_aggregate] Warning: failed to restore state from Redis: %v\n", err)
+					slog.Warn("failed to restore state from Redis", "stage", s.Name(), "error", err)
 				}
 
 				// Start persist goroutine
 				s.persistTicker = time.NewTicker(s.statePersistPeriod)
 				go s.persistLoop()
 
-				fmt.Printf("[windowed_aggregate] Redis state store enabled: %s (prefix=%s, persist_period=%s)\n",
-					addr, s.redisKeyPrefix, s.statePersistPeriod)
+				slog.Info("Redis state store enabled",
+					"stage", s.Name(), "addr", addr, "prefix", s.redisKeyPrefix, "persist_period", s.statePersistPeriod)
 			}
 		}
 	}
@@ -445,7 +446,7 @@ func (s *WindowedAggregateStage) emitWindowResultWithPartial(ws *windowState, is
 	case s.outputCh <- record:
 	default:
 		// Channel full, log warning
-		fmt.Printf("[windowed_aggregate] Output channel full, dropping aggregation result\n")
+		slog.Warn("output channel full, dropping aggregation result", "stage", s.Name())
 	}
 }
 
@@ -509,7 +510,7 @@ func (s *WindowedAggregateStage) emitWindowResult(ws *windowState) {
 	case s.outputCh <- record:
 	default:
 		// Channel full, log warning
-		fmt.Printf("[windowed_aggregate] Output channel full, dropping aggregation result\n")
+		slog.Warn("output channel full, dropping aggregation result", "stage", s.Name())
 	}
 }
 
@@ -710,7 +711,7 @@ func (s *WindowedAggregateStage) persistLoop() {
 			return
 		case <-s.persistTicker.C:
 			if err := s.persistStateToRedis(); err != nil {
-				fmt.Printf("[windowed_aggregate] Error persisting state to Redis: %v\n", err)
+				slog.Error("error persisting state to Redis", "stage", s.Name(), "error", err)
 			}
 		}
 	}
@@ -770,7 +771,7 @@ func (s *WindowedAggregateStage) persistStateToRedis() error {
 		return fmt.Errorf("failed to persist state: %w", err)
 	}
 
-	fmt.Printf("[windowed_aggregate] Persisted %d windows to Redis\n", len(s.windows))
+	slog.Info("persisted windows to Redis", "stage", s.Name(), "windows", len(s.windows))
 	return nil
 }
 
@@ -849,8 +850,8 @@ func (s *WindowedAggregateStage) restoreStateFromRedis() error {
 	}
 
 	if restoredCount > 0 {
-		fmt.Printf("[windowed_aggregate] Restored %d windows from Redis (watermark: %s)\n",
-			restoredCount, s.watermark.Format(time.RFC3339))
+		slog.Info("restored windows from Redis",
+			"stage", s.Name(), "windows", restoredCount, "watermark", s.watermark.Format(time.RFC3339))
 	}
 
 	return nil
@@ -894,7 +895,7 @@ func (s *WindowedAggregateStage) Close() error {
 	// Persist final state to Redis before closing
 	if s.redisClient != nil {
 		if err := s.persistStateToRedis(); err != nil {
-			fmt.Printf("[windowed_aggregate] Warning: failed to persist final state: %v\n", err)
+			slog.Warn("failed to persist final state", "stage", s.Name(), "error", err)
 		}
 		_ = s.redisClient.Close()
 	}

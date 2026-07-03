@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -188,7 +189,8 @@ func (s *SnowflakeSink) Open(ctx context.Context) error {
 		}
 	}
 
-	fmt.Printf("[snowflake] Connected to %s.%s.%s\n", s.database, s.schema, s.table)
+	slog.Info("connected to Snowflake",
+		"database", s.database, "schema", s.schema, "table", s.table)
 	return nil
 }
 
@@ -320,8 +322,8 @@ func (s *SnowflakeSink) writeBatchDirect(ctx context.Context, records []*Record)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	fmt.Printf("[snowflake] Inserted %d records into %s.%s.%s\n",
-		len(records), s.database, s.schema, s.table)
+	slog.Info("inserted records into Snowflake",
+		"records", len(records), "database", s.database, "schema", s.schema, "table", s.table)
 	return nil
 }
 
@@ -357,8 +359,8 @@ func (s *SnowflakeSink) writeBatchVariant(ctx context.Context, records []*Record
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	fmt.Printf("[snowflake] Inserted %d records (VARIANT) into %s.%s.%s\n",
-		len(records), s.database, s.schema, s.table)
+	slog.Info("inserted records into Snowflake (VARIANT)",
+		"records", len(records), "database", s.database, "schema", s.schema, "table", s.table)
 	return nil
 }
 
@@ -434,8 +436,8 @@ func (s *SnowflakeSink) writeBatchWithStage(ctx context.Context, records []*Reco
 		return fmt.Errorf("failed to COPY INTO table: %w", err)
 	}
 
-	fmt.Printf("[snowflake] Staged and copied %d records into %s.%s.%s\n",
-		len(records), s.database, s.schema, s.table)
+	slog.Info("staged and copied records into Snowflake",
+		"records", len(records), "database", s.database, "schema", s.schema, "table", s.table)
 	return nil
 }
 

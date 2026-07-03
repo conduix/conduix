@@ -114,6 +114,9 @@ agent:
   # 클러스터 ID (Agent가 속한 클러스터 식별자)
   # 미설정 시 'default' 사용
   clusterId: "default"
+  # 배치 워크플로우를 K8s Job 으로 실행할 때 쓰는 pipeline-batch-job 이미지.
+  # 비우면 agent 가 RUNNER_IMAGE 없이 떠서 batch 실행 시 "runner image is required" 로 실패.
+  runnerImage: "ghcr.io/conduix/pipeline-batch-job:latest"
   image:
     repository: ghcr.io/conduix/agent
     tag: "latest"
@@ -224,6 +227,19 @@ redis:
 # Kafka: Strimzi Operator로 별도 배포 (kafka-cluster CRD)
 # 아래 설정은 외부 서비스 연결용
 # =============================================================================
+
+# =============================================================================
+# Mock 데이터 소스/싱크 (로컬 E2E 전용 — 프로덕션은 항상 false)
+# templates/mocks.yaml 가 이 게이트로 배포 여부를 결정한다.
+# =============================================================================
+mocks:
+  enabled: false
+  kafka:
+    enabled: true
+    # Bitnami 가 Docker Hub 이미지를 bitnamilegacy 로 이전함(bitnami/kafka:3.7 은 not found).
+    image: "bitnamilegacy/kafka:3.7"
+  elasticsearch:
+    enabled: true
 
 # =============================================================================
 # ServiceAccount & Security

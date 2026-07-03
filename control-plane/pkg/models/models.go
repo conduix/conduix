@@ -110,6 +110,9 @@ type Cluster struct {
 	Region       string `gorm:"size:100" json:"region,omitempty"`
 	Status       string `gorm:"size:50;default:active" json:"status"` // active, inactive
 
+	// 워크플로우가 cluster_id 미지정 시 실행 대상이 되는 기본 클러스터. 전체에서 최대 1개.
+	IsDefault bool `gorm:"default:false;index" json:"is_default"`
+
 	// Agent 배포 설정
 	DesiredAgents int    `gorm:"default:1" json:"desired_agents"`         // 원하는 Agent 수
 	AgentConfig   string `gorm:"type:text" json:"agent_config,omitempty"` // JSON: nodeSelector, tolerations, affinity 등
@@ -137,11 +140,6 @@ type Agent struct {
 	Version       string     `gorm:"size:50" json:"version,omitempty"`
 	Labels        string     `gorm:"type:text" json:"labels,omitempty"` // JSON array
 	ClusterID     string     `gorm:"size:36;index" json:"cluster_id,omitempty"`
-
-	// Leader Election (HA 구성)
-	IsLeader       bool       `gorm:"default:false" json:"is_leader"`               // 현재 리더 여부
-	LeaderSince    *time.Time `json:"leader_since,omitempty"`                       // 리더가 된 시점
-	LeaderLeaseTTL int        `gorm:"default:30" json:"leader_lease_ttl,omitempty"` // 리더 임대 TTL (초)
 
 	// 리소스 모니터링 (클러스터 매니저 역할)
 	Metrics      string `gorm:"type:text" json:"metrics,omitempty"`      // JSON - CPU, Memory, Pod count 등
@@ -650,13 +648,13 @@ func (PluginBuild) TableName() string {
 	return "plugin_builds"
 }
 
-// RunnerVersion pipeline-runner 이미지 빌드 버전
+// RunnerVersion pipeline-batch-job 이미지 빌드 버전
 // 모든 native stage를 포함하는 Runner 이미지의 빌드 기록
 type RunnerVersion struct {
 	ID           string     `gorm:"primaryKey;size:36" json:"id"`                   // "rv-42"
 	BuildNumber  int        `gorm:"autoIncrement;uniqueIndex" json:"build_number"`  // 자동 증가
 	Status       string     `gorm:"size:20;not null;default:pending" json:"status"` // pending → building → ready | failed
-	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-runner:rv-42"
+	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-batch-job:rv-42"
 	ImageDigest  string     `gorm:"size:100" json:"image_digest,omitempty"`         // sha256:... (이미지 무결성 검증)
 	SourceHash   string     `gorm:"size:64;not null" json:"source_hash"`            // 모든 native stage 소스의 결합 해시
 	PluginIDs    string     `gorm:"type:text" json:"plugin_ids,omitempty"`          // JSON: 포함된 native stage ID 목록

@@ -292,7 +292,7 @@ pipelines:
 ```
 conduix/
 ├── pipeline-core/     # Pipeline core (Parallel processing, Bento integration)
-├── pipeline-agent/    # Pipeline execution agent
+├── pipeline-worker/    # Pipeline execution agent
 ├── control-plane/     # Operations tool backend API
 ├── web-ui/            # Operations tool frontend
 ├── shared/            # Shared types/constants

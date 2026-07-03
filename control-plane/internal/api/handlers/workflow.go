@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -24,7 +25,6 @@ type WorkflowHandler struct {
 	db           *database.DB
 	redisService *services.RedisService
 	kafkaService *services.KafkaService
-	jobService   *services.KubernetesJobService // Batch Job 실행용
 	logger       *slog.Logger
 }
 
@@ -37,11 +37,6 @@ func NewWorkflowHandler(db *database.DB, redisService *services.RedisService) *W
 		kafkaService: services.NewKafkaService(&services.KafkaServiceConfig{Logger: logger}),
 		logger:       logger,
 	}
-}
-
-// SetJobService KubernetesJobService 설정 (선택적)
-func (h *WorkflowHandler) SetJobService(jobService *services.KubernetesJobService) {
-	h.jobService = jobService
 }
 
 // CreateWorkflowRequest 워크플로우 생성 요청
@@ -85,55 +80,21 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		userIDStr = userID.(string)
 	}
 
-	// 기본값 설정
-	executionMode := req.ExecutionMode
-	if executionMode == "" {
-		executionMode = types.ExecutionModeParallel
-	}
-
-	// 파이프라인에 ID 할당 (있는 경우)
-	if req.Pipelines == nil {
-		req.Pipelines = []types.GroupedPipeline{}
-	}
-	for i := range req.Pipelines {
-		if req.Pipelines[i].ID == "" {
-			req.Pipelines[i].ID = uuid.New().String()
-		}
-	}
-
-	// JSON 직렬화
-	pipelinesJSON, _ := json.Marshal(req.Pipelines)
-	failurePolicyJSON, _ := json.Marshal(req.FailurePolicy)
-	metadataJSON, _ := json.Marshal(req.Metadata)
-	tagsJSON, _ := json.Marshal(req.Tags)
-
-	workflow := &models.Workflow{
-		ID:              uuid.New().String(),
-		ProjectID:       req.ProjectID,
-		ClusterID:       req.ClusterID,
-		Name:            req.Name,
-		Slug:            req.Slug,
-		Description:     req.Description,
-		Type:            string(req.Type),
-		ExecutionMode:   string(executionMode),
-		Status:          string(types.PipelineGroupStatusIdle),
-		PipelinesConfig: string(pipelinesJSON),
-		FailurePolicy:   string(failurePolicyJSON),
-		Metadata:        string(metadataJSON),
-		Tags:            string(tagsJSON),
-		CreatedBy:       userIDStr,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
-	}
-
-	// 스케줄 설정
-	if req.Schedule != nil {
-		workflow.ScheduleType = string(req.Schedule.Type)
-		workflow.ScheduleCron = req.Schedule.Cron
-		workflow.ScheduleInterval = req.Schedule.Interval
-		workflow.ScheduleTimezone = req.Schedule.Timezone
-		workflow.ScheduleEnabled = req.Schedule.Enabled
-	}
+	// JSON create와 YAML import가 동일 로직을 쓰도록 buildWorkflowModel로 일원화(동작 divergence 방지).
+	workflow := h.buildWorkflowModel(&WorkflowSpec{
+		ProjectID:     req.ProjectID,
+		ClusterID:     req.ClusterID,
+		Name:          req.Name,
+		Slug:          req.Slug,
+		Description:   req.Description,
+		Type:          req.Type,
+		ExecutionMode: req.ExecutionMode,
+		Schedule:      req.Schedule,
+		Pipelines:     req.Pipelines,
+		FailurePolicy: req.FailurePolicy,
+		Metadata:      req.Metadata,
+		Tags:          req.Tags,
+	}, userIDStr)
 
 	if err := h.db.Create(workflow).Error; err != nil {
 		h.logger.Error("Failed to create workflow",
@@ -390,6 +351,8 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 
 	var workflow models.Workflow
 	var execution *models.WorkflowExecution
+	// 실행 시점에 확정된 cluster (D4/D5: 지정→default→거부, execution에 스냅샷).
+	resolvedClusterID := ""
 
 	// 트랜잭션으로 동시성 제어 (SELECT FOR UPDATE)
 	err := h.db.Transaction(func(tx *gorm.DB) error {
@@ -402,6 +365,14 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		if workflow.Status == string(types.PipelineGroupStatusRunning) {
 			return fmt.Errorf("WORKFLOW_RUNNING")
 		}
+
+		// 실행 대상 cluster 확정: 워크플로우 지정값 우선, 없으면 default cluster로 폴백.
+		// 그래도 없으면 실행 불가 — 그룹 없이는 실행하지 않는다.
+		cid, cerr := h.resolveExecutionCluster(tx, workflow.ClusterID)
+		if cerr != nil {
+			return cerr
+		}
+		resolvedClusterID = cid
 
 		// 이전에 running 상태로 남아있는 실행 기록 정리 (비정상 종료된 실행)
 		now := time.Now()
@@ -417,7 +388,7 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		execution = &models.WorkflowExecution{
 			ID:                uuid.New().String(),
 			WorkflowID:        workflowID,
-			ClusterID:         workflow.ClusterID, // 실행 시점 클러스터 저장
+			ClusterID:         resolvedClusterID, // 실행 시점 확정 클러스터 스냅샷 (D5)
 			Status:            string(types.PipelineGroupStatusRunning),
 			StartedAt:         time.Now(),
 			PipelinesSnapshot: workflow.PipelinesConfig, // 실행 시점 파이프라인 설정 저장
@@ -445,6 +416,11 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 			middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
 			return
 		}
+		if errors.Is(err, errNoExecutionCluster) {
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidState,
+				"No target cluster: set workflow.cluster_id or mark a cluster as default")
+			return
+		}
 		h.logger.Error("Failed to start workflow", "error", err)
 		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to start workflow")
 		return
@@ -461,51 +437,31 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	}
 	fmt.Printf("[StartWorkflow] Parsed %d pipelines\n", len(pipelines))
 
-	// Batch 워크플로우 + JobConfig 설정이 있는 경우 Kubernetes Job으로 실행
-	if workflow.Type == string(types.WorkflowTypeBatch) && workflow.JobConfig != "" && h.jobService != nil {
-		if err := h.startBatchJob(c.Request.Context(), &workflow, execution); err != nil {
-			h.logger.Error("Failed to start batch job", "error", err)
-			// Job 실행 실패 시 실행 기록 및 워크플로우 상태 롤백
-			h.db.Model(&models.WorkflowExecution{}).
-				Where("id = ?", execution.ID).
-				Updates(map[string]any{
-					"status":        string(types.PipelineGroupStatusError),
-					"completed_at":  time.Now(),
-					"error_message": fmt.Sprintf("Failed to start batch job: %v", err),
-				})
-			h.db.Model(&models.Workflow{}).
-				Where("id = ?", workflowID).
-				Update("status", string(types.PipelineGroupStatusError))
+	// 위임 실행: realtime·batch 모두 대상 cluster 채널로 실행 명령을 발행한다.
+	// 실행 주체는 그 cluster의 worker다 — realtime은 in-process 상주 실행, batch는
+	// worker가 자기 cluster에 K8s Job을 생성(위임). control-plane은 K8s Job을 직접 만들지 않는다(D1/D2).
+	// batch의 리소스 스펙(CPU/mem/namespace 등)은 workflow.JobConfig에 있으면 worker가 적용한다(D3).
+	cmd := &types.WorkflowExecutionCommand{
+		ID:              uuid.New().String(),
+		WorkflowID:      workflowID,
+		ExecutionID:     execution.ID,
+		TargetClusterID: execution.ClusterID, // 실행 시점 확정 클러스터 (D5 스냅샷)
+		TriggeredBy:     "user",
+		UserID:          userIDStr,
+		JobConfig:       workflow.JobConfig, // batch 위임 시 worker가 Job 리소스 스펙으로 사용(선택)
+		WorkflowConfig: &types.Workflow{
+			ID:            workflow.ID,
+			ProjectID:     workflow.ProjectID,
+			Name:          workflow.Name,
+			Type:          types.PipelineGroupType(workflow.Type),
+			ExecutionMode: types.ExecutionMode(workflow.ExecutionMode),
+			Pipelines:     pipelines,
+		},
+		Timestamp: time.Now(),
+	}
 
-			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeExternalService, "Failed to start batch job")
-			return
-		}
-	} else {
-		// 기존 Agent 방식 (realtime 또는 batch without JobConfig)
-		cmd := &types.WorkflowExecutionCommand{
-			ID:              uuid.New().String(),
-			WorkflowID:      workflowID,
-			ExecutionID:     execution.ID,
-			TargetClusterID: workflow.ClusterID, // 클러스터 지정
-			TriggeredBy:     "user",
-			UserID:          userIDStr,
-			WorkflowConfig: &types.Workflow{
-				ID:            workflow.ID,
-				ProjectID:     workflow.ProjectID,
-				Name:          workflow.Name,
-				Type:          types.PipelineGroupType(workflow.Type),
-				ExecutionMode: types.ExecutionMode(workflow.ExecutionMode),
-				Pipelines:     pipelines,
-			},
-			Timestamp: time.Now(),
-		}
-
-		fmt.Printf("[StartWorkflow] Publishing workflow execution command to Redis...\n")
-		if err := h.redisService.PublishWorkflowExecution(cmd); err != nil {
-			fmt.Printf("[StartWorkflow] Failed to publish: %v\n", err)
-		} else {
-			fmt.Printf("[StartWorkflow] Successfully published workflow execution: %s\n", execution.ID)
-		}
+	if err := h.redisService.PublishWorkflowExecution(cmd); err != nil {
+		h.logger.Error("Failed to publish workflow execution", "execution_id", execution.ID, "cluster_id", execution.ClusterID, "error", err)
 	}
 
 	c.JSON(http.StatusAccepted, types.APIResponse[map[string]any]{
@@ -519,40 +475,7 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	})
 }
 
-// startBatchJob Kubernetes Job으로 Batch 워크플로우 실행
-func (h *WorkflowHandler) startBatchJob(ctx context.Context, workflow *models.Workflow, execution *models.WorkflowExecution) error {
-	// JobConfig 파싱
-	jobConfig, err := services.ParseJobConfig(workflow.JobConfig)
-	if err != nil {
-		return fmt.Errorf("failed to parse job config: %w", err)
-	}
-
-	// Job 생성
-	jobName, err := h.jobService.CreateBatchJob(ctx, workflow, execution, jobConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create batch job: %w", err)
-	}
-
-	fmt.Printf("[StartWorkflow] Created Kubernetes Job: %s for execution: %s\n", jobName, execution.ID)
-
-	// Job 완료 감시 시작 (폴백용)
-	namespace := ""
-	if jobConfig != nil {
-		namespace = jobConfig.Namespace
-	}
-	go h.jobService.WatchJobCompletion(ctx, jobName, namespace, func(result *types.JobExecutionResult) {
-		h.handleJobResult(result)
-	})
-
-	// 실행 기록에 Job 이름 저장
-	h.db.Model(&models.WorkflowExecution{}).
-		Where("id = ?", execution.ID).
-		Update("metadata", fmt.Sprintf(`{"job_name":"%s"}`, jobName))
-
-	return nil
-}
-
-// handleJobResult Job 완료 결과 처리 (Watch에서 호출)
+// handleJobResult Job 완료 결과 처리 (worker의 배치 Job Pod가 REST 콜백으로 보고)
 func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 	if result == nil {
 		return
@@ -621,12 +544,7 @@ func (h *WorkflowHandler) HandleJobResultCallback(c *gin.Context) {
 	fmt.Printf("[HandleJobResultCallback] Received job result: workflow=%s, execution=%s, status=%s\n",
 		result.WorkflowID, result.ExecutionID, result.Status)
 
-	// Job Watch 취소 (콜백 수신 성공)
-	if h.jobService != nil && result.JobName != "" {
-		h.jobService.CancelJobWatch(result.JobName)
-	}
-
-	// 결과 처리
+	// 결과 처리 (Job 생성·감시는 worker가 담당하므로 control-plane은 콜백만 반영)
 	h.handleJobResult(&result)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -656,6 +574,14 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 	workflow.Status = string(types.PipelineGroupStatusStopped)
 	h.db.Save(&workflow)
 
+	// 현재 실행 중인 execution 조회 (에이전트에 중지 명령 전송용 ID 확보)
+	var runningExec models.WorkflowExecution
+	execID := ""
+	if err := h.db.Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
+		First(&runningExec).Error; err == nil {
+		execID = runningExec.ID
+	}
+
 	// 현재 실행 중인 execution 업데이트
 	now := time.Now()
 	h.db.Model(&models.WorkflowExecution{}).
@@ -665,7 +591,12 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 			"completed_at": now,
 		})
 
-	// TODO: 에이전트에 중지 명령 전송
+	// 에이전트에 중지 명령 전송 (실행 중인 GroupExecutor를 취소).
+	// 실행 시점 확정 cluster(execution.ClusterID)로 라우팅해야 한다 — 실행 후 워크플로우 그룹이
+	// 바뀌었어도 진행 중 execution은 시작 당시 cluster에 묶여 있으므로(D5).
+	if err := h.redisService.PublishWorkflowCommand(runningExec.ClusterID, types.CommandStopWorkflow, workflowID, execID); err != nil {
+		fmt.Printf("[StopWorkflow] Failed to publish stop command: %v\n", err)
+	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
@@ -691,12 +622,36 @@ func (h *WorkflowHandler) PauseWorkflow(c *gin.Context) {
 	workflow.Status = string(types.PipelineGroupStatusPaused)
 	h.db.Save(&workflow)
 
-	// TODO: 에이전트에 일시정지 명령 전송
+	// 에이전트에 일시정지 명령 전송 (execution의 확정 cluster로 라우팅, D5)
+	execID, execClusterID := h.runningExecution(workflowID)
+	if err := h.redisService.PublishWorkflowCommand(execClusterID, types.CommandPauseWorkflow, workflowID, execID); err != nil {
+		fmt.Printf("[PauseWorkflow] Failed to publish pause command: %v\n", err)
+	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
 		Message: "Workflow paused",
 	})
+}
+
+// errNoExecutionCluster는 실행 대상 cluster를 확정할 수 없을 때 반환된다(그룹 없이는 실행 불가).
+// 즉시 실행/수동 트리거가 공유하는 정책은 services.ResolveExecutionCluster에 있다.
+var errNoExecutionCluster = services.ErrNoExecutionCluster
+
+// resolveExecutionCluster는 실행 시점의 대상 cluster를 확정한다(services 공용 정책 위임).
+func (h *WorkflowHandler) resolveExecutionCluster(tx *gorm.DB, workflowClusterID string) (string, error) {
+	return services.ResolveExecutionCluster(tx, workflowClusterID)
+}
+
+// runningExecution은 워크플로우의 현재 실행 중 execution의 (ID, ClusterID)를 반환한다(없으면 빈 문자열).
+// 제어 명령은 execution의 확정 cluster로 라우팅해야 하므로 ID와 ClusterID를 함께 돌려준다(D5).
+func (h *WorkflowHandler) runningExecution(workflowID string) (execID, clusterID string) {
+	var exec models.WorkflowExecution
+	if err := h.db.Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
+		First(&exec).Error; err != nil {
+		return "", ""
+	}
+	return exec.ID, exec.ClusterID
 }
 
 // ResumeWorkflow POST /api/v1/workflows/:id/resume
@@ -717,7 +672,19 @@ func (h *WorkflowHandler) ResumeWorkflow(c *gin.Context) {
 	workflow.Status = string(types.PipelineGroupStatusRunning)
 	h.db.Save(&workflow)
 
-	// TODO: 에이전트에 재개 명령 전송
+	// 에이전트에 재개 명령 전송 (일시정지 execution을 다시 running으로).
+	// execution의 확정 cluster로 라우팅(D5).
+	execID := ""
+	execClusterID := ""
+	var exec models.WorkflowExecution
+	if err := h.db.Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusPaused)).
+		First(&exec).Error; err == nil {
+		execID = exec.ID
+		execClusterID = exec.ClusterID
+	}
+	if err := h.redisService.PublishWorkflowCommand(execClusterID, types.CommandResumeWorkflow, workflowID, execID); err != nil {
+		fmt.Printf("[ResumeWorkflow] Failed to publish resume command: %v\n", err)
+	}
 
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,

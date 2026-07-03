@@ -32,8 +32,14 @@ func NewPipelineHandler(db *database.DB, redisService *services.RedisService) *P
 func (h *PipelineHandler) List(c *gin.Context) {
 	var pipelines []models.Pipeline
 
-	page := 1
-	pageSize := 20
+	page := parseIntDefault(c.Query("page"), 1)
+	if page < 1 {
+		page = 1
+	}
+	pageSize := min(parseIntDefault(c.Query("page_size"), 20), 100)
+	if pageSize < 1 {
+		pageSize = 20
+	}
 
 	var total int64
 	h.db.Model(&models.Pipeline{}).Count(&total)

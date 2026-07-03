@@ -66,7 +66,7 @@ import './StageEditor.css'
  * SQL 식별자 인용 (MySQL 백틱)
  */
 const quoteSQLIdentifier = (name: string): string => {
-  return '`' + name.replace(/`/g, '``') + '`'
+  return '`' + name.replace(/`/g, '``') + '`';
 }
 
 /**
@@ -1396,76 +1396,124 @@ export default function StageEditorPage() {
     switch (stage.type) {
       case 'filter':
         return stage.config?.condition ? (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
             {String(stage.config.condition)}
           </Typography>
-        ) : null
+        ) : null;
       case 'remap': {
         const mappings = stage.config?.mappings as Record<string, string> | undefined
         if (mappings) {
           const entries = Object.entries(mappings).slice(0, 3)
           return (
-            <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                color: "text.secondary",
+                maxWidth: 300
+              }}>
               {entries.map(([k, v]) => `${k} -> ${v}`).join(', ')}
               {Object.keys(mappings).length > 3 ? '...' : ''}
             </Typography>
-          )
+          );
         }
         return null
       }
       case 'drop': {
         const fields = stage.config?.fields as string[] | undefined
         return fields?.length ? (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
             {fields.slice(0, 5).join(', ')}{fields.length > 5 ? '...' : ''}
           </Typography>
-        ) : null
+        ) : null;
       }
       case 'merge': {
         const sourceFields = stage.config?.source_fields as string[] | undefined
         const targetField = stage.config?.target_field as string | undefined
         return sourceFields?.length && targetField ? (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
             {sourceFields.join(' + ')} → {targetField}
           </Typography>
-        ) : null
+        ) : null;
       }
       case 'split': {
         const sourceField = stage.config?.source_field as string | undefined
         const targetFields = stage.config?.target_fields as string[] | undefined
         return sourceField && targetFields?.length ? (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
             {sourceField} → {targetFields.join(', ')}
           </Typography>
-        ) : null
+        ) : null;
       }
       case 'encrypt': {
         const encFields = stage.config?.fields as string[] | undefined
         const method = stage.config?.method as string | undefined
         return encFields?.length ? (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
             {encFields.slice(0, 3).join(', ')}{encFields.length > 3 ? '...' : ''} ({method})
           </Typography>
-        ) : null
+        ) : null;
       }
       case 'dedupe': {
         const keyFields = stage.config?.key_fields as string[] | undefined
         const strategy = stage.config?.strategy as string | undefined
         return keyFields?.length ? (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
             {keyFields.join(', ')} ({strategy})
           </Typography>
-        ) : null
+        ) : null;
       }
       case 'default': {
         const defaults = stage.config?.defaults as Record<string, unknown> | undefined
         if (defaults) {
           const keys = Object.keys(defaults).slice(0, 3)
           return (
-            <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                color: "text.secondary",
+                maxWidth: 300
+              }}>
               {keys.join(', ')}{Object.keys(defaults).length > 3 ? '...' : ''}
             </Typography>
-          )
+          );
         }
         return null
       }
@@ -1474,10 +1522,16 @@ export default function StageEditorPage() {
         if (casts) {
           const entries = Object.entries(casts).slice(0, 3)
           return (
-            <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                color: "text.secondary",
+                maxWidth: 300
+              }}>
               {entries.map(([k, v]) => `${k}:${v}`).join(', ')}{Object.keys(casts).length > 3 ? '...' : ''}
             </Typography>
-          )
+          );
         }
         return null
       }
@@ -1485,32 +1539,54 @@ export default function StageEditorPage() {
         const action = stage.config?.action as string | undefined
         const targetField = stage.config?.target_field as string | undefined
         return (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
-            {action} → {targetField}
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
+            {action}→ {targetField}
           </Typography>
-        )
+        );
       }
       case 'throttle': {
         const rate = stage.config?.rate as number | undefined
         const interval = stage.config?.interval as string | undefined
         const strategy = stage.config?.strategy as string | undefined
         return (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
-            {rate}/{interval} ({strategy || 'token_bucket'})
-          </Typography>
-        )
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
+            {rate}/{interval}({strategy || 'token_bucket'})
+                      </Typography>
+        );
       }
       case 'validate':
-        return <Typography variant="body2" color="text.secondary">Schema validation</Typography>
+        return (
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>Schema validation</Typography>
+        );
       case 'contract': {
         const contractName = (stage.config?.contract as { name?: string })?.name
         const action = stage.config?.action as string
         const rulesCount = ((stage.config?.contract as { rules?: unknown[] })?.rules || []).length
         return (
-          <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>
-            {contractName || 'Contract'} ({rulesCount} rules, {action || 'drop'})
-          </Typography>
-        )
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+              maxWidth: 300
+            }}>
+            {contractName || 'Contract'}({rulesCount}rules, {action || 'drop'})
+                      </Typography>
+        );
       }
       // Output stages
       case 'sql':
@@ -1521,10 +1597,12 @@ export default function StageEditorPage() {
       case 'rest_api':
       case 'file':
         return (
-          <Typography variant="body2" color="text.secondary">
-            {stage.type} output
-          </Typography>
-        )
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
+            {stage.type}output
+                      </Typography>
+        );
       default:
         return null
     }
@@ -1715,7 +1793,7 @@ export default function StageEditorPage() {
                   value={stageForm.encrypt_mask_char}
                   onChange={(e) => updateStageFormField('encrypt_mask_char', e.target.value)}
                   placeholder="*"
-                  inputProps={{ maxLength: 1 }}
+                  slotProps={{ htmlInput: { maxLength: 1 } }}
                   sx={{ width: 60 }}
                 />
                 <TextField
@@ -1724,7 +1802,7 @@ export default function StageEditorPage() {
                   value={stageForm.encrypt_mask_keep_first}
                   onChange={(e) => updateStageFormField('encrypt_mask_keep_first', Number(e.target.value))}
                   placeholder="0"
-                  inputProps={{ min: 0 }}
+                  slotProps={{ htmlInput: { min: 0 } }}
                   sx={{ width: 100 }}
                 />
                 <TextField
@@ -1733,7 +1811,7 @@ export default function StageEditorPage() {
                   value={stageForm.encrypt_mask_keep_last}
                   onChange={(e) => updateStageFormField('encrypt_mask_keep_last', Number(e.target.value))}
                   placeholder="0"
-                  inputProps={{ min: 0 }}
+                  slotProps={{ htmlInput: { min: 0 } }}
                   sx={{ width: 100 }}
                 />
               </Stack>
@@ -1773,7 +1851,7 @@ export default function StageEditorPage() {
               onChange={(e) => updateStageFormField('dedupe_window', e.target.value)}
               helperText={t('stage.dedupeWindowHelp')}
               placeholder="300"
-              inputProps={{ min: 0 }}
+              slotProps={{ htmlInput: { min: 0 } }}
               sx={{ width: 150 }}
             />
             <TextField
@@ -1942,7 +2020,7 @@ export default function StageEditorPage() {
               error={!!stageFormErrors.throttle_rate}
               helperText={stageFormErrors.throttle_rate || t('stage.throttleRateHelp')}
               placeholder="100"
-              inputProps={{ min: 1 }}
+              slotProps={{ htmlInput: { min: 1 } }}
               required
               sx={{ width: 150 }}
             />
@@ -1965,7 +2043,7 @@ export default function StageEditorPage() {
               onChange={(e) => updateStageFormField('throttle_burst', e.target.value)}
               helperText={t('stage.throttleBurstHelp')}
               placeholder="10"
-              inputProps={{ min: 0 }}
+              slotProps={{ htmlInput: { min: 0 } }}
               sx={{ width: 150 }}
             />
             <FormControl fullWidth>
@@ -2070,7 +2148,7 @@ export default function StageEditorPage() {
               value={stageForm.sql_batch_size}
               onChange={(e) => updateStageFormField('sql_batch_size', Number(e.target.value))}
               helperText={t('stage.sqlBatchSizeHelp')}
-              inputProps={{ min: 1, max: 10000 }}
+              slotProps={{ htmlInput: { min: 1, max: 10000 } }}
               sx={{ width: 150 }}
             />
             <FormControl sx={{ width: 150 }}>
@@ -2155,7 +2233,7 @@ export default function StageEditorPage() {
               type="number"
               value={stageForm.es_batch_size}
               onChange={(e) => updateStageFormField('es_batch_size', Number(e.target.value))}
-              inputProps={{ min: 1, max: 10000 }}
+              slotProps={{ htmlInput: { min: 1, max: 10000 } }}
               sx={{ width: 150 }}
             />
             <TextField
@@ -2414,7 +2492,9 @@ export default function StageEditorPage() {
       <Box className="stage-editor-header">
         <Box className="stage-editor-header-left">
           <Breadcrumbs>
-            <Typography color="text.secondary">{workflow?.project?.name || projectAlias}</Typography>
+            <Typography sx={{
+              color: "text.secondary"
+            }}>{workflow?.project?.name || projectAlias}</Typography>
             <Link
               component="button"
               underline="hover"
@@ -2423,8 +2503,12 @@ export default function StageEditorPage() {
             >
               {workflow?.name}
             </Link>
-            <Typography color="text.secondary">{pipeline?.name}</Typography>
-            <Typography color="text.primary">{t('stage.title')}</Typography>
+            <Typography sx={{
+              color: "text.secondary"
+            }}>{pipeline?.name}</Typography>
+            <Typography sx={{
+              color: "text.primary"
+            }}>{t('stage.title')}</Typography>
           </Breadcrumbs>
           <Typography variant="h5" sx={{ mt: 1 }}>
             {t('stage.title')} - {pipeline?.name}
@@ -2447,7 +2531,6 @@ export default function StageEditorPage() {
           </Button>
         </Stack>
       </Box>
-
       {/* Content */}
       <Card className="stage-editor-content">
         <CardContent>
@@ -2460,7 +2543,11 @@ export default function StageEditorPage() {
             <Box className="stage-list">
               {stages.length === 0 ? (
                 <Box sx={{ textAlign: 'center', py: 5 }}>
-                  <Typography color="text.secondary" sx={{ mb: 2 }}>{t('stage.noStages')}</Typography>
+                  <Typography
+                    sx={{
+                      color: "text.secondary",
+                      mb: 2
+                    }}>{t('stage.noStages')}</Typography>
                   <Button variant="contained" startIcon={<AddIcon />} onClick={handleAddStage}>
                     {t('stage.add')}
                   </Button>
@@ -2551,7 +2638,6 @@ export default function StageEditorPage() {
           )}
         </CardContent>
       </Card>
-
       {/* Stage Modal */}
       <Dialog
         open={stageModalVisible}
@@ -2583,116 +2669,154 @@ export default function StageEditorPage() {
                 label={t('stage.type')}
               >
                 <MenuItem value="filter">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <FilterAltIcon sx={{ color: '#1976d2' }} />
                     <span>{t('stage.types.filter')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="remap">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <SwapHorizIcon sx={{ color: '#4caf50' }} />
                     <span>{t('stage.types.remap')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="drop">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <RemoveCircleIcon sx={{ color: '#f44336' }} />
                     <span>{t('stage.types.drop')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="merge">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <MergeIcon sx={{ color: '#00bcd4' }} />
                     <span>{t('stage.types.merge')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="split">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <CallSplitIcon sx={{ color: '#e91e63' }} />
                     <span>{t('stage.types.split')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="encrypt">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <LockIcon sx={{ color: '#ffc107' }} />
                     <span>{t('stage.types.encrypt')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="dedupe">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <ContentCopyIcon sx={{ color: '#ff5722' }} />
                     <span>{t('stage.types.dedupe')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="default">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <TextFieldsIcon sx={{ color: '#3f51b5' }} />
                     <span>{t('stage.types.default')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="cast">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <NumbersIcon sx={{ color: '#cddc39' }} />
                     <span>{t('stage.types.cast')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="timestamp">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <AccessTimeIcon sx={{ color: '#e91e63' }} />
                     <span>{t('stage.types.timestamp')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="throttle">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <SpeedIcon sx={{ color: '#ff9800' }} />
                     <span>{t('stage.types.throttle')}</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="validate">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <CheckCircleIcon sx={{ color: '#9e9e9e' }} />
                     <span>{t('stage.types.validate')}</span>
                   </Stack>
                 </MenuItem>
                 {/* Output Stage Types */}
                 <MenuItem value="sql">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <OutputIcon sx={{ color: '#9c27b0' }} />
                     <span>SQL Output</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="elasticsearch">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <OutputIcon sx={{ color: '#9c27b0' }} />
                     <span>Elasticsearch Output</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="kafka">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <OutputIcon sx={{ color: '#9c27b0' }} />
                     <span>Kafka Output</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="mongodb">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <OutputIcon sx={{ color: '#9c27b0' }} />
                     <span>MongoDB Output</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="s3">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <OutputIcon sx={{ color: '#9c27b0' }} />
                     <span>S3 Output</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="rest_api">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <OutputIcon sx={{ color: '#9c27b0' }} />
                     <span>REST API Output</span>
                   </Stack>
                 </MenuItem>
                 <MenuItem value="file">
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack direction="row" spacing={1} sx={{
+                    alignItems: "center"
+                  }}>
                     <OutputIcon sx={{ color: '#9c27b0' }} />
                     <span>File Output</span>
                   </Stack>
@@ -2709,7 +2833,6 @@ export default function StageEditorPage() {
           <Button variant="contained" onClick={handleStageSubmit}>{t('common.save')}</Button>
         </DialogActions>
       </Dialog>
-
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog
         open={deleteDialogOpen}
@@ -2725,5 +2848,5 @@ export default function StageEditorPage() {
         severity="error"
       />
     </Box>
-  )
+  );
 }

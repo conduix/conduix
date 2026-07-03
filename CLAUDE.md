@@ -8,7 +8,7 @@ Conduix is a scalable data pipeline platform that combines Bento's verified conn
 
 - **control-plane**: Operations backend (Go + Gin + GORM + MySQL)
 - **pipeline-core**: Pipeline execution engine (Go + Bento connectors + parallel processing)
-- **pipeline-agent**: Pipeline execution agent (Go + Gin)
+- **pipeline-worker**: Pipeline execution agent (Go + Gin)
 - **web-ui**: Frontend (React 18 + TypeScript + Vite + MUI)
 - **shared**: Shared types and utilities
 
@@ -57,7 +57,7 @@ make test-race         # Run tests with race detector
 
 # Module-specific tests
 cd control-plane && go test -v ./...
-cd pipeline-agent && go test -v ./...
+cd pipeline-worker && go test -v ./...
 cd pipeline-core && go test -v ./...
 
 # Single package test
@@ -88,7 +88,7 @@ make run-web            # Web UI dev server on :3000
 
 # Or from module directories
 cd control-plane && make run-local
-cd pipeline-agent && make run-local
+cd pipeline-worker && make run-local
 cd web-ui && npm run dev
 ```
 
@@ -122,7 +122,7 @@ All Go modules use local replace directives in go.mod:
 ```
 shared/                 # Base module (no dependencies)
 pipeline-core/          # Depends on: shared
-pipeline-agent/         # Depends on: shared, pipeline-core
+pipeline-worker/         # Depends on: shared, pipeline-core
 control-plane/          # Depends on: shared, pipeline-core
 ```
 

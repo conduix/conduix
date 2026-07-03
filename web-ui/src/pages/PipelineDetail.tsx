@@ -155,7 +155,6 @@ export default function PipelineDetailPage() {
           <Typography variant="h5">{pipeline.name}</Typography>
         </Box>
       </Box>
-
       <Card>
         <CardContent>
           <Tabs value={tabValue} onChange={handleTabChange}>
@@ -247,7 +246,9 @@ export default function PipelineDetailPage() {
                   ) : (
                     <TableRow>
                       <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
-                        <Typography color="text.secondary">실행 히스토리가 없습니다.</Typography>
+                        <Typography sx={{
+                          color: "text.secondary"
+                        }}>실행 히스토리가 없습니다.</Typography>
                       </TableCell>
                     </TableRow>
                   )}
@@ -266,5 +267,5 @@ export default function PipelineDetailPage() {
         </CardContent>
       </Card>
     </Box>
-  )
+  );
 }

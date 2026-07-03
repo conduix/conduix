@@ -81,7 +81,9 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Box sx={{ color: color || 'text.secondary' }}>{icon}</Box>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
             {title}
           </Typography>
         </Box>
@@ -90,7 +92,7 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
         </Typography>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export default function PluginsPage() {
@@ -401,9 +403,12 @@ export default function PluginsPage() {
           {t('plugin.register')}
         </Button>
       </Box>
-
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6
+          }}>
           <StatCard
             title={t('plugin.totalPlugins')}
             value={plugins.length}
@@ -411,7 +416,11 @@ export default function PluginsPage() {
             color="#1976d2"
           />
         </Grid>
-        <Grid item xs={12} sm={6}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6
+          }}>
           <StatCard
             title={t('plugin.activePlugins')}
             value={activeCount}
@@ -420,7 +429,6 @@ export default function PluginsPage() {
           />
         </Grid>
       </Grid>
-
       {/* Runner Build Status Banner */}
       {runnerStatus && runnerStatus.needs_build && (
         <Alert
@@ -449,13 +457,14 @@ export default function PluginsPage() {
             })}
           </Typography>
           {runnerStatus.latest_ready_version && (
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" sx={{
+              color: "text.secondary"
+            }}>
               {t('plugin.lastBuild', 'Latest ready build')}: {runnerStatus.latest_ready_version.id}
             </Typography>
           )}
         </Alert>
       )}
-
       {runnerStatus && !runnerStatus.needs_build && runnerStatus.plugins.length > 0 && (
         <Alert
           severity="success"
@@ -470,14 +479,15 @@ export default function PluginsPage() {
             {t('plugin.buildUpToDate', 'Runner is up to date — all native plugins deployed')}
           </Typography>
           {runnerStatus.latest_ready_version && (
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" sx={{
+              color: "text.secondary"
+            }}>
               {t('plugin.lastBuild', 'Latest ready build')}: {runnerStatus.latest_ready_version.id}
               {runnerStatus.latest_ready_version.image_tag && ` (${runnerStatus.latest_ready_version.image_tag})`}
             </Typography>
           )}
         </Alert>
       )}
-
       <Card>
         <CardContent>
           <DataGrid
@@ -525,7 +535,13 @@ export default function PluginsPage() {
                           {plugin.source_code}
                         </Box>
                         {plugin.source_hash && (
-                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: "text.secondary",
+                              mt: 0.5,
+                              display: 'block'
+                            }}>
                             Hash: {plugin.source_hash.substring(0, 12)}...
                             {plugin.deployed_hash && plugin.source_hash !== plugin.deployed_hash && (
                               <Chip size="small" label={t('plugin.buildNeeded', 'Build needed')} color="warning" variant="outlined" sx={{ ml: 1 }} />
@@ -534,7 +550,6 @@ export default function PluginsPage() {
                         )}
                       </Box>
                     )}
-
                     {/* Test History */}
                     {plugin.last_test_at && (
                       <Box sx={{ mb: 2 }}>
@@ -547,7 +562,9 @@ export default function PluginsPage() {
                             label={plugin.last_test_passed ? t('plugin.testPassed', 'Passed') : t('plugin.testFailed', 'Failed')}
                             color={plugin.last_test_passed ? 'success' : 'error'}
                           />
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={{
+                            color: "text.secondary"
+                          }}>
                             {new Date(plugin.last_test_at).toLocaleString()}
                           </Typography>
                         </Box>
@@ -558,21 +575,21 @@ export default function PluginsPage() {
                         )}
                       </Box>
                     )}
-
                     {/* No content */}
                     {!plugin.source_code && (
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="body2" sx={{
+                        color: "text.secondary"
+                      }}>
                         {t('plugin.noContent', 'No source code registered.')}
                       </Typography>
                     )}
                   </Box>
-                )
+                );
               })()}
             </Collapse>
           )}
         </CardContent>
       </Card>
-
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="lg" fullWidth>
         <DialogTitle>
@@ -687,7 +704,12 @@ export default function PluginsPage() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           {needsTest && !testPassed && (
-            <Typography variant="caption" color="text.secondary" sx={{ mr: 'auto' }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                mr: 'auto'
+              }}>
               {t('plugin.nativeTestRequired', 'Test must pass before saving')}
             </Typography>
           )}
@@ -701,7 +723,6 @@ export default function PluginsPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>{t('plugin.deleteConfirm')}</DialogTitle>
@@ -717,13 +738,14 @@ export default function PluginsPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* Build Log Dialog */}
       <Dialog open={buildLogOpen} onClose={() => setBuildLogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>{t('plugin.buildHistory', 'Runner Build History')}</DialogTitle>
         <DialogContent>
           {buildVersions.length === 0 ? (
-            <Typography color="text.secondary">{t('common.noData')}</Typography>
+            <Typography sx={{
+              color: "text.secondary"
+            }}>{t('common.noData')}</Typography>
           ) : (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {buildVersions.map((v) => (
@@ -740,7 +762,9 @@ export default function PluginsPage() {
                         <Chip size="small" label={`${(v.duration_ms / 1000).toFixed(1)}s`} variant="outlined" />
                       )}
                       {v.started_at && (
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="caption" sx={{
+                          color: "text.secondary"
+                        }}>
                           {new Date(v.started_at).toLocaleString()}
                         </Typography>
                       )}
@@ -783,5 +807,5 @@ export default function PluginsPage() {
         </DialogActions>
       </Dialog>
     </Box>
-  )
+  );
 }

@@ -826,16 +826,6 @@ func (o *S3Output) Stats() OutputStats {
 	return o.stats
 }
 
-// S3OutputOption S3 출력 옵션 (테스트용)
-type S3OutputOption func(*S3Output)
-
-// WithS3Client S3 클라이언트 설정 (테스트용)
-func WithS3Client(client *s3.Client) S3OutputOption {
-	return func(o *S3Output) {
-		o.client = client
-	}
-}
-
 // SetClient S3 클라이언트 설정 (테스트용)
 func (o *S3Output) SetClient(client *s3.Client) {
 	o.client = client

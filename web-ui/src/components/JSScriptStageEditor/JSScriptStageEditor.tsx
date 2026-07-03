@@ -134,7 +134,6 @@ export default function JSScriptStageEditor({
         JavaScript (ES6) — JSON, RegExp, Date, Math 등 표준 내장 객체 사용 가능.
         import/require, fetch, setTimeout 불가. hash/base64는 별도 Stage 사용.
       </Alert>
-
       {/* Code Editor */}
       <Box>
         <Typography variant="subtitle2" sx={{ mb: 1 }}>
@@ -162,7 +161,6 @@ export default function JSScriptStageEditor({
           />
         </Paper>
       </Box>
-
       {/* Timeout */}
       <TextField
         label="Timeout"
@@ -173,9 +171,7 @@ export default function JSScriptStageEditor({
         disabled={disabled}
         sx={{ maxWidth: 200 }}
       />
-
       <Divider />
-
       {/* Test Section */}
       <Box>
         <Typography variant="subtitle2" sx={{ mb: 1 }}>
@@ -185,7 +181,13 @@ export default function JSScriptStageEditor({
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
           {/* Sample Data Input */}
           <Box sx={{ flex: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                mb: 0.5,
+                display: 'block'
+              }}>
               Sample Data (JSON)
             </Typography>
             <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
@@ -211,7 +213,13 @@ export default function JSScriptStageEditor({
 
           {/* Result Output */}
           <Box sx={{ flex: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                mb: 0.5,
+                display: 'block'
+              }}>
               Result
               {testResult && (
                 <Chip
@@ -243,7 +251,12 @@ export default function JSScriptStageEditor({
               {testResult ? (
                 testResult.success ? (
                   testResult.dropped ? (
-                    <Stack direction="row" alignItems="center" gap={1}>
+                    <Stack
+                      direction="row"
+                      sx={{
+                        alignItems: "center",
+                        gap: 1
+                      }}>
                       <RemoveCircleIcon color="warning" fontSize="small" />
                       <span>Record dropped (null returned)</span>
                     </Stack>
@@ -286,5 +299,5 @@ export default function JSScriptStageEditor({
         )}
       </Box>
     </Stack>
-  )
+  );
 }

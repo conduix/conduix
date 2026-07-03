@@ -48,7 +48,7 @@ import {
   Edit as EditIcon,
   Delete as DeleteIcon,
   Add as AddIcon,
-  RemoveCircleOutline as RemoveCircleIcon,
+  RemoveCircleOutlined as RemoveCircleIcon,
   PlayCircle as PlayCircleIcon,
   PauseCircle as PauseCircleIcon,
   AccountTree as BranchesIcon,
@@ -63,6 +63,8 @@ import {
   Storage as StorageIcon,
   Refresh as RefreshIcon,
   ExpandMore as ExpandMoreIcon,
+  Download as DownloadIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -195,12 +197,20 @@ interface MonitoringStage {
   samples?: MonitoringSample[]
 }
 
+interface MonitoringStatistics {
+  records_collected: number
+  records_processed: number
+  collection_errors: number
+  processing_errors: number
+}
+
 interface MonitoringPipeline {
   pipeline_id: string
   pipeline_name?: string
   status: string
   checkpoints?: MonitoringCheckpoint[]
   stages?: MonitoringStage[]
+  statistics?: MonitoringStatistics
 }
 
 interface MonitoringResponse {
@@ -450,6 +460,81 @@ export default function WorkflowDetailPage() {
     } catch (error: unknown) {
       const err = error as { response?: { data?: { error?: { message?: string } } } }
       showError(err.response?.data?.error?.message || t('workflow.stopError'))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handlePauseWorkflow = async () => {
+    if (!effectiveId) return
+    try {
+      setActionLoading(true)
+      const res = await api.pauseWorkflow(effectiveId)
+      if (res.success) {
+        showSuccess(t('workflow.pauseSuccess'))
+        fetchWorkflowData()
+      } else {
+        showError(res.error?.message || t('workflow.pauseError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.pauseError'))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleResumeWorkflow = async () => {
+    if (!effectiveId) return
+    try {
+      setActionLoading(true)
+      const res = await api.resumeWorkflow(effectiveId)
+      if (res.success) {
+        showSuccess(t('workflow.resumeSuccess'))
+        fetchWorkflowData()
+      } else {
+        showError(res.error?.message || t('workflow.resumeError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.resumeError'))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleExportYAML = async () => {
+    if (!effectiveId) return
+    try {
+      const yaml = await api.exportWorkflowYAML(effectiveId)
+      const blob = new Blob([yaml], { type: 'application/x-yaml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${workflow?.slug || workflow?.name || 'workflow'}.yaml`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      showError(t('workflow.exportError'))
+    }
+  }
+
+  // 복제: export한 YAML을 같은 프로젝트로 다시 import (파이프라인 ID는 서버가 재부여)
+  const handleCloneWorkflow = async () => {
+    if (!effectiveId || !workflow) return
+    try {
+      setActionLoading(true)
+      const yaml = await api.exportWorkflowYAML(effectiveId)
+      const res = await api.importWorkflowYAML(yaml, workflow.project_id)
+      if (res.success && res.data?.id) {
+        showSuccess(t('workflow.cloneSuccess'))
+        navigate(`/workflows/${res.data.id}`)
+      } else {
+        showError(res.error?.message || t('workflow.cloneError'))
+      }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.cloneError'))
     } finally {
       setActionLoading(false)
     }
@@ -769,12 +854,16 @@ export default function WorkflowDetailPage() {
   if (!workflow) {
     return (
       <Box sx={{ textAlign: 'center', py: 6 }}>
-        <Typography color="text.secondary" sx={{ mb: 2 }}>{t('workflow.notFound')}</Typography>
+        <Typography
+          sx={{
+            color: "text.secondary",
+            mb: 2
+          }}>{t('workflow.notFound')}</Typography>
         <Button variant="contained" onClick={() => navigate(-1)}>
           {t('common.back')}
         </Button>
       </Box>
-    )
+    );
   }
 
   const statusConfig = getStatusConfig(workflow.status)
@@ -806,7 +895,9 @@ export default function WorkflowDetailPage() {
               {workflow.project.name}
             </Link>
           )}
-          <Typography color="text.primary">{workflow.name}</Typography>
+          <Typography sx={{
+            color: "text.primary"
+          }}>{workflow.name}</Typography>
         </Breadcrumbs>
 
         <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -823,15 +914,52 @@ export default function WorkflowDetailPage() {
             <Chip label={statusConfig.text} color={statusConfig.color} size="small" />
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
-            {workflow.status === 'running' ? (
-              <Button
-                startIcon={<PauseCircleIcon />}
-                onClick={handleStopWorkflow}
-                disabled={actionLoading}
-              >
-                {actionLoading ? <CircularProgress size={20} /> : t('workflow.stop')}
-              </Button>
-            ) : (
+            <Button startIcon={<DownloadIcon />} onClick={handleExportYAML} disabled={actionLoading}>
+              {t('workflow.exportYaml')}
+            </Button>
+            <Button startIcon={<ContentCopyIcon />} onClick={handleCloneWorkflow} disabled={actionLoading}>
+              {t('workflow.clone')}
+            </Button>
+            {workflow.status === 'running' && (
+              <>
+                <Button
+                  startIcon={<PauseCircleIcon />}
+                  onClick={handlePauseWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.pause')}
+                </Button>
+                <Button
+                  color="error"
+                  startIcon={<StopIcon />}
+                  onClick={handleStopWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.stop')}
+                </Button>
+              </>
+            )}
+            {workflow.status === 'paused' && (
+              <>
+                <Button
+                  variant="contained"
+                  startIcon={<PlayCircleIcon />}
+                  onClick={handleResumeWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.resume')}
+                </Button>
+                <Button
+                  color="error"
+                  startIcon={<StopIcon />}
+                  onClick={handleStopWorkflow}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? <CircularProgress size={20} /> : t('workflow.stop')}
+                </Button>
+              </>
+            )}
+            {workflow.status !== 'running' && workflow.status !== 'paused' && (
               <Button
                 variant="contained"
                 startIcon={<PlayCircleIcon />}
@@ -943,7 +1071,11 @@ export default function WorkflowDetailPage() {
                               <Box sx={{ pl: depth * 3 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                   {depth > 0 && (
-                                    <Typography color="text.secondary" sx={{ fontSize: 12 }}>--</Typography>
+                                    <Typography
+                                      sx={{
+                                        color: "text.secondary",
+                                        fontSize: 12
+                                      }}>--</Typography>
                                   )}
                                   <Typography>{pipeline.name}</Typography>
                                   {pipeline.expansion_mode === 'for_each_record' && (
@@ -951,7 +1083,12 @@ export default function WorkflowDetailPage() {
                                   )}
                                 </Box>
                                 {targetDataType && (
-                                  <Typography variant="caption" color="text.secondary" sx={{ pl: depth > 0 ? 2.5 : 0 }}>
+                                  <Typography
+                                    variant="caption"
+                                    sx={{
+                                      color: "text.secondary",
+                                      pl: depth > 0 ? 2.5 : 0
+                                    }}>
                                     {t('pipeline.targetDataModel')}: <code>{targetDataType.display_name}</code>
                                   </Typography>
                                 )}
@@ -999,14 +1136,18 @@ export default function WorkflowDetailPage() {
                               </Box>
                             </TableCell>
                           </TableRow>
-                        )
+                        );
                       })}
                     </TableBody>
                   </Table>
                 </TableContainer>
               ) : (
                 <Box sx={{ textAlign: 'center', py: 6 }}>
-                  <Typography color="text.secondary" sx={{ mb: 2 }}>{t('pipeline.noPipelines')}</Typography>
+                  <Typography
+                    sx={{
+                      color: "text.secondary",
+                      mb: 2
+                    }}>{t('pipeline.noPipelines')}</Typography>
                   <Button variant="contained" onClick={handleCreatePipeline}>
                     {t('pipeline.new')}
                   </Button>
@@ -1099,7 +1240,9 @@ export default function WorkflowDetailPage() {
                 </TableContainer>
               ) : (
                 <Box sx={{ textAlign: 'center', py: 6 }}>
-                  <Typography color="text.secondary">{t('workflow.noExecutions')}</Typography>
+                  <Typography sx={{
+                    color: "text.secondary"
+                  }}>{t('workflow.noExecutions')}</Typography>
                 </Box>
               )}
             </CardContent>
@@ -1144,6 +1287,31 @@ export default function WorkflowDetailPage() {
                         titleTypographyProps={{ variant: 'subtitle1' }}
                       />
                       <CardContent>
+                        {/* Throughput 통계 */}
+                        {pipeline.statistics && (
+                          <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              label={`${t('workflow.recordsCollected')}: ${pipeline.statistics.records_collected.toLocaleString()}`}
+                            />
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              color="success"
+                              label={`${t('workflow.recordsProcessed')}: ${pipeline.statistics.records_processed.toLocaleString()}`}
+                            />
+                            {(pipeline.statistics.collection_errors > 0 || pipeline.statistics.processing_errors > 0) && (
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                label={`${t('workflow.errors')}: ${(pipeline.statistics.collection_errors + pipeline.statistics.processing_errors).toLocaleString()}`}
+                              />
+                            )}
+                          </Box>
+                        )}
+
                         {/* Source Checkpoints */}
                         {(pipeline.checkpoints?.length ?? 0) > 0 && (
                           <Box sx={{ mb: 2 }}>
@@ -1246,7 +1414,9 @@ export default function WorkflowDetailPage() {
                   ))
                 ) : (
                   <Box sx={{ textAlign: 'center', py: 6 }}>
-                    <Typography color="text.secondary">{t('workflow.noMonitoringData')}</Typography>
+                    <Typography sx={{
+                      color: "text.secondary"
+                    }}>{t('workflow.noMonitoringData')}</Typography>
                   </Box>
                 )}
               </CardContent>
@@ -1341,8 +1511,12 @@ export default function WorkflowDetailPage() {
                   ))
                 ) : (
                   <Box sx={{ textAlign: 'center', py: 6 }}>
-                    <Typography color="text.secondary">{t('checkpoint.noCheckpoints')}</Typography>
-                    <Typography variant="body2" color="text.secondary">{t('checkpoint.noCheckpointsHelp')}</Typography>
+                    <Typography sx={{
+                      color: "text.secondary"
+                    }}>{t('checkpoint.noCheckpoints')}</Typography>
+                    <Typography variant="body2" sx={{
+                      color: "text.secondary"
+                    }}>{t('checkpoint.noCheckpointsHelp')}</Typography>
                   </Box>
                 )}
               </CardContent>
@@ -1374,7 +1548,7 @@ export default function WorkflowDetailPage() {
                 slotProps={{
                   textField: {
                     fullWidth: true,
-                    placeholder: t('checkpoint.resetTimestampPlaceholder'),
+                    slotProps: { htmlInput: { placeholder: t('checkpoint.resetTimestampPlaceholder') } },
                   },
                 }}
               />
@@ -1432,13 +1606,17 @@ export default function WorkflowDetailPage() {
                     <MenuItem value="cdc">
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Chip label="CDC" color="primary" size="small" />
-                        <Typography variant="body2" color="text.secondary">{t('pipeline.sourceModeCdc')}</Typography>
+                        <Typography variant="body2" sx={{
+                          color: "text.secondary"
+                        }}>{t('pipeline.sourceModeCdc')}</Typography>
                       </Box>
                     </MenuItem>
                     <MenuItem value="raw">
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Chip label="RAW" size="small" />
-                        <Typography variant="body2" color="text.secondary">{t('pipeline.sourceModeRaw')}</Typography>
+                        <Typography variant="body2" sx={{
+                          color: "text.secondary"
+                        }}>{t('pipeline.sourceModeRaw')}</Typography>
                       </Box>
                     </MenuItem>
                   </Select>
@@ -1453,7 +1631,7 @@ export default function WorkflowDetailPage() {
                 onChange={(e) => setPipelineForm({ ...pipelineForm, priority: parseInt(e.target.value) || 0 })}
                 fullWidth
                 helperText={t('pipeline.priorityHelp')}
-                inputProps={{ min: 0 }}
+                slotProps={{ htmlInput: { min: 0 } }}
               />
 
               {/* Target Data Model - Batch: single select, Realtime: multiple with discriminator */}
@@ -1468,7 +1646,12 @@ export default function WorkflowDetailPage() {
                     <MenuItem value="">{t('pipeline.targetDataModelPlaceholder')}</MenuItem>
                     {dataTypes.map(dt => (
                       <MenuItem key={dt.id} value={dt.id}>
-                        {dt.display_name} <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>({dt.name})</Typography>
+                        {dt.display_name} <Typography
+                        component="span"
+                        sx={{
+                          color: "text.secondary",
+                          ml: 1
+                        }}>({dt.name})</Typography>
                       </MenuItem>
                     ))}
                   </Select>
@@ -1488,7 +1671,13 @@ export default function WorkflowDetailPage() {
                   {/* Target Models list */}
                   <Box>
                     <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('pipeline.targetModels')}</Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        mb: 1,
+                        display: 'block'
+                      }}>
                       {t('pipeline.targetModelsHelp')}
                     </Typography>
                     {pipelineForm.target_models.map((tm, index) => (
@@ -1566,13 +1755,17 @@ export default function WorkflowDetailPage() {
                       <MenuItem value="none">
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Chip label={t('pipeline.expansionNone')} size="small" />
-                          <Typography variant="body2" color="text.secondary">{t('pipeline.expansionNoneDesc')}</Typography>
+                          <Typography variant="body2" sx={{
+                            color: "text.secondary"
+                          }}>{t('pipeline.expansionNoneDesc')}</Typography>
                         </Box>
                       </MenuItem>
                       <MenuItem value="for_each_record">
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Chip label={t('pipeline.expansionForEachRecord')} color="secondary" size="small" />
-                          <Typography variant="body2" color="text.secondary">{t('pipeline.expansionForEachRecordDesc')}</Typography>
+                          <Typography variant="body2" sx={{
+                            color: "text.secondary"
+                          }}>{t('pipeline.expansionForEachRecordDesc')}</Typography>
                         </Box>
                       </MenuItem>
                     </Select>
@@ -1582,7 +1775,13 @@ export default function WorkflowDetailPage() {
                   {/* Parameter Bindings */}
                   <Box>
                     <Typography variant="subtitle2" sx={{ mb: 1 }}>{t('pipeline.parameterBindings')}</Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        mb: 1,
+                        display: 'block'
+                      }}>
                       {t('pipeline.parameterBindingsHelp')}
                     </Typography>
                     {pipelineForm.parameter_bindings.map((pb, index) => (
@@ -1857,7 +2056,9 @@ export default function WorkflowDetailPage() {
               </Box>
             ) : (
               <Box sx={{ textAlign: 'center', py: 6 }}>
-                <Typography color="text.secondary">{t('workflow.noExecutionDetail')}</Typography>
+                <Typography sx={{
+                  color: "text.secondary"
+                }}>{t('workflow.noExecutionDetail')}</Typography>
               </Box>
             )}
           </DialogContent>
@@ -1897,7 +2098,7 @@ export default function WorkflowDetailPage() {
           open={pipelineEditorOpen}
           onClose={handlePipelineEditorClose}
           fullScreen
-          PaperProps={{ sx: { bgcolor: 'background.default' } }}
+          slotProps={{ paper: { sx: { bgcolor: 'background.default' } } }}
         >
           {pipelineToEdit && workflow && (
             <PipelineEditor
@@ -1910,5 +2111,5 @@ export default function WorkflowDetailPage() {
         </Dialog>
       </Box>
     </LocalizationProvider>
-  )
+  );
 }

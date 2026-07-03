@@ -1,11 +1,14 @@
 package api
 
 import (
+	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/conduix/conduix/control-plane/internal/api/handlers"
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
@@ -43,6 +46,7 @@ type Server struct {
 	lspHandler          *handlers.LSPHandler
 	startTime           time.Time
 	version             string
+	allowedOrigins      []string
 }
 
 // Version 버전 정보 (빌드 시 설정)
@@ -56,14 +60,8 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 	kafkaService := services.NewKafkaService(nil)
 	linkService := services.NewPipelineLinkService(db, kafkaService, nil)
 
-	// Kubernetes 서비스 초기화 (실패해도 서버는 시작)
-	var k8sService *services.KubernetesJobService
-	k8sService, err := services.NewKubernetesJobService(&services.KubernetesJobServiceConfig{})
-	if err != nil {
-		// K8s 클라이언트 초기화 실패는 로컬 개발 환경에서 정상
-		// 실제 K8s 환경에서만 스케일링 기능 사용 가능
-		k8sService = nil
-	}
+	// control-plane은 K8s 크레덴셜을 갖지 않는다(위임 구조). K8s Job 생성·deployment 스케일은
+	// 각 cluster의 worker/배포 차트가 담당한다. (docs/EXECUTION_TOPOLOGY_INTENT.md)
 
 	s := &Server{
 		router:              gin.New(),
@@ -81,7 +79,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		userHandler:         handlers.NewUserHandler(db),
 		projectHandler:      handlers.NewProjectHandler(db),
 		agentHandler:        handlers.NewAgentHandler(db, redisService),
-		clusterHandler:      handlers.NewClusterHandler(db, redisService, k8sService),
+		clusterHandler:      handlers.NewClusterHandler(db, redisService),
 		utilsHandler:        handlers.NewUtilsHandler(),
 		checkpointHandler:   handlers.NewCheckpointHandler(db),
 		pipelineLinkHandler: handlers.NewPipelineLinkHandler(db, linkService),
@@ -92,17 +90,46 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		lspHandler:          handlers.NewLSPHandler(os.Getenv("CONDUIX_SDK_PATH")),
 		startTime:           time.Now(),
 		version:             Version,
+		allowedOrigins:      buildAllowedOrigins(frontendURL),
 	}
 
 	s.setupRoutes()
 	return s
 }
 
+// buildAllowedOrigins CORS allowlist를 구성한다.
+// frontendURL(스킴+호스트)과 CORS_ALLOWED_ORIGINS(콤마 구분) 환경변수를 합친다.
+func buildAllowedOrigins(frontendURL string) []string {
+	origins := make([]string, 0, 2)
+	if o := originFromURL(frontendURL); o != "" {
+		origins = append(origins, o)
+	}
+	for _, extra := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if trimmed := strings.TrimSpace(extra); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
+}
+
+// originFromURL은 URL에서 CORS Origin(scheme://host[:port])만 추출한다.
+func originFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
 // setupRoutes 라우트 설정
 func (s *Server) setupRoutes() {
 	// 미들웨어
 	s.router.Use(gin.Recovery())
-	s.router.Use(middleware.CORSMiddleware())
+	s.router.Use(middleware.CORSMiddleware(s.allowedOrigins))
 	s.router.Use(middleware.RequestIDMiddleware())
 
 	// Index (서비스 정보)
@@ -111,6 +138,9 @@ func (s *Server) setupRoutes() {
 	// 헬스체크 (인증 불필요)
 	s.router.GET("/health", s.health)
 	s.router.GET("/ready", s.ready)
+
+	// Prometheus 메트릭 (스크레이핑용, 인증 불필요)
+	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// API v1
 	v1 := s.router.Group("/api/v1")
@@ -189,7 +219,10 @@ func (s *Server) setupRoutes() {
 			{
 				workflows.GET("", s.workflowHandler.ListWorkflows)
 				workflows.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.CreateWorkflow)
+				// YAML import/export (템플릿·GitOps·AI 제어용). import는 :id 라우트보다 먼저 등록.
+				workflows.POST("/import", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.ImportWorkflowYAML)
 				workflows.GET("/:id", s.workflowHandler.GetWorkflow)
+				workflows.GET("/:id/yaml", s.workflowHandler.ExportWorkflowYAML)
 				workflows.PUT("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.UpdateWorkflow)
 				workflows.DELETE("/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.workflowHandler.DeleteWorkflow)
 				workflows.POST("/:id/start", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.StartWorkflow)

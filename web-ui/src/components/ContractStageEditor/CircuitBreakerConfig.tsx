@@ -41,7 +41,6 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
       <Alert severity="info" sx={{ mb: 3 }}>
         {t('contract.circuitBreakerInfo', 'Circuit Breaker는 연속된 위반이 발생할 때 검증을 일시 중단하여 파이프라인을 보호합니다. 임계치 도달 시 Circuit이 열리고, 일정 시간 후 Half-Open 상태에서 테스트 후 복구됩니다.')}
       </Alert>
-
       <Stack spacing={3}>
         {/* 연속 실패 임계치 */}
         <Card variant="outlined">
@@ -49,10 +48,17 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
             <Typography variant="subtitle2" gutterBottom>
               {t('contract.consecutiveFailures', '연속 위반 임계치')}
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mb: 2
+              }}>
               {t('contract.consecutiveFailuresDesc', '연속으로 이 횟수만큼 위반이 발생하면 Circuit이 열립니다.')}
             </Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack direction="row" spacing={2} sx={{
+              alignItems: "center"
+            }}>
               <Slider
                 value={config.consecutive_failures || 50}
                 onChange={(_, v) => update({ consecutive_failures: v as number })}
@@ -68,7 +74,7 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
                 onChange={(e) => update({ consecutive_failures: parseInt(e.target.value) || 50 })}
                 size="small"
                 sx={{ width: 100 }}
-                inputProps={{ min: 5, max: 500 }}
+                slotProps={{ htmlInput: { min: 5, max: 500 } }}
               />
               <Typography variant="body2">{t('contract.records', '건')}</Typography>
             </Stack>
@@ -81,10 +87,17 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
             <Typography variant="subtitle2" gutterBottom>
               {t('contract.failureRateThreshold', '위반율 임계치')}
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mb: 2
+              }}>
               {t('contract.failureRateThresholdDesc', 'Sliding Window 내 위반율이 이 비율을 초과하면 Circuit이 열립니다.')}
             </Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack direction="row" spacing={2} sx={{
+              alignItems: "center"
+            }}>
               <Slider
                 value={(config.failure_rate_threshold || 0.8) * 100}
                 onChange={(_, v) => update({ failure_rate_threshold: (v as number) / 100 })}
@@ -101,7 +114,7 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
                 onChange={(e) => update({ failure_rate_threshold: (parseInt(e.target.value) || 80) / 100 })}
                 size="small"
                 sx={{ width: 100 }}
-                inputProps={{ min: 10, max: 100 }}
+                slotProps={{ htmlInput: { min: 10, max: 100 } }}
               />
               <Typography variant="body2">%</Typography>
             </Stack>
@@ -114,10 +127,17 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
             <Typography variant="subtitle2" gutterBottom>
               {t('contract.windowSize', 'Sliding Window 크기')}
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mb: 2
+              }}>
               {t('contract.windowSizeDesc', '위반율 계산에 사용할 최근 레코드 수입니다.')}
             </Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack direction="row" spacing={2} sx={{
+              alignItems: "center"
+            }}>
               <Slider
                 value={config.window_size || 100}
                 onChange={(_, v) => update({ window_size: v as number })}
@@ -133,7 +153,7 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
                 onChange={(e) => update({ window_size: parseInt(e.target.value) || 100 })}
                 size="small"
                 sx={{ width: 100 }}
-                inputProps={{ min: 10, max: 5000 }}
+                slotProps={{ htmlInput: { min: 10, max: 5000 } }}
               />
               <Typography variant="body2">{t('contract.records', '건')}</Typography>
             </Stack>
@@ -163,7 +183,7 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
                 size="small"
                 sx={{ flex: 1 }}
                 helperText={t('contract.halfOpenRequestsHelp', 'Half-Open 상태에서 테스트할 요청 수')}
-                inputProps={{ min: 1, max: 50 }}
+                slotProps={{ htmlInput: { min: 1, max: 50 } }}
               />
             </Stack>
           </CardContent>
@@ -178,19 +198,25 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 2, flexWrap: 'wrap' }}>
               <Chip label="Closed" color="success" />
               <Typography variant="body2">→</Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" sx={{
+                color: "text.secondary"
+              }}>
                 ({config.consecutive_failures}{t('contract.consecutiveFailuresShort', '건 연속 위반')} or {Math.round((config.failure_rate_threshold || 0.8) * 100)}% {t('contract.violationRate', '위반율')})
               </Typography>
               <Typography variant="body2">→</Typography>
               <Chip label="Open" color="error" />
               <Typography variant="body2">→</Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" sx={{
+                color: "text.secondary"
+              }}>
                 ({config.open_timeout} {t('contract.after', '후')})
               </Typography>
               <Typography variant="body2">→</Typography>
               <Chip label="Half-Open" color="warning" />
               <Typography variant="body2">→</Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" sx={{
+                color: "text.secondary"
+              }}>
                 ({config.half_open_requests}{t('contract.successfulTests', '건 성공 시')})
               </Typography>
               <Typography variant="body2">→</Typography>
@@ -200,7 +226,7 @@ export function CircuitBreakerConfig({ value, onChange }: CircuitBreakerConfigPr
         </Card>
       </Stack>
     </Box>
-  )
+  );
 }
 
 export default CircuitBreakerConfig

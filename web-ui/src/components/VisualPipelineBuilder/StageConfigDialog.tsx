@@ -171,9 +171,9 @@ export function StageConfigDialog({
       onClose={onClose}
       maxWidth="md"
       fullWidth
-      PaperProps={{
+      slotProps={{ paper: {
         sx: { height: '80vh' },
-      }}
+      } }}
     >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Typography variant="h6">

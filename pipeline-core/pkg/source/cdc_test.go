@@ -120,7 +120,8 @@ func TestNewCDCSource_ServerID(t *testing.T) {
 	}
 }
 
-func TestNewCDCSource_PostgreSQL(t *testing.T) {
+// PostgreSQL CDC는 미지원 — 생성 시점에 명확한 에러로 거부되어야 한다(실행 후 미동작 발견 방지).
+func TestNewCDCSource_PostgreSQLRejected(t *testing.T) {
 	cfg := config.SourceV2{
 		Type:     "cdc",
 		Driver:   "postgres",
@@ -132,17 +133,16 @@ func TestNewCDCSource_PostgreSQL(t *testing.T) {
 		SlotName: "my_replication_slot",
 	}
 
-	source, err := NewCDCSource(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := NewCDCSource(cfg); err == nil {
+		t.Fatal("expected PostgreSQL CDC to be rejected at construction, got nil error")
 	}
+}
 
-	if source.driver != "postgres" {
-		t.Errorf("expected driver 'postgres', got '%s'", source.driver)
-	}
-
-	if source.slotName != "my_replication_slot" {
-		t.Errorf("expected slot name 'my_replication_slot', got '%s'", source.slotName)
+// 미지원 드라이버도 생성 시점에 거부되어야 한다.
+func TestNewCDCSource_UnknownDriverRejected(t *testing.T) {
+	cfg := config.SourceV2{Type: "cdc", Driver: "oracle"}
+	if _, err := NewCDCSource(cfg); err == nil {
+		t.Fatal("expected unknown driver to be rejected, got nil error")
 	}
 }
 

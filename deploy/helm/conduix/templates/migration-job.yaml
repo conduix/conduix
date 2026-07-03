@@ -41,9 +41,10 @@ spec:
         - name: migration
           image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
-          command:
-            - /app/control-plane
-            - -migrate
+          # ENTRYPOINT(=control-plane-server)에 --migrate 만 넘긴다.
+          # 바이너리 경로/플래그를 command 로 하드코딩하지 않는다(이미지와 어긋나면 exec 실패).
+          args:
+            - --migrate
           env:
             - name: DB_HOST
               value: "{{ .Values.env.DB_HOST }}"

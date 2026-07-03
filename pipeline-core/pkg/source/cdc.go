@@ -68,6 +68,16 @@ type CDCEvent struct {
 
 // NewCDCSource CDC 소스 생성
 func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
+	// 드라이버 조기 검증: 미지원 드라이버는 실행 시작 전에 실패시킨다(미동작을 실행 후 발견 방지).
+	switch cfg.Driver {
+	case "mysql":
+		// 지원됨
+	case "postgres":
+		return nil, fmt.Errorf("PostgreSQL CDC is not supported; use MySQL CDC, or route Postgres changes through Kafka (e.g. Debezium) and use a kafka source")
+	default:
+		return nil, fmt.Errorf("unsupported CDC driver: %q (supported: mysql)", cfg.Driver)
+	}
+
 	port := uint16(3306)
 	if cfg.Port > 0 {
 		port = uint16(cfg.Port)
@@ -201,9 +211,8 @@ func buildCDCTLSConfig(cfg *config.DBTLSConfig) (*tls.Config, error) {
 }
 
 func (s *CDCSource) openPostgreSQL() error {
-	// PostgreSQL CDC는 pglogrepl 라이브러리 사용
-	// 여기서는 인터페이스만 정의하고 실제 구현은 PostgreSQL specific
-	return fmt.Errorf("PostgreSQL CDC not implemented yet - use pglogrepl library")
+	// NewCDCSource에서 postgres를 이미 거부하므로 여기 도달하지 않는다(방어적 유지).
+	return fmt.Errorf("PostgreSQL CDC is not supported")
 }
 
 func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {

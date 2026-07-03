@@ -145,7 +145,9 @@ function PipelineEditorInner() {
           gap: 1,
         }}
       >
-        <Stack direction="row" spacing={2} alignItems="center">
+        <Stack direction="row" spacing={2} sx={{
+          alignItems: "center"
+        }}>
           <IconButton onClick={onCancel} size="small">
             <ArrowBackIcon />
           </IconButton>
@@ -153,13 +155,17 @@ function PipelineEditorInner() {
             {pipeline.name || t('pipelineEditor.newPipeline')}
           </Typography>
           {isDirty && (
-            <Typography variant="caption" color="warning.main">
+            <Typography variant="caption" sx={{
+              color: "warning.main"
+            }}>
               ({t('pipelineEditor.unsaved')})
             </Typography>
           )}
         </Stack>
 
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1} sx={{
+          alignItems: "center"
+        }}>
           {/* 뷰 모드 토글 (데스크탑) */}
           {!isMobile && (
             <Stack direction="row" spacing={0.5}>
@@ -220,7 +226,6 @@ function PipelineEditorInner() {
           </Button>
         </Stack>
       </Box>
-
       {/* 모바일 탭 */}
       {isMobile && (
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
@@ -230,7 +235,6 @@ function PipelineEditorInner() {
           </Tabs>
         </Box>
       )}
-
       {/* 에디터 본문 */}
       <Box
         sx={{
@@ -275,7 +279,7 @@ function PipelineEditorInner() {
         {viewMode === 'yaml' && renderYamlEditor()}
       </Box>
     </Box>
-  )
+  );
 }
 
 /**

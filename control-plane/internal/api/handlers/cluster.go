@@ -20,16 +20,14 @@ import (
 type ClusterHandler struct {
 	db           *database.DB
 	redisService *services.RedisService
-	k8sService   *services.KubernetesJobService
 	logger       *slog.Logger
 }
 
 // NewClusterHandler 클러스터 핸들러 생성
-func NewClusterHandler(db *database.DB, redisService *services.RedisService, k8sService *services.KubernetesJobService) *ClusterHandler {
+func NewClusterHandler(db *database.DB, redisService *services.RedisService) *ClusterHandler {
 	return &ClusterHandler{
 		db:           db,
 		redisService: redisService,
-		k8sService:   k8sService,
 		logger:       slog.Default(),
 	}
 }
@@ -459,21 +457,11 @@ func (h *ClusterHandler) ScaleAgents(c *gin.Context) {
 		return
 	}
 
-	// Kubernetes Deployment 스케일링 실행
-	if h.k8sService != nil {
-		if err := h.k8sService.ScaleAgentDeployment(c.Request.Context(), clusterID, int32(req.DesiredAgents)); err != nil {
-			h.logger.Error("Failed to scale Kubernetes deployment", "request_id", requestID, "error", err)
-			// DB는 업데이트 되었으므로 경고만 반환
-			middleware.SuccessResponse(c, gin.H{
-				"cluster": cluster,
-				"warning": "Database updated but Kubernetes scaling failed: " + err.Error(),
-			})
-			return
-		}
-		h.logger.Info("Kubernetes deployment scaled", "request_id", requestID, "cluster_id", clusterID, "replicas", req.DesiredAgents)
-	}
-
-	h.logger.Info("Cluster agents scaled", "request_id", requestID, "cluster_id", clusterID, "desired_agents", req.DesiredAgents)
+	// control-plane은 worker replica를 직접 조정하지 않는다(K8s 크레덴셜 미보유).
+	// DesiredAgents는 "의도"로만 기록되고, 실제 replica는 각 cluster의 배포 차트
+	// (Helm/ArgoCD)가 이 값을 반영해 맞춘다. worker는 배포 시점에 CLUSTER_ID로
+	// 자기 그룹을 선언하고 control-plane에 접속한다(agent 방식).
+	h.logger.Info("Cluster desired agents updated", "request_id", requestID, "cluster_id", clusterID, "desired_agents", req.DesiredAgents)
 	middleware.SuccessResponse(c, cluster)
 }
 
@@ -528,20 +516,8 @@ func (h *ClusterHandler) UpdateAgentConfig(c *gin.Context) {
 		return
 	}
 
-	// DesiredAgents가 변경되었으면 Kubernetes Deployment 스케일링
-	if req.DesiredAgents > 0 && h.k8sService != nil {
-		if err := h.k8sService.ScaleAgentDeployment(c.Request.Context(), clusterID, int32(req.DesiredAgents)); err != nil {
-			h.logger.Error("Failed to scale Kubernetes deployment", "request_id", requestID, "error", err)
-			// DB는 업데이트 되었으므로 경고만 반환
-			middleware.SuccessResponse(c, gin.H{
-				"cluster": cluster,
-				"warning": "Database updated but Kubernetes scaling failed: " + err.Error(),
-			})
-			return
-		}
-		h.logger.Info("Kubernetes deployment scaled", "request_id", requestID, "cluster_id", clusterID, "replicas", req.DesiredAgents)
-	}
-
+	// DesiredAgents/AgentConfig는 "의도"로만 기록된다. 실제 worker replica·배포 스펙은
+	// 각 cluster의 배포 차트(Helm/ArgoCD)가 반영한다. control-plane은 K8s를 직접 만지지 않는다.
 	h.logger.Info("Cluster agent config updated", "request_id", requestID, "cluster_id", clusterID)
 	middleware.SuccessResponse(c, cluster)
 }

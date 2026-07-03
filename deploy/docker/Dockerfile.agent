@@ -12,9 +12,9 @@ RUN apk add --no-cache git
 COPY shared/go.mod shared/go.sum ./shared/
 COPY pipeline-core/go.mod pipeline-core/go.sum ./pipeline-core/
 COPY plugin-sdk/go.mod ./plugin-sdk/
-COPY pipeline-agent/go.mod pipeline-agent/go.sum ./pipeline-agent/
+COPY pipeline-worker/go.mod pipeline-worker/go.sum ./pipeline-worker/
 
-WORKDIR /app/pipeline-agent
+WORKDIR /app/pipeline-worker
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 # 소스 코드 복사
@@ -22,10 +22,10 @@ WORKDIR /app
 COPY shared ./shared
 COPY pipeline-core ./pipeline-core
 COPY plugin-sdk ./plugin-sdk
-COPY pipeline-agent ./pipeline-agent
+COPY pipeline-worker ./pipeline-worker
 
 # 빌드 (네이티브 크로스 컴파일 + 캐시 마운트)
-WORKDIR /app/pipeline-agent
+WORKDIR /app/pipeline-worker
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \

@@ -202,11 +202,17 @@ export default function LoginPage() {
             </Stack>
           )}
 
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 3, display: 'block' }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              mt: 3,
+              display: 'block'
+            }}>
             {t('auth.termsAgreement')}
           </Typography>
         </CardContent>
       </Card>
     </Box>
-  )
+  );
 }

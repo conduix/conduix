@@ -10,8 +10,8 @@ import (
 	"github.com/conduix/conduix/control-plane/pkg/models"
 )
 
-// DefaultRunnerImage 기본 pipeline-runner 이미지 (native plugin이 없는 경우)
-const DefaultRunnerImage = "ghcr.io/conduix/pipeline-runner:latest"
+// DefaultRunnerImage 기본 pipeline-batch-job 이미지 (native plugin이 없는 경우)
+const DefaultRunnerImage = "ghcr.io/conduix/pipeline-batch-job:latest"
 
 // BuildRequiredError native plugin의 빌드가 필요할 때 반환하는 에러
 type BuildRequiredError struct {

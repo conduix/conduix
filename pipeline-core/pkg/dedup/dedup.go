@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/go-redis/redis/v8"
 )
 
 // EventType 이벤트 타입
@@ -134,79 +136,90 @@ func (s *MemoryDedupService) Close() error {
 
 // RedisDedupService Redis 기반 중복 제거 (프로덕션용)
 type RedisDedupService struct {
+	client *redis.Client
 	prefix string
 	ttl    time.Duration
-	// client *redis.Client // 실제 구현 시 redis 클라이언트 사용
 }
 
-// NewRedisDedupService Redis 기반 서비스 생성
+// NewRedisDedupService Redis 기반 서비스 생성.
+// 연결 실패 시 에러를 반환하여 조용히 중복을 흘려보내지 않도록 한다.
 func NewRedisDedupService(addr, prefix string, ttl time.Duration) (*RedisDedupService, error) {
-	// TODO: Redis 클라이언트 초기화
-	// client := redis.NewClient(&redis.Options{
-	//     Addr: addr,
-	// })
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	client := redis.NewClient(&redis.Options{Addr: addr})
+
+	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("redis dedup: failed to connect to %s: %w", addr, err)
+	}
 
 	return &RedisDedupService{
+		client: client,
 		prefix: prefix,
 		ttl:    ttl,
 	}, nil
 }
 
-//nolint:unused
 func (s *RedisDedupService) eventKey(eventID string) string {
 	return fmt.Sprintf("%s:event:%s", s.prefix, eventID)
 }
 
-//nolint:unused
 func (s *RedisDedupService) entityKey(entityID string) string {
 	return fmt.Sprintf("%s:entity:%s", s.prefix, entityID)
 }
 
 func (s *RedisDedupService) IsDuplicate(ctx context.Context, eventID string) (bool, error) {
-	// TODO: Redis EXISTS 명령
-	// exists, err := s.client.Exists(ctx, s.eventKey(eventID)).Result()
-	// return exists > 0, err
-	return false, nil
+	n, err := s.client.Exists(ctx, s.eventKey(eventID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis dedup IsDuplicate: %w", err)
+	}
+	return n > 0, nil
 }
 
 func (s *RedisDedupService) MarkProcessed(ctx context.Context, eventID string) error {
-	// TODO: Redis SETEX 명령
-	// return s.client.SetEx(ctx, s.eventKey(eventID), "1", s.ttl).Err()
+	if err := s.client.Set(ctx, s.eventKey(eventID), "1", s.ttl).Err(); err != nil {
+		return fmt.Errorf("redis dedup MarkProcessed: %w", err)
+	}
 	return nil
 }
 
 func (s *RedisDedupService) EntityExists(ctx context.Context, entityID string) (bool, error) {
-	// TODO: Redis EXISTS 명령
-	// exists, err := s.client.Exists(ctx, s.entityKey(entityID)).Result()
-	// return exists > 0, err
-	return false, nil
+	n, err := s.client.Exists(ctx, s.entityKey(entityID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis dedup EntityExists: %w", err)
+	}
+	return n > 0, nil
 }
 
+// SetEntityExists 엔티티 존재를 영구 저장한다(Upsert 판별용이므로 TTL 없음).
 func (s *RedisDedupService) SetEntityExists(ctx context.Context, entityID string) error {
-	// TODO: Redis SET 명령 (TTL 없음 - 영구 저장)
-	// return s.client.Set(ctx, s.entityKey(entityID), "1", 0).Err()
+	if err := s.client.Set(ctx, s.entityKey(entityID), "1", 0).Err(); err != nil {
+		return fmt.Errorf("redis dedup SetEntityExists: %w", err)
+	}
 	return nil
 }
 
 func (s *RedisDedupService) DeleteEntity(ctx context.Context, entityID string) error {
-	// TODO: Redis DEL 명령
-	// return s.client.Del(ctx, s.entityKey(entityID)).Err()
+	if err := s.client.Del(ctx, s.entityKey(entityID)).Err(); err != nil {
+		return fmt.Errorf("redis dedup DeleteEntity: %w", err)
+	}
 	return nil
 }
 
 func (s *RedisDedupService) Close() error {
-	// TODO: Redis 연결 종료
-	// return s.client.Close()
-	return nil
+	return s.client.Close()
 }
 
 // NewDedupService 설정에 따라 적절한 서비스 생성
-func NewDedupService(storage string, ttl time.Duration) (DedupService, error) {
+func NewDedupService(storage, redisAddr string, ttl time.Duration) (DedupService, error) {
 	switch storage {
 	case "memory", "":
 		return NewMemoryDedupService(ttl), nil
 	case "redis":
-		return NewRedisDedupService("localhost:6379", "dedup", ttl)
+		return NewRedisDedupService(redisAddr, "dedup", ttl)
 	default:
 		return nil, fmt.Errorf("unsupported dedup storage: %s", storage)
 	}

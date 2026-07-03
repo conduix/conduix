@@ -77,7 +77,12 @@ function ResourceProgress({ label, value }: { label: string; value: number }) {
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ width: 40 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+          width: 40
+        }}>
         {label}
       </Typography>
       <Box sx={{ flex: 1 }}>
@@ -92,7 +97,7 @@ function ResourceProgress({ label, value }: { label: string; value: number }) {
         {Math.round(value || 0)}%
       </Typography>
     </Box>
-  )
+  );
 }
 
 interface StatCardProps {
@@ -108,7 +113,9 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Box sx={{ color: color || 'text.secondary' }}>{icon}</Box>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
             {title}
           </Typography>
         </Box>
@@ -117,7 +124,7 @@ function StatCard({ title, value, icon, color }: StatCardProps) {
         </Typography>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export default function AgentsPage() {
@@ -204,7 +211,11 @@ export default function AgentsPage() {
       width: 150,
       renderCell: (params: GridRenderCellParams<Agent>) => {
         if (!params.row.cluster_name) {
-          return <Typography variant="body2" color="text.secondary">-</Typography>
+          return (
+            <Typography variant="body2" sx={{
+              color: "text.secondary"
+            }}>-</Typography>
+          );
         }
         return (
           <Chip
@@ -249,7 +260,7 @@ export default function AgentsPage() {
       field: 'running',
       headerName: t('agent.runningWorkflows'),
       width: 150,
-      valueGetter: (params) => params.row.running_execs?.length || 0,
+      valueGetter: (_value, row) => row.running_execs?.length || 0,
       renderCell: (params: GridRenderCellParams<Agent>) => {
         const count = params.row.running_execs?.length || 0
         return (
@@ -298,16 +309,25 @@ export default function AgentsPage() {
           </Select>
         </FormControl>
       </Box>
-
       <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('agent.totalAgents')}
             value={agents.length}
             icon={<CloudIcon />}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('agent.onlineAgents')}
             value={onlineCount}
@@ -315,7 +335,12 @@ export default function AgentsPage() {
             color="#4caf50"
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('agent.offlineAgents')}
             value={offlineCount}
@@ -323,7 +348,12 @@ export default function AgentsPage() {
             color={offlineCount > 0 ? '#f44336' : undefined}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid
+          size={{
+            xs: 12,
+            sm: 6,
+            md: 3
+          }}>
           <StatCard
             title={t('agent.runningWorkflows')}
             value={totalRunningWorkflows}
@@ -331,7 +361,6 @@ export default function AgentsPage() {
           />
         </Grid>
       </Grid>
-
       <DataGrid
         rows={agents}
         columns={columns}
@@ -346,5 +375,5 @@ export default function AgentsPage() {
         }}
       />
     </Box>
-  )
+  );
 }

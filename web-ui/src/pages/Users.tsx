@@ -265,7 +265,9 @@ export default function UsersPage() {
           </Avatar>
           <Box>
             <Typography variant="body2">{params.row.name || params.row.email}</Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" sx={{
+              color: "text.secondary"
+            }}>
               {params.row.email}
             </Typography>
           </Box>
@@ -374,7 +376,7 @@ export default function UsersPage() {
       field: 'actions_list',
       headerName: '권한',
       width: 250,
-      valueGetter: (params) => params.row.actions,
+      valueGetter: (_value, row) => row.actions,
       renderCell: (params: GridRenderCellParams<Permission>) => (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
           {params.row.actions.split(',').map((action: string) => (
@@ -443,13 +445,13 @@ export default function UsersPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 sx={{ width: 250 }}
-                InputProps={{
+                slotProps={{ input: {
                   startAdornment: (
                     <InputAdornment position="start">
                       <SearchOutlined />
                     </InputAdornment>
                   ),
-                }}
+                } }}
               />
               <FormControl size="small" sx={{ width: 150 }}>
                 <InputLabel>역할 필터</InputLabel>

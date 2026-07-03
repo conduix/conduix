@@ -170,7 +170,9 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
     return (
       <Paper key={condition.id} variant="outlined" sx={{ p: 2 }}>
         <Stack spacing={2}>
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} sx={{
+            alignItems: "center"
+          }}>
             {/* 필드 선택 */}
             <Autocomplete
               freeSolo
@@ -297,7 +299,7 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
           )}
         </Stack>
       </Paper>
-    )
+    );
   }
 
   return (
@@ -334,7 +336,6 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
           <DeleteIcon />
         </IconButton>
       </Stack>
-
       <TextField
         label={t('contract.ruleDescription', '규칙 설명')}
         value={rule.description || ''}
@@ -344,7 +345,6 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
         sx={{ mb: 2 }}
         placeholder={t('contract.ruleDescriptionPlaceholder', '이 규칙이 검증하는 내용을 설명하세요')}
       />
-
       {/* 모드 전환 */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="subtitle2">{t('contract.condition', '조건')}</Typography>
@@ -366,12 +366,19 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
           </ToggleButton>
         </ToggleButtonGroup>
       </Box>
-
       {/* 빌더 모드 */}
       <Collapse in={mode === 'builder'}>
         <Box sx={{ mb: 2 }}>
-          <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-            <Typography variant="body2" color="text.secondary">
+          <Stack
+            direction="row"
+            spacing={2}
+            sx={{
+              alignItems: "center",
+              mb: 2
+            }}>
+            <Typography variant="body2" sx={{
+              color: "text.secondary"
+            }}>
               {t('contract.logicalOperator', '조건 결합 방식')}:
             </Typography>
             <ToggleButtonGroup
@@ -409,7 +416,6 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
           </Button>
         </Box>
       </Collapse>
-
       {/* 표현식 모드 */}
       <Collapse in={mode === 'expression'}>
         <Box>
@@ -431,11 +437,12 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
           )}
         </Box>
       </Collapse>
-
       {/* 미리보기 */}
       {rule.condition && (
         <Paper variant="outlined" sx={{ p: 1, mt: 2, bgcolor: 'grey.50' }}>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" sx={{
+            color: "text.secondary"
+          }}>
             {t('contract.preview', '표현식 미리보기')}:
           </Typography>
           <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
@@ -444,7 +451,7 @@ export function RuleBuilder({ rule, onChange, onDelete, availableFields = [] }: 
         </Paper>
       )}
     </Box>
-  )
+  );
 }
 
 export default RuleBuilder

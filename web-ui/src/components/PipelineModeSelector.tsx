@@ -64,23 +64,26 @@ export default function PipelineModeSelector({ value, onChange, disabled }: Pipe
         {modes.map((mode) => (
           <ToggleButton key={mode.value} value={mode.value} sx={{ py: 1.5, flexDirection: 'column', gap: 0.5 }}>
             {mode.icon}
-            <Typography variant="body2" fontWeight={value === mode.value ? 'bold' : 'normal'}>
+            <Typography variant="body2" sx={{
+              fontWeight: value === mode.value ? 'bold' : 'normal'
+            }}>
               {mode.label}
             </Typography>
           </ToggleButton>
         ))}
       </ToggleButtonGroup>
-
       {modes
         .filter((m) => m.value === value)
         .map((m) => (
           <Box key={m.value} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" sx={{
+              color: "text.secondary"
+            }}>
               {m.description}
             </Typography>
             <Chip label={m.k8sResource} size="small" variant="outlined" sx={{ fontFamily: 'monospace', fontSize: 11 }} />
           </Box>
         ))}
     </Box>
-  )
+  );
 }

@@ -73,10 +73,11 @@ export const StageNode = memo(({ data, selected }: NodeProps<StageNodeType>) => 
           border: '2px solid #1890ff',
         }}
       />
-
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
         {icon}
-        <Typography variant="subtitle2" fontWeight="bold">
+        <Typography variant="subtitle2" sx={{
+          fontWeight: "bold"
+        }}>
           {data.label}
         </Typography>
       </Box>
@@ -90,7 +91,6 @@ export const StageNode = memo(({ data, selected }: NodeProps<StageNodeType>) => 
           height: 20,
         }}
       />
-
       {/* Output Handle */}
       <Handle
         type="source"
@@ -103,7 +103,7 @@ export const StageNode = memo(({ data, selected }: NodeProps<StageNodeType>) => 
         }}
       />
     </Box>
-  )
+  );
 })
 
 StageNode.displayName = 'StageNode'

@@ -94,7 +94,6 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-
       {Object.entries(properties).map(([fieldName, prop]) => {
         const isRequired = required.includes(fieldName)
         const currentValue = config[fieldName] ?? prop.default
@@ -109,7 +108,9 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
                 {isRequired && ' *'}
               </Typography>
               {prop.description && (
-                <Typography variant="caption" color="text.secondary" gutterBottom>
+                <Typography variant="caption" gutterBottom sx={{
+                  color: "text.secondary"
+                }}>
                   {prop.description}
                 </Typography>
               )}
@@ -122,7 +123,7 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
                 onChange={(_, val) => handleChange(fieldName, val)}
               />
             </Box>
-          )
+          );
         }
 
         // Enum / Select
@@ -142,12 +143,17 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
                 ))}
               </Select>
               {prop.description && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    mt: 0.5
+                  }}>
                   {prop.description}
                 </Typography>
               )}
             </FormControl>
-          )
+          );
         }
 
         // Boolean
@@ -165,14 +171,16 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
                 <Box>
                   <Typography variant="body2">{prop.title || fieldName}</Typography>
                   {prop.description && (
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>
                       {prop.description}
                     </Typography>
                   )}
                 </Box>
               }
             />
-          )
+          );
         }
 
         // Number
@@ -191,10 +199,10 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
               size="small"
               fullWidth
               helperText={prop.description}
-              inputProps={{
+              slotProps={{ htmlInput: {
                 min: prop.minimum,
                 max: prop.maximum,
-              }}
+              } }}
             />
           )
         }
@@ -240,5 +248,5 @@ export default function DynamicStageForm({ stageType, config, onChange }: Dynami
         )
       })}
     </Box>
-  )
+  );
 }

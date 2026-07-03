@@ -1,5 +1,6 @@
 # Build stage (Node.js 빌드는 아키텍처 무관 → 네이티브 빌드)
-FROM --platform=$BUILDPLATFORM node:18-alpine AS builder
+# Vite 8 은 Node 20.19+/22.12+ 요구 (CustomEvent 등 글로벌). Node 18 에선 빌드 실패.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 
 WORKDIR /app
 

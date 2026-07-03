@@ -91,10 +91,10 @@ export function StagePanel({ stageTypes }: StagePanelProps) {
         </ListItemIcon>
         <ListItemText
           primary={stage.label}
-          primaryTypographyProps={{
+          slotProps={{ primary: {
             variant: 'body2',
-            fontWeight: 500,
-          }}
+            sx: { fontWeight: 500 },
+          } }}
         />
       </ListItem>
     </Tooltip>
@@ -114,60 +114,70 @@ export function StagePanel({ stageTypes }: StagePanelProps) {
     >
       <Typography
         variant="subtitle2"
-        color="text.secondary"
-        sx={{ mb: 1, textTransform: 'uppercase', fontSize: '0.7rem', fontWeight: 600 }}
-      >
+        sx={{
+          color: "text.secondary",
+          mb: 1,
+          textTransform: 'uppercase',
+          fontSize: '0.7rem',
+          fontWeight: 600
+        }}>
         Stages
       </Typography>
       <Typography
         variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', mb: 2 }}
-      >
+        sx={{
+          color: "text.secondary",
+          display: 'block',
+          mb: 2
+        }}>
         Drag and drop to add
       </Typography>
-
       {/* Basic Stages */}
       <Typography
         variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', mb: 1, fontWeight: 600 }}
-      >
+        sx={{
+          color: "text.secondary",
+          display: 'block',
+          mb: 1,
+          fontWeight: 600
+        }}>
         Basic
       </Typography>
       <List dense disablePadding sx={{ mb: 2 }}>
         {basicStages.map(renderStageItem)}
       </List>
-
       <Divider sx={{ my: 1.5 }} />
-
       {/* Advanced Stages */}
       <Typography
         variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', mb: 1, fontWeight: 600 }}
-      >
+        sx={{
+          color: "text.secondary",
+          display: 'block',
+          mb: 1,
+          fontWeight: 600
+        }}>
         Advanced
       </Typography>
       <List dense disablePadding sx={{ mb: 2 }}>
         {advancedStages.map(renderStageItem)}
       </List>
-
       <Divider sx={{ my: 1.5 }} />
-
       {/* Lookup Stages */}
       <Typography
         variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', mb: 1, fontWeight: 600 }}
-      >
+        sx={{
+          color: "text.secondary",
+          display: 'block',
+          mb: 1,
+          fontWeight: 600
+        }}>
         Lookup
       </Typography>
       <List dense disablePadding>
         {lookupStages.map(renderStageItem)}
       </List>
     </Paper>
-  )
+  );
 }
 
 export default StagePanel

@@ -269,12 +269,18 @@ func (h *AgentHandler) RegisterAgent(c *gin.Context) {
 	if req.ClusterID != "" {
 		var cluster models.Cluster
 		if err := h.db.First(&cluster, "id = ?", req.ClusterID).Error; err != nil {
-			// Cluster가 없으면 자동 생성
+			// 기본 cluster가 아직 없으면 자동 생성되는 첫 cluster를 default로 지정한다.
+			// ResolveExecutionCluster는 cluster_id 미지정 워크플로우를 is_default cluster로 라우팅하는데,
+			// is_default를 세우는 다른 경로가 없어 이 지정이 없으면 실행 대상 확정이 영구히 실패한다.
+			var defaultCount int64
+			h.db.Model(&models.Cluster{}).Where("is_default = ?", true).Count(&defaultCount)
+
 			cluster = models.Cluster{
 				ID:          req.ClusterID,
 				Name:        req.ClusterID, // 기본 이름은 ID와 동일
 				Description: "Auto-created cluster for agent: " + req.Hostname,
 				Status:      "active",
+				IsDefault:   defaultCount == 0,
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}

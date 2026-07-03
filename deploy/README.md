@@ -348,7 +348,7 @@ CMD ["--migrate"]
 FROM golang:1.21-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN cd pipeline-agent && go build -o /agent ./cmd/agent
+RUN cd pipeline-worker && go build -o /agent ./cmd/agent
 
 FROM alpine:3.19
 RUN apk --no-cache add ca-certificates tzdata
@@ -649,5 +649,5 @@ kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx
 ## 관련 문서
 
 - [Control Plane](../control-plane/README.md)
-- [Pipeline Agent](../pipeline-agent/README.md)
+- [Pipeline Agent](../pipeline-worker/README.md)
 - [Web UI](../web-ui/README.md)

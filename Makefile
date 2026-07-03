@@ -14,7 +14,7 @@ ARCH=$(shell go env GOARCH)
 # 디렉토리
 SHARED := ./shared
 PIPELINE_CORE := ./pipeline-core
-PIPELINE_AGENT := ./pipeline-agent
+PIPELINE_WORKER := ./pipeline-worker
 CONTROL_PLANE := ./control-plane
 WEB_UI := ./web-ui
 BUILD_DIR := ./build
@@ -52,7 +52,7 @@ deps-go: ## Go 의존성 설치
 	@echo "==> Go 의존성 설치 중..."
 	cd $(SHARED) && go mod download
 	cd $(PIPELINE_CORE) && go mod download
-	cd $(PIPELINE_AGENT) && go mod download
+	cd $(PIPELINE_WORKER) && go mod download
 	cd $(CONTROL_PLANE) && go mod download
 
 deps-web: ## Web UI 의존성 설치
@@ -63,7 +63,7 @@ tidy: ## 모든 Go 모듈 go mod tidy 실행
 	@echo "==> Go 모듈 정리 중..."
 	cd $(SHARED) && go mod tidy
 	cd $(PIPELINE_CORE) && go mod tidy
-	cd $(PIPELINE_AGENT) && go mod tidy
+	cd $(PIPELINE_WORKER) && go mod tidy
 	cd $(CONTROL_PLANE) && go mod tidy
 
 # ============================================================================
@@ -78,9 +78,9 @@ build-core: ## pipeline-core 빌드
 	@echo "==> pipeline-core 빌드 중..."
 	cd $(PIPELINE_CORE) && $(MAKE) build
 
-build-agent: ## pipeline-agent 빌드
-	@echo "==> pipeline-agent 빌드 중..."
-	cd $(PIPELINE_AGENT) && $(MAKE) build
+build-agent: ## pipeline-worker 빌드
+	@echo "==> pipeline-worker 빌드 중..."
+	cd $(PIPELINE_WORKER) && $(MAKE) build
 
 build-control-plane: ## control-plane 빌드
 	@echo "==> control-plane 빌드 중..."
@@ -93,7 +93,7 @@ build-web: ## web-ui 빌드
 build-linux: ## Linux 바이너리 빌드 (모든 Go 모듈)
 	@echo "==> Linux 빌드 중..."
 	cd $(PIPELINE_CORE) && $(MAKE) build-linux
-	cd $(PIPELINE_AGENT) && $(MAKE) build-linux
+	cd $(PIPELINE_WORKER) && $(MAKE) build-linux
 	cd $(CONTROL_PLANE) && $(MAKE) build-linux
 
 # ============================================================================
@@ -106,7 +106,7 @@ test-go: ## Go 테스트 실행
 	@echo "==> Go 테스트 실행 중..."
 	cd $(SHARED) && go test -v ./...
 	cd $(PIPELINE_CORE) && go test -v ./...
-	cd $(PIPELINE_AGENT) && go test -v ./...
+	cd $(PIPELINE_WORKER) && go test -v ./...
 	cd $(CONTROL_PLANE) && go test -v ./...
 
 test-web: ## Web UI 테스트 실행
@@ -116,14 +116,14 @@ test-web: ## Web UI 테스트 실행
 test-coverage: ## 커버리지 리포트 생성
 	@echo "==> 커버리지 리포트 생성 중..."
 	cd $(PIPELINE_CORE) && $(MAKE) test-coverage
-	cd $(PIPELINE_AGENT) && $(MAKE) test-coverage
+	cd $(PIPELINE_WORKER) && $(MAKE) test-coverage
 	cd $(CONTROL_PLANE) && $(MAKE) test-coverage
 
 test-race: ## 레이스 감지 테스트
 	@echo "==> 레이스 감지 테스트 중..."
 	cd $(SHARED) && go test -race ./...
 	cd $(PIPELINE_CORE) && go test -race ./...
-	cd $(PIPELINE_AGENT) && go test -race ./...
+	cd $(PIPELINE_WORKER) && go test -race ./...
 	cd $(CONTROL_PLANE) && go test -race ./...
 
 # ============================================================================
@@ -134,7 +134,7 @@ lint: lint-go lint-web ## 전체 린트 실행
 
 lint-go: ## Go 린트 실행
 	@echo "==> Go 린트 실행 중..."
-	@for dir in $(SHARED) $(PIPELINE_CORE) $(PIPELINE_AGENT) $(CONTROL_PLANE); do \
+	@for dir in $(SHARED) $(PIPELINE_CORE) $(PIPELINE_WORKER) $(CONTROL_PLANE); do \
 		echo "Linting $$dir..."; \
 		cd $$dir && golangci-lint run && cd ..; \
 	done
@@ -160,7 +160,7 @@ vet: ## Go vet 실행
 	@echo "==> Go vet 실행 중..."
 	cd $(SHARED) && go vet ./...
 	cd $(PIPELINE_CORE) && go vet ./...
-	cd $(PIPELINE_AGENT) && go vet ./...
+	cd $(PIPELINE_WORKER) && go vet ./...
 	cd $(CONTROL_PLANE) && go vet ./...
 
 check: vet lint test ## 전체 체크 (vet + lint + test)
@@ -184,7 +184,7 @@ dev: infra-up ## 개발 모드 시작 (인프라 + 안내)
 	@echo ""
 	@echo "또는 각 모듈 디렉토리에서:"
 	@echo "  cd control-plane && make run"
-	@echo "  cd pipeline-agent && make run"
+	@echo "  cd pipeline-worker && make run"
 	@echo "  cd web-ui && make dev"
 	@echo ""
 
@@ -192,7 +192,7 @@ run-control-plane: ## Control Plane 실행
 	cd $(CONTROL_PLANE) && $(MAKE) run-local
 
 run-agent: ## Pipeline Agent 실행
-	cd $(PIPELINE_AGENT) && $(MAKE) run-local
+	cd $(PIPELINE_WORKER) && $(MAKE) run-local
 
 run-web: ## Web UI 개발 서버 실행
 	cd $(WEB_UI) && $(MAKE) dev
@@ -274,7 +274,7 @@ package: build ## 배포 패키지 생성
 	@echo "==> 배포 패키지 생성 중..."
 	mkdir -p $(TARGET_DIR)
 	cd $(PIPELINE_CORE) && $(MAKE) package
-	cd $(PIPELINE_AGENT) && $(MAKE) package
+	cd $(PIPELINE_WORKER) && $(MAKE) package
 	cd $(CONTROL_PLANE) && $(MAKE) package
 	cd $(WEB_UI) && $(MAKE) package
 	@echo "==> 패키지 생성 완료: $(TARGET_DIR)/"
@@ -286,6 +286,71 @@ release: check package docker-build ## 릴리스 빌드 (체크 + 패키지 + Do
 	@echo "    Time: $(BUILD_TIME)"
 
 # ============================================================================
+# 로컬 E2E 통합 테스트 환경 (Colima K8s + helm + mock 데이터 소스/싱크)
+# ============================================================================
+
+# 기존 conduix ns 는 ArgoCD(auto-sync/selfHeal)가 관리하므로 e2e 는 별도 ns 로 격리한다.
+E2E_NS ?= conduix-e2e
+E2E_RELEASE ?= conduix
+E2E_CHART := ./deploy/helm/conduix
+E2E_VALUES := $(E2E_CHART)/values-e2e.yaml
+E2E_TAG := e2e
+E2E_ARCH := $(shell go env GOARCH)
+
+.PHONY: e2e-images e2e-up e2e-down e2e-status e2e-verify e2e-restart
+
+e2e-images: ## E2E 이미지 빌드 (colima docker 데몬에 직접 로드됨)
+	@echo "==> E2E 이미지 빌드 중 (platform=linux/$(E2E_ARCH), tag=$(E2E_TAG))..."
+	@echo "    (docker context: $$(docker context show))"
+	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.control-plane -t $(DOCKER_REGISTRY)/control-plane:$(E2E_TAG) .
+	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.agent -t $(DOCKER_REGISTRY)/agent:$(E2E_TAG) .
+	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.web-ui -t $(DOCKER_REGISTRY)/web-ui:$(E2E_TAG) .
+	docker build --platform linux/$(E2E_ARCH) -f pipeline-batch-job/Dockerfile -t $(DOCKER_REGISTRY)/pipeline-batch-job:$(E2E_TAG) .
+	@echo "==> E2E 이미지 빌드 완료"
+
+e2e-up: e2e-images ## E2E 환경 기동 (이미지 빌드 → helm install → 안내)
+	@echo "==> kubectl context 확인: $$(kubectl config current-context)"
+	kubectl create namespace $(E2E_NS) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> helm upgrade --install (mock 소스/싱크 포함)..."
+	helm dependency build $(E2E_CHART) >/dev/null 2>&1 || true
+	helm upgrade --install $(E2E_RELEASE) $(E2E_CHART) \
+		--namespace $(E2E_NS) \
+		-f $(E2E_VALUES) \
+		--set controlPlane.image.repository=$(DOCKER_REGISTRY)/control-plane \
+		--set agent.image.repository=$(DOCKER_REGISTRY)/agent \
+		--set webUI.image.repository=$(DOCKER_REGISTRY)/web-ui \
+		--wait --timeout 10m
+	@echo ""
+	@echo "==> E2E 환경 기동 완료 (namespace: $(E2E_NS), ClusterIP)."
+	@echo "    포트포워드   : make e2e-forward   # Web UI :30000, API :30080 로 로컬 노출"
+	@echo "    상태 확인    : make e2e-status"
+	@echo "    데이터 검증  : make e2e-verify    # 포트포워드 자동 처리"
+
+e2e-forward: ## Web UI/API 를 로컬 포트로 포워딩 (30000/30080)
+	@echo "==> port-forward: Web UI http://localhost:30000, API http://localhost:30080 (Ctrl-C 로 중지)"
+	@kubectl -n $(E2E_NS) port-forward svc/$(E2E_RELEASE)-web-ui 30000:80 & \
+	 kubectl -n $(E2E_NS) port-forward svc/$(E2E_RELEASE)-control-plane 30080:8080 & \
+	 wait
+
+e2e-down: ## E2E 환경 중지 (helm uninstall + namespace 삭제)
+	@echo "==> E2E 환경 중지 중..."
+	-helm uninstall $(E2E_RELEASE) --namespace $(E2E_NS)
+	-kubectl delete namespace $(E2E_NS) --wait=false
+	@echo "==> 중지 완료"
+
+e2e-restart: ## 앱 이미지만 다시 빌드하고 롤아웃 재시작
+	$(MAKE) e2e-images
+	kubectl -n $(E2E_NS) rollout restart deployment \
+		$(E2E_RELEASE)-control-plane $(E2E_RELEASE)-agent $(E2E_RELEASE)-web-ui
+
+e2e-status: ## E2E pod/서비스 상태
+	@echo "==> Pods:"; kubectl -n $(E2E_NS) get pods
+	@echo "==> Services:"; kubectl -n $(E2E_NS) get svc
+
+e2e-verify: ## E2E 데이터 흐름 검증 (샘플 파이프라인 실행 → mock 싱크 확인)
+	@bash deploy/e2e/verify.sh $(E2E_NS) $(E2E_RELEASE)
+
+# ============================================================================
 # 정리
 # ============================================================================
 
@@ -295,7 +360,7 @@ clean: ## 빌드 아티팩트 정리
 	rm -rf $(TARGET_DIR)
 	cd $(SHARED) && $(MAKE) clean
 	cd $(PIPELINE_CORE) && $(MAKE) clean
-	cd $(PIPELINE_AGENT) && $(MAKE) clean
+	cd $(PIPELINE_WORKER) && $(MAKE) clean
 	cd $(CONTROL_PLANE) && $(MAKE) clean
 	cd $(WEB_UI) && $(MAKE) clean
 
@@ -320,7 +385,7 @@ update-deps: ## 모든 의존성 업데이트
 	@echo "==> 의존성 업데이트 중..."
 	cd $(SHARED) && go get -u ./... && go mod tidy
 	cd $(PIPELINE_CORE) && go get -u ./... && go mod tidy
-	cd $(PIPELINE_AGENT) && go get -u ./... && go mod tidy
+	cd $(PIPELINE_WORKER) && go get -u ./... && go mod tidy
 	cd $(CONTROL_PLANE) && go get -u ./... && go mod tidy
 	cd $(WEB_UI) && npm update
 
@@ -343,6 +408,6 @@ help: ## 옵션 보기
 	@echo "각 모듈별 도움말:"
 	@echo "  cd shared && make help"
 	@echo "  cd pipeline-core && make help"
-	@echo "  cd pipeline-agent && make help"
+	@echo "  cd pipeline-worker && make help"
 	@echo "  cd control-plane && make help"
 	@echo "  cd web-ui && make help"

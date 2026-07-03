@@ -237,7 +237,7 @@ export default function DataModelsPage() {
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             sx={{ width: 200 }}
-            InputProps={{
+            slotProps={{ input: {
               endAdornment: (
                 <InputAdornment position="end">
                   <IconButton size="small" onClick={handleSearch}>
@@ -245,19 +245,24 @@ export default function DataModelsPage() {
                   </IconButton>
                 </InputAdornment>
               ),
-            }}
+            } }}
           />
         </Box>
       </Box>
-
       <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={12} md={4}>
+        <Grid
+          size={{
+            xs: 12,
+            md: 4
+          }}>
           <Card>
             <CardContent sx={{ py: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <DatabaseIcon color="primary" />
                 <Box>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>
                     {t('dataModel.totalDataModels')}
                   </Typography>
                   <Typography variant="h5">{totalCount}</Typography>
@@ -266,18 +271,26 @@ export default function DataModelsPage() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid
+          size={{
+            xs: 12,
+            md: 4
+          }}>
           <Card>
             <CardContent sx={{ py: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <CheckCircleIcon sx={{ color: 'success.main' }} />
                 <Box>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>
                     {t('dataModel.schemaDefined')}
                   </Typography>
                   <Typography variant="h5" sx={{ color: 'success.main' }}>
                     {schemaDefinedCount}
-                    <Typography component="span" variant="body2" color="text.secondary">
+                    <Typography component="span" variant="body2" sx={{
+                      color: "text.secondary"
+                    }}>
                       {' '}/ {totalCount}
                     </Typography>
                   </Typography>
@@ -286,13 +299,19 @@ export default function DataModelsPage() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid
+          size={{
+            xs: 12,
+            md: 4
+          }}>
           <Card>
             <CardContent sx={{ py: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <AppstoreIcon color="primary" />
                 <Box>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>
                     {t('dataModel.byCategory')}
                   </Typography>
                   <Typography variant="h5">{Object.keys(categoryStats).length}</Typography>
@@ -302,7 +321,6 @@ export default function DataModelsPage() {
           </Card>
         </Grid>
       </Grid>
-
       <TableContainer component={Paper}>
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
@@ -398,7 +416,9 @@ export default function DataModelsPage() {
                 {paginatedData.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
-                      <Typography color="text.secondary">
+                      <Typography sx={{
+                        color: "text.secondary"
+                      }}>
                         {t('common.noData')}
                       </Typography>
                     </TableCell>
@@ -425,7 +445,6 @@ export default function DataModelsPage() {
           </>
         )}
       </TableContainer>
-
       <ConfirmDialog
         open={deleteDialog.open}
         title={t('dataModel.deleteConfirm')}
@@ -435,5 +454,5 @@ export default function DataModelsPage() {
         onCancel={() => setDeleteDialog({ open: false, id: null })}
       />
     </Box>
-  )
+  );
 }

@@ -213,6 +213,23 @@ type FailurePolicy struct {
 	RetryDelay      string        `json:"retry_delay"` // 1m, 5m
 	NotifyOnFailure bool          `json:"notify_on_failure"`
 	NotifyChannels  []string      `json:"notify_channels,omitempty"` // email, slack, webhook
+
+	// 서킷 브레이커: 처리 중 sink/변환 실패가 임계를 넘으면 실행을 에러 종료한다.
+	// 실패가 계속 쌓이면 오히려 부하/문제가 되므로 조기에 차단하는 것이 목적.
+	// DLQ 적재 여부와 무관하게 독립적으로 동작한다.
+	CircuitBreaker *CircuitBreakerPolicy `json:"circuit_breaker,omitempty"`
+
+	// DLQ 설정이 있으면 실패한 레코드를 DLQ로 적재한다(문제 해결이 아니라 보존/분석용).
+	DLQ *DLQConfig `json:"dlq,omitempty"`
+}
+
+// CircuitBreakerPolicy 실행 중 실패 임계 초과 시 조기 종료 정책.
+type CircuitBreakerPolicy struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// MaxConsecutiveFailures 연속 실패 임계. 0이면 이 기준 비활성.
+	MaxConsecutiveFailures int `json:"max_consecutive_failures,omitempty" yaml:"max_consecutive_failures,omitempty"`
+	// MaxTotalFailures 누적 실패 임계. 0이면 이 기준 비활성.
+	MaxTotalFailures int `json:"max_total_failures,omitempty" yaml:"max_total_failures,omitempty"`
 }
 
 // FailureAction 실패 시 행동

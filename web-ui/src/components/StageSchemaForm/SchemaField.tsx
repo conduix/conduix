@@ -19,6 +19,7 @@ import {
   Typography,
   FormHelperText,
   Autocomplete,
+  type AutocompleteRenderInputParams,
 } from '@mui/material'
 import Visibility from '@mui/icons-material/Visibility'
 import VisibilityOff from '@mui/icons-material/VisibilityOff'
@@ -105,12 +106,18 @@ export function SchemaField({
             size="small"
             multiline={field.multiline}
             rows={field.rows || 3}
-            InputProps={{
+            slotProps={{ input: {
               style: field.monospace ? { fontFamily: 'monospace' } : undefined,
-            }}
+            } }}
           />
           {field.test_connection && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                mt: 1
+              }}>
               <Button
                 size="small"
                 variant="outlined"
@@ -131,7 +138,7 @@ export function SchemaField({
             </Stack>
           )}
         </Box>
-      )
+      );
 
     case 'secret':
       return (
@@ -148,7 +155,7 @@ export function SchemaField({
             placeholder={field.placeholder}
             fullWidth
             size="small"
-            InputProps={{
+            slotProps={{ input: {
               style: field.monospace ? { fontFamily: 'monospace' } : undefined,
               endAdornment: (
                 <InputAdornment position="end">
@@ -161,10 +168,16 @@ export function SchemaField({
                   </IconButton>
                 </InputAdornment>
               ),
-            }}
+            } }}
           />
           {field.test_connection && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                mt: 1
+              }}>
               <Button
                 size="small"
                 variant="outlined"
@@ -185,7 +198,7 @@ export function SchemaField({
             </Stack>
           )}
         </Box>
-      )
+      );
 
     case 'number':
     case 'integer':
@@ -209,11 +222,11 @@ export function SchemaField({
           placeholder={field.placeholder}
           fullWidth
           size="small"
-          inputProps={{
+          slotProps={{ htmlInput: {
             min: field.min,
             max: field.max,
             step: field.type === 'integer' ? 1 : 'any',
-          }}
+          } }}
         />
       )
 
@@ -232,14 +245,16 @@ export function SchemaField({
             <Box>
               <Typography variant="body2">{field.display_name}</Typography>
               {field.description && (
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" sx={{
+                  color: "text.secondary"
+                }}>
                   {field.description}
                 </Typography>
               )}
             </Box>
           }
         />
-      )
+      );
 
     case 'enum':
       return (
@@ -255,7 +270,12 @@ export function SchemaField({
               <MenuItem key={opt.value} value={opt.value}>
                 {opt.label}
                 {opt.description && (
-                  <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                      ml: 1
+                    }}>
                     - {opt.description}
                   </Typography>
                 )}
@@ -266,7 +286,7 @@ export function SchemaField({
             <FormHelperText>{error || field.description}</FormHelperText>
           )}
         </FormControl>
-      )
+      );
 
     case 'array':
       return (
@@ -306,9 +326,9 @@ export function SchemaField({
           size="small"
           multiline
           rows={field.rows || 5}
-          InputProps={{
+          slotProps={{ input: {
             style: { fontFamily: 'monospace' },
-          }}
+          } }}
         />
       )
 
@@ -325,9 +345,9 @@ export function SchemaField({
           placeholder={field.placeholder || '30s'}
           fullWidth
           size="small"
-          InputProps={{
+          slotProps={{ input: {
             style: { fontFamily: 'monospace' },
-          }}
+          } }}
         />
       )
 
@@ -373,27 +393,23 @@ function ArrayField({
   error?: string
   disabled?: boolean
 }) {
-  const currentValue = Array.isArray(value) ? value : []
+  const currentValue: string[] = Array.isArray(value) ? value.map(String) : []
 
   return (
     <Autocomplete
       multiple
       freeSolo
-      options={[]}
+      options={[] as string[]}
       value={currentValue}
-      onChange={(_, newValue) => onChange(newValue)}
+      onChange={(_, newValue) => onChange(newValue as string[])}
       disabled={disabled}
-      renderTags={(tagValue, getTagProps) =>
-        tagValue.map((option, index) => (
-          <Chip
-            label={option}
-            {...getTagProps({ index })}
-            key={option}
-            size="small"
-          />
-        ))
+      renderValue={(value, getItemProps) =>
+        (value as readonly string[]).map((option, index) => {
+          const { key, ...itemProps } = getItemProps({ index })
+          return <Chip label={String(option)} {...itemProps} key={key} size="small" />
+        })
       }
-      renderInput={(params) => (
+      renderInput={(params: AutocompleteRenderInputParams) => (
         <TextField
           {...params}
           label={field.display_name}
@@ -455,7 +471,9 @@ function KeyValueField({
         {field.required && ' *'}
       </Typography>
       {field.description && (
-        <Typography variant="caption" color="text.secondary" gutterBottom>
+        <Typography variant="caption" gutterBottom sx={{
+          color: "text.secondary"
+        }}>
           {field.description}
         </Typography>
       )}
@@ -499,7 +517,7 @@ function KeyValueField({
         <FormHelperText error>{error}</FormHelperText>
       )}
     </Box>
-  )
+  );
 }
 
 // 조건 확인 함수

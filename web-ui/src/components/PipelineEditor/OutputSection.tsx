@@ -235,7 +235,7 @@ export function OutputSection() {
                 type="number"
                 value={config.batch_size || 100}
                 onChange={(e) => handleConfigChange('batch_size', Number(e.target.value))}
-                inputProps={{ min: 1, max: 10000 }}
+                slotProps={{ htmlInput: { min: 1, max: 10000 } }}
                 sx={{ width: 120 }}
               />
               <FormControlLabel
@@ -296,7 +296,7 @@ export function OutputSection() {
               type="number"
               value={config.batch_size || 100}
               onChange={(e) => handleConfigChange('batch_size', Number(e.target.value))}
-              inputProps={{ min: 1, max: 10000 }}
+              slotProps={{ htmlInput: { min: 1, max: 10000 } }}
               sx={{ width: 120 }}
             />
             <Divider>{t('pipelineEditor.output.authentication')}</Divider>
@@ -487,12 +487,14 @@ export function OutputSection() {
 
       default:
         return (
-          <Typography color="text.secondary">
+          <Typography sx={{
+            color: "text.secondary"
+          }}>
             {outputForm.type
               ? t('pipelineEditor.output.configNotSupported')
               : t('pipelineEditor.output.selectType')}
           </Typography>
-        )
+        );
     }
   }
 
@@ -501,7 +503,9 @@ export function OutputSection() {
       <Accordion expanded={expanded} onChange={(_, isExpanded) => setExpanded(isExpanded)}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="subtitle1" fontWeight="medium">
+            <Typography variant="subtitle1" sx={{
+              fontWeight: "medium"
+            }}>
               {t('pipelineEditor.output.title')}
             </Typography>
             <Chip label={outputs.length} size="small" color="secondary" variant="outlined" />
@@ -559,7 +563,6 @@ export function OutputSection() {
           </Stack>
         </AccordionDetails>
       </Accordion>
-
       {/* Output 편집 모달 */}
       <Dialog open={modalOpen} onClose={() => setModalOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>
@@ -585,7 +588,9 @@ export function OutputSection() {
                   const config = outputTypeConfig[type]
                   return (
                     <MenuItem key={type} value={type}>
-                      <Stack direction="row" spacing={1} alignItems="center">
+                      <Stack direction="row" spacing={1} sx={{
+                        alignItems: "center"
+                      }}>
                         <Chip
                           icon={config.icon as React.ReactElement}
                           label={config.label}
@@ -594,7 +599,7 @@ export function OutputSection() {
                         />
                       </Stack>
                     </MenuItem>
-                  )
+                  );
                 })}
               </Select>
             </FormControl>
@@ -621,7 +626,6 @@ export function OutputSection() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* 삭제 확인 다이얼로그 */}
       <ConfirmDialog
         open={deleteDialogOpen}
@@ -634,5 +638,5 @@ export function OutputSection() {
         severity="error"
       />
     </>
-  )
+  );
 }

@@ -1,0 +1,89 @@
+# =============================================================================
+# 로컬 E2E 통합 테스트 values (Colima K8s)
+#   helm upgrade --install conduix ./deploy/helm/conduix -f values-e2e.yaml
+# values-local-kafka.yaml 과 동일한 인프라(MySQL/Redis/Kafka Bitnami, NodePort)에
+# mock 데이터 소스/싱크(REST/MySQL/Kafka/ES)를 얹어 소스→stage→싱크 흐름을 검증한다.
+# =============================================================================
+
+global:
+  security:
+    allowInsecureImages: true
+
+# --- 인프라: Redis subchart. MySQL 은 별도 subchart 가 없어(운영은 Operator) ---
+# control-plane 저장소 DB 는 mock-mysql 의 conduix DB 를 재사용한다(아래 env.DB_HOST).
+redis:
+  enabled: true
+  image:
+    tag: latest
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+
+# --- Mock 데이터 소스/싱크 (E2E 핵심) ---
+mocks:
+  enabled: true
+  kafka:
+    enabled: true
+  elasticsearch:
+    enabled: true
+
+# --- 애플리케이션 (각 1 replica) ---
+# ClusterIP: 고정 NodePort 30000/30080 은 ArgoCD 관리 conduix ns 가 점유하므로
+# e2e 는 port-forward 로 접근한다(make e2e-verify / e2e-forward).
+controlPlane:
+  replicaCount: 1
+  image:
+    tag: "e2e"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  autoscaling:
+    enabled: false
+
+agent:
+  replicaCount: 1
+  image:
+    tag: "e2e"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8081
+  autoscaling:
+    enabled: false
+  # colima 로컬 이미지 재사용 (IfNotPresent). batch Job 이 이 이미지로 실행됨.
+  runnerImage: "conduix/pipeline-batch-job:e2e"
+
+webUI:
+  replicaCount: 1
+  image:
+    tag: "e2e"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+
+ingress:
+  enabled: false
+
+env:
+  DB_HOST: "conduix-mock-mysql"
+  DB_PORT: "3306"
+  DB_USER: "root"
+  DB_NAME: "conduix"
+  AUTO_MIGRATE: "true"
+  FRONTEND_URL: "http://localhost:30000"
+  MAX_DATATYPE_DEPTH: "5"
+  CONDUIX_ADMIN_EMAILS: "admin@example.com"
+
+secrets:
+  create: true
+  dbPassword: "rootpassword"
+  jwtSecret: "local-e2e-jwt-secret"
+
+migration:
+  enabled: true

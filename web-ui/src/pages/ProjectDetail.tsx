@@ -113,6 +113,7 @@ interface Workflow {
   slug: string
   description: string
   type: 'batch' | 'realtime'
+  cluster_id?: string
   status: string
   schedule_enabled: boolean
   provider_id: string
@@ -168,7 +169,9 @@ export default function ProjectDetailPage() {
     slug: '',
     type: 'batch' as 'batch' | 'realtime',
     description: '',
+    cluster_id: '', // 실행 대상 cluster (빈 값이면 서버가 default cluster로 폴백)
   })
+  const [clusterOptions, setClusterOptions] = useState<Array<{ id: string; name: string }>>([])
   const [workflowSaving, setWorkflowSaving] = useState(false)
   const [deleteWorkflowId, setDeleteWorkflowId] = useState<string | null>(null)
 
@@ -314,10 +317,22 @@ export default function ProjectDetailPage() {
     }
   }
 
+  // 워크플로우 dialog에서 실행 대상 cluster를 고를 수 있도록 목록을 로드한다.
+  const loadClusterOptions = async () => {
+    try {
+      const res = await api.getClusters()
+      const list = (res.data || []) as Array<{ id: string; name: string }>
+      setClusterOptions(list.map((c) => ({ id: c.id, name: c.name })))
+    } catch {
+      setClusterOptions([])
+    }
+  }
+
   // Workflow CRUD handlers
   const handleCreateWorkflow = () => {
     setEditingWorkflow(null)
-    setWorkflowForm({ name: '', slug: '', type: 'batch', description: '' })
+    setWorkflowForm({ name: '', slug: '', type: 'batch', description: '', cluster_id: '' })
+    loadClusterOptions()
     setWorkflowModalOpen(true)
   }
 
@@ -328,7 +343,9 @@ export default function ProjectDetailPage() {
       slug: workflow.slug,
       type: workflow.type,
       description: workflow.description,
+      cluster_id: workflow.cluster_id || '',
     })
+    loadClusterOptions()
     setWorkflowModalOpen(true)
   }
 
@@ -613,12 +630,16 @@ export default function ProjectDetailPage() {
   if (!project) {
     return (
       <Box sx={{ textAlign: 'center', py: 6 }}>
-        <Typography color="text.secondary" sx={{ mb: 2 }}>{t('project.notFound')}</Typography>
+        <Typography
+          sx={{
+            color: "text.secondary",
+            mb: 2
+          }}>{t('project.notFound')}</Typography>
         <Button variant="contained" onClick={() => navigate('/projects')}>
           {t('common.back')}
         </Button>
       </Box>
-    )
+    );
   }
 
   const statusConfig = getStatusConfig(project.status)
@@ -634,9 +655,10 @@ export default function ProjectDetailPage() {
         >
           {t('project.title')}
         </Link>
-        <Typography color="text.primary">{project.name}</Typography>
+        <Typography sx={{
+          color: "text.primary"
+        }}>{project.name}</Typography>
       </Breadcrumbs>
-
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/projects')}>
@@ -658,13 +680,11 @@ export default function ProjectDetailPage() {
           </Button>
         </Box>
       </Box>
-
       <Tabs value={tabValue} onChange={handleTabChange} sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tab icon={<SettingsIcon />} iconPosition="start" label={t('project.overview')} />
         <Tab icon={<StorageIcon />} iconPosition="start" label={`${t('dataModel.title')} (${dataTypes.length})`} />
         <Tab icon={<GroupsIcon />} iconPosition="start" label={t('project.workflows', { count: workflows.length })} />
       </Tabs>
-
       <TabPanel value={tabValue} index={0}>
         <Card>
           <CardContent>
@@ -732,7 +752,6 @@ export default function ProjectDetailPage() {
           </CardContent>
         </Card>
       </TabPanel>
-
       <TabPanel value={tabValue} index={1}>
         <Card>
           <CardHeader
@@ -767,7 +786,11 @@ export default function ProjectDetailPage() {
                             <Box sx={{ pl: depth * 3 }}>
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                 {depth > 0 && (
-                                  <Typography color="text.secondary" sx={{ fontSize: 12 }}>--</Typography>
+                                  <Typography
+                                    sx={{
+                                      color: "text.secondary",
+                                      fontSize: 12
+                                    }}>--</Typography>
                                 )}
                                 <Link
                                   component="button"
@@ -777,7 +800,12 @@ export default function ProjectDetailPage() {
                                   {dataType.display_name}
                                 </Link>
                               </Box>
-                              <Typography variant="caption" color="text.secondary" sx={{ pl: depth > 0 ? 2.5 : 0 }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: "text.secondary",
+                                  pl: depth > 0 ? 2.5 : 0
+                                }}>
                                 <code>{dataType.name}</code>
                               </Typography>
                             </Box>
@@ -818,14 +846,18 @@ export default function ProjectDetailPage() {
                             </Box>
                           </TableCell>
                         </TableRow>
-                      )
+                      );
                     })}
                   </TableBody>
                 </Table>
               </TableContainer>
             ) : (
               <Box sx={{ textAlign: 'center', py: 6 }}>
-                <Typography color="text.secondary" sx={{ mb: 2 }}>{t('dataModel.noDataModels')}</Typography>
+                <Typography
+                  sx={{
+                    color: "text.secondary",
+                    mb: 2
+                  }}>{t('dataModel.noDataModels')}</Typography>
                 <Button variant="contained" onClick={handleCreateDataType}>
                   {t('dataModel.new')}
                 </Button>
@@ -834,7 +866,6 @@ export default function ProjectDetailPage() {
           </CardContent>
         </Card>
       </TabPanel>
-
       <TabPanel value={tabValue} index={2}>
         <Card>
           <CardHeader
@@ -873,7 +904,12 @@ export default function ProjectDetailPage() {
                               >
                                 {workflow.name}
                               </Link>
-                              <Typography variant="caption" color="text.secondary" display="block">
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: "text.secondary",
+                                  display: "block"
+                                }}>
                                 <code>{workflow.slug}</code>
                               </Typography>
                             </Box>
@@ -913,14 +949,18 @@ export default function ProjectDetailPage() {
                             </Box>
                           </TableCell>
                         </TableRow>
-                      )
+                      );
                     })}
                   </TableBody>
                 </Table>
               </TableContainer>
             ) : (
               <Box sx={{ textAlign: 'center', py: 6 }}>
-                <Typography color="text.secondary" sx={{ mb: 2 }}>{t('project.noWorkflows')}</Typography>
+                <Typography
+                  sx={{
+                    color: "text.secondary",
+                    mb: 2
+                  }}>{t('project.noWorkflows')}</Typography>
                 <Button variant="contained" onClick={handleCreateWorkflow}>
                   {t('workflow.new')}
                 </Button>
@@ -929,7 +969,6 @@ export default function ProjectDetailPage() {
           </CardContent>
         </Card>
       </TabPanel>
-
       {/* Edit Project Modal */}
       <Dialog open={editModalOpen} onClose={() => setEditModalOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{t('project.edit')}</DialogTitle>
@@ -976,7 +1015,9 @@ export default function ProjectDetailPage() {
                   </Avatar>
                   <Box>
                     <Typography variant="body2">{option.name || option.email}</Typography>
-                    <Typography variant="caption" color="text.secondary">{option.email}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>{option.email}</Typography>
                   </Box>
                 </Box>
               )}
@@ -1015,7 +1056,6 @@ export default function ProjectDetailPage() {
           <Button variant="contained" onClick={handleEditSubmit}>{t('common.save')}</Button>
         </DialogActions>
       </Dialog>
-
       {/* Workflow Modal */}
       <Dialog open={workflowModalOpen} onClose={() => setWorkflowModalOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{editingWorkflow ? t('workflow.edit') : t('workflow.new')}</DialogTitle>
@@ -1048,15 +1088,36 @@ export default function ProjectDetailPage() {
                 <MenuItem value="batch">
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={t('workflow.batch')} color="secondary" size="small" />
-                    <Typography variant="body2" color="text.secondary">{t('workflow.batchDesc')}</Typography>
+                    <Typography variant="body2" sx={{
+                      color: "text.secondary"
+                    }}>{t('workflow.batchDesc')}</Typography>
                   </Box>
                 </MenuItem>
                 <MenuItem value="realtime">
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={t('workflow.realtime')} color="primary" size="small" />
-                    <Typography variant="body2" color="text.secondary">{t('workflow.realtimeDesc')}</Typography>
+                    <Typography variant="body2" sx={{
+                      color: "text.secondary"
+                    }}>{t('workflow.realtimeDesc')}</Typography>
                   </Box>
                 </MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>{t('workflow.cluster')}</InputLabel>
+              <Select
+                value={workflowForm.cluster_id}
+                label={t('workflow.cluster')}
+                onChange={(e) => setWorkflowForm({ ...workflowForm, cluster_id: e.target.value })}
+              >
+                <MenuItem value="">
+                  <Typography variant="body2" sx={{
+                    color: "text.secondary"
+                  }}>{t('workflow.clusterDefault')}</Typography>
+                </MenuItem>
+                {clusterOptions.map((cl) => (
+                  <MenuItem key={cl.id} value={cl.id}>{cl.name}</MenuItem>
+                ))}
               </Select>
             </FormControl>
             <TextField
@@ -1077,7 +1138,6 @@ export default function ProjectDetailPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* DataType Modal */}
       <Dialog open={dataTypeModalOpen} onClose={() => setDataTypeModalOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{editingDataType ? t('dataModel.edit') : t('dataModel.new')}</DialogTitle>
@@ -1110,31 +1170,41 @@ export default function ProjectDetailPage() {
                 <MenuItem value="master">
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={t('dataModel.categories.master')} color="primary" size="small" />
-                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.masterDesc')}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>{t('dataModel.categories.masterDesc')}</Typography>
                   </Box>
                 </MenuItem>
                 <MenuItem value="transaction">
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={t('dataModel.categories.transaction')} color="success" size="small" />
-                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.transactionDesc')}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>{t('dataModel.categories.transactionDesc')}</Typography>
                   </Box>
                 </MenuItem>
                 <MenuItem value="log">
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={t('dataModel.categories.log')} color="warning" size="small" />
-                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.logDesc')}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>{t('dataModel.categories.logDesc')}</Typography>
                   </Box>
                 </MenuItem>
                 <MenuItem value="metric">
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={t('dataModel.categories.metric')} color="secondary" size="small" />
-                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.metricDesc')}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>{t('dataModel.categories.metricDesc')}</Typography>
                   </Box>
                 </MenuItem>
                 <MenuItem value="reference">
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={t('dataModel.categories.reference')} color="info" size="small" />
-                    <Typography variant="caption" color="text.secondary">{t('dataModel.categories.referenceDesc')}</Typography>
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>{t('dataModel.categories.referenceDesc')}</Typography>
                   </Box>
                 </MenuItem>
               </Select>
@@ -1152,7 +1222,12 @@ export default function ProjectDetailPage() {
                   .filter(dt => dt.id !== editingDataType?.id)
                   .map(dt => (
                     <MenuItem key={dt.id} value={dt.id}>
-                      {dt.display_name} <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>({dt.name})</Typography>
+                      {dt.display_name} <Typography
+                      component="span"
+                      sx={{
+                        color: "text.secondary",
+                        ml: 1
+                      }}>({dt.name})</Typography>
                     </MenuItem>
                   ))}
               </Select>
@@ -1206,7 +1281,7 @@ export default function ProjectDetailPage() {
               fullWidth
               placeholder={t('dataModel.jsonSchemaPlaceholder')}
               helperText={t('dataModel.jsonSchemaHelp')}
-              InputProps={{ sx: { fontFamily: 'monospace' } }}
+              slotProps={{ input: { sx: { fontFamily: 'monospace' } } }}
             />
           </Box>
         </DialogContent>
@@ -1217,7 +1292,6 @@ export default function ProjectDetailPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
       {/* Delete Project Confirm Dialog */}
       <ConfirmDialog
         open={deleteDialogOpen}
@@ -1232,7 +1306,6 @@ export default function ProjectDetailPage() {
         onCancel={() => setDeleteDialogOpen(false)}
         severity="error"
       />
-
       {/* Delete Workflow Confirm Dialog */}
       <ConfirmDialog
         open={!!deleteWorkflowId}
@@ -1244,7 +1317,6 @@ export default function ProjectDetailPage() {
         onCancel={() => setDeleteWorkflowId(null)}
         severity="error"
       />
-
       {/* Delete DataType Confirm Dialog */}
       <ConfirmDialog
         open={!!deleteDataTypeId}
@@ -1257,5 +1329,5 @@ export default function ProjectDetailPage() {
         severity="error"
       />
     </Box>
-  )
+  );
 }

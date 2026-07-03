@@ -47,6 +47,20 @@ data:
   OAUTH_REDIRECT_URL: "{{ .Values.env.OAUTH_REDIRECT_URL }}"
   {{- end }}
 
+  # Mock 데이터 소스 DNS (로컬 E2E 전용) — seed.go 가 SEED_* env 로 읽어 샘플 파이프라인에 주입.
+  # DNS 는 릴리스명에서 파생하므로 values 에 하드코딩하지 않는다.
+  {{- if .Values.mocks.enabled }}
+  {{- $mockRest := printf "%s-mock-rest" (include "conduix.fullname" .) }}
+  {{- $mockMysql := printf "%s-mock-mysql" (include "conduix.fullname" .) }}
+  SEED_MOCK_REST_URL: "http://{{ $mockRest }}:8080"
+  SEED_MOCK_SOURCE_DSN: "root:rootpassword@tcp({{ $mockMysql }}:3306)/sourcedb"
+  SEED_MOCK_TARGET_DSN: "root:rootpassword@tcp({{ $mockMysql }}:3306)/targetdb"
+  SEED_MOCK_CDC_HOST: "{{ $mockMysql }}"
+  {{- if .Values.mocks.kafka.enabled }}
+  SEED_MOCK_KAFKA_BROKER: "{{ include "conduix.fullname" . }}-mock-kafka:9092"
+  {{- end }}
+  {{- end }}
+
   # OAuth2 Client IDs (non-sensitive)
   {{- if .Values.env.GITHUB_CLIENT_ID }}
   GITHUB_CLIENT_ID: "{{ .Values.env.GITHUB_CLIENT_ID }}"

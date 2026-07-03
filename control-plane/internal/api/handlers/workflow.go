@@ -635,23 +635,12 @@ func (h *WorkflowHandler) PauseWorkflow(c *gin.Context) {
 }
 
 // errNoExecutionCluster는 실행 대상 cluster를 확정할 수 없을 때 반환된다(그룹 없이는 실행 불가).
-var errNoExecutionCluster = errors.New("no execution cluster")
+// 즉시 실행/수동 트리거가 공유하는 정책은 services.ResolveExecutionCluster에 있다.
+var errNoExecutionCluster = services.ErrNoExecutionCluster
 
-// resolveExecutionCluster는 실행 시점의 대상 cluster를 확정한다.
-// 우선순위: 워크플로우 지정값 → default cluster → 실패(errNoExecutionCluster).
-// 워크플로우가 cluster를 지정했으면 그 값을 신뢰한다(존재 검증은 배치 위임/agent 측 라우팅에 위임).
+// resolveExecutionCluster는 실행 시점의 대상 cluster를 확정한다(services 공용 정책 위임).
 func (h *WorkflowHandler) resolveExecutionCluster(tx *gorm.DB, workflowClusterID string) (string, error) {
-	if workflowClusterID != "" {
-		return workflowClusterID, nil
-	}
-	var def models.Cluster
-	if err := tx.Where("is_default = ?", true).First(&def).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", errNoExecutionCluster
-		}
-		return "", err
-	}
-	return def.ID, nil
+	return services.ResolveExecutionCluster(tx, workflowClusterID)
 }
 
 // runningExecution은 워크플로우의 현재 실행 중 execution의 (ID, ClusterID)를 반환한다(없으면 빈 문자열).

@@ -146,6 +146,13 @@ func (s *SchedulerService) detectStaleExecutions() {
 			fmt.Printf("[Scheduler] stale-check: failed to mark execution %s failed: %v\n", exec.ID, err)
 			continue
 		}
+		// execution이 죽었으면 워크플로우도 running 에서 풀어준다.
+		// 안 풀면 workflow.status="running"에 갇혀 재트리거가 영구히 막힌다.
+		if err := s.db.Model(&models.Workflow{}).
+			Where("id = ? AND status = ?", exec.WorkflowID, string(types.PipelineGroupStatusRunning)).
+			Update("status", string(types.PipelineGroupStatusIdle)).Error; err != nil {
+			fmt.Printf("[Scheduler] stale-check: failed to reset workflow %s status: %v\n", exec.WorkflowID, err)
+		}
 		fmt.Printf("[Scheduler] marked orphaned execution %s (workflow %s) as failed\n", exec.ID, exec.WorkflowID)
 	}
 }
@@ -283,10 +290,18 @@ func (s *SchedulerService) TriggerNow(workflowID, userID string) (*models.Workfl
 		return nil, fmt.Errorf("workflow is already running")
 	}
 
+	// 실행 대상 cluster 확정: 즉시 실행(StartWorkflow)과 동일한 정책.
+	// 이 값을 발행 채널(cluster:<id>:execute)과 execution 스냅샷에 사용한다.
+	clusterID, err := ResolveExecutionCluster(s.db.DB, workflow.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve execution cluster: %w", err)
+	}
+
 	// 실행 레코드 생성
 	execution := &models.WorkflowExecution{
 		ID:            uuid.New().String(),
 		WorkflowID:    workflow.ID,
+		ClusterID:     clusterID,
 		Status:        "running",
 		StartedAt:     time.Now(),
 		TriggeredBy:   "user",
@@ -336,13 +351,14 @@ func (s *SchedulerService) publishWorkflowExecution(workflow *models.Workflow, e
 	}
 
 	cmd := &types.WorkflowExecutionCommand{
-		ID:             uuid.New().String(),
-		WorkflowID:     workflow.ID,
-		ExecutionID:    execution.ID,
-		TriggeredBy:    triggeredBy,
-		UserID:         userID,
-		WorkflowConfig: workflowConfig,
-		Timestamp:      time.Now(),
+		ID:              uuid.New().String(),
+		WorkflowID:      workflow.ID,
+		ExecutionID:     execution.ID,
+		TargetClusterID: execution.ClusterID, // 확정 cluster로 라우팅(누락 시 broadcast로 새어 agent 미수신)
+		TriggeredBy:     triggeredBy,
+		UserID:          userID,
+		WorkflowConfig:  workflowConfig,
+		Timestamp:       time.Now(),
 	}
 
 	return s.redisService.PublishWorkflowExecution(cmd)

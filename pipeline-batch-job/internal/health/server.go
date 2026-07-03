@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -53,7 +54,7 @@ func (s *Server) Start() error {
 
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("[health] Server error: %v\n", err)
+			slog.Error("health server error", "error", err)
 		}
 	}()
 

@@ -8,15 +8,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/conduix/conduix/pipeline-batch-job/internal/config"
+	"github.com/conduix/conduix/pipeline-batch-job/internal/health"
 	"github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
 	"github.com/conduix/conduix/pipeline-core/pkg/executor"
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
-	"github.com/conduix/conduix/pipeline-batch-job/internal/config"
-	"github.com/conduix/conduix/pipeline-batch-job/internal/health"
 	"github.com/conduix/conduix/shared/types"
 )
 
@@ -63,8 +64,7 @@ func (r *Runner) runBatch(ctx context.Context) error {
 	startTime := time.Now()
 	podName := os.Getenv("HOSTNAME")
 
-	fmt.Printf("[runner] Starting batch execution: workflow=%s, execution=%s\n",
-		r.cfg.WorkflowID, r.cfg.ExecutionID)
+	slog.Info("starting batch execution", "workflow_id", r.cfg.WorkflowID, "execution_id", r.cfg.ExecutionID)
 
 	r.healthServer.SetStatus("running")
 
@@ -85,7 +85,7 @@ func (r *Runner) runBatch(ctx context.Context) error {
 
 // runStreaming 스트리밍 모드 실행 (지속 실행)
 func (r *Runner) runStreaming(ctx context.Context) error {
-	fmt.Printf("[runner] Starting streaming execution: workflow=%s\n", r.cfg.WorkflowID)
+	slog.Info("starting streaming execution", "workflow_id", r.cfg.WorkflowID)
 
 	// 체크포인트 클라이언트 생성
 	var cpClient *checkpoint.Client
@@ -117,16 +117,16 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 		return fmt.Errorf("failed to start streaming execution: %w", err)
 	}
 
-	fmt.Println("[runner] Streaming pipeline running. Waiting for context cancellation...")
+	slog.Info("streaming pipeline running, waiting for context cancellation", "workflow_id", r.cfg.WorkflowID)
 
 	// 컨텍스트 종료 대기
 	<-ctx.Done()
 
-	fmt.Println("[runner] Shutting down streaming pipeline...")
+	slog.Info("shutting down streaming pipeline", "workflow_id", r.cfg.WorkflowID)
 	r.healthServer.SetStatus("stopping")
 
 	if err := groupExec.Stop(); err != nil {
-		fmt.Printf("[runner] Error stopping execution: %v\n", err)
+		slog.Error("error stopping execution", "workflow_id", r.cfg.WorkflowID, "error", err)
 	}
 
 	// 최종 체크포인트 flush
@@ -134,7 +134,7 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 		flushCtx, flushCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer flushCancel()
 		if err := cpClient.FlushCheckpoints(flushCtx); err != nil {
-			fmt.Printf("[runner] Final checkpoint flush error: %v\n", err)
+			slog.Error("final checkpoint flush error", "workflow_id", r.cfg.WorkflowID, "error", err)
 		}
 	}
 
@@ -203,7 +203,7 @@ func (r *Runner) sendBatchResult(startTime time.Time, podName string, exec *type
 		result.FailedRecords = exec.FailedRecords
 	}
 
-	fmt.Printf("[runner] Sending result: status=%s, records=%d\n", result.Status, result.TotalRecords)
+	slog.Info("sending result", "workflow_id", r.cfg.WorkflowID, "execution_id", r.cfg.ExecutionID, "status", result.Status, "records", result.TotalRecords)
 
 	data, err := json.Marshal(result)
 	if err != nil {

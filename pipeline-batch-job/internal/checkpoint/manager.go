@@ -4,7 +4,7 @@ package checkpoint
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"time"
 
 	coreCheckpoint "github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
@@ -37,7 +37,7 @@ func (m *Manager) Client() *coreCheckpoint.Client {
 func (m *Manager) Start(ctx context.Context) {
 	ctx, m.cancel = context.WithCancel(ctx)
 	m.client.StartPeriodicFlush(ctx, m.interval)
-	fmt.Printf("[checkpoint] Started periodic flush (interval: %v)\n", m.interval)
+	slog.Info("started periodic checkpoint flush", "interval", m.interval)
 }
 
 // Stop 체크포인트 저장 중지 및 마지막 flush
@@ -49,7 +49,7 @@ func (m *Manager) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := m.client.FlushCheckpoints(ctx); err != nil {
-		fmt.Printf("[checkpoint] Final flush error: %v\n", err)
+		slog.Error("final checkpoint flush error", "error", err)
 	}
 }
 

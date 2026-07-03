@@ -1,8 +1,24 @@
 # 로컬 K8s 통합 테스트 환경 — 구축 계획 (이어가기용)
 
 > 목적: 로컬에서 **모든 모듈을 유기적으로** 쉽게 띄워 테스트. mock 데이터 소스 포함.
-> 상태: **설계 확정, 구현 착수 전** (2026-07-03). 대화 압축 실패로 새 세션에서 이어감.
-> 브랜치: `feat/platform-value-improvements` (직전 커밋 `941983b`).
+> 상태: **구현·검증 완료** (2026-07-03). MySQL→MySQL, REST→MySQL 파이프라인이 mock 소스→stage→싱크로 실제 데이터 관통 확인.
+> 브랜치: `feat/platform-value-improvements`.
+
+## 완료 요약 (Phase 1~4 ✅)
+
+`make e2e-up` → colima 이미지 4종 빌드 → helm install(mock 4종 포함) → `make e2e-verify` 로 검증.
+검증 결과: `targetdb.orders_out` 에 mock 소스 데이터가 변환(price 문자열→숫자, status 소문자화)되어 적재됨.
+
+### E2E 도중 발견·수정한 실제 코드 버그 (테스트 환경 문제 아님)
+1. **web-ui Dockerfile Node 18 고정** → Vite 8 빌드 불가(`CustomEvent`). `node:22-alpine` 로 수정. (프로덕션 이미지 빌드도 깨져 있던 상태)
+2. **`TriggerNow` 가 `TargetClusterID` 미설정** → Redis broadcast 채널로 새어 agent(cluster:default:execute 구독) 미수신. cluster 확정+주입으로 수정. (`/start` 는 정상이었음 → 본질적 중복을 `services.ResolveExecutionCluster` 로 일원화)
+3. **`is_default=true` cluster 생성 경로 부재** → cluster_id 미지정 워크플로우가 영구 실행 불가. agent 첫 cluster 자동 생성 시 default 지정.
+4. **orphan 처리 시 `workflow.status="running"` 미정리** → 재트리거 영구 차단. idle 복구 추가.
+5. **migration Job `command` 경로/플래그 불일치**(`/app/control-plane -migrate` vs 실제 `control-plane-server --migrate`) → exec 실패. ENTRYPOINT + `args: [--migrate]` 로 수정.
+6. **`--migrate` 가 exit 안 함**(서버로 진행) → migration Job 무한 대기. migrate-only 모드 exit 추가.
+7. **pipeline-batch-job Dockerfile `plugin-sdk` 미복사** → `go mod download` 실패. 복사 + arm64 크로스컴파일 추가.
+8. **agent `RUNNER_IMAGE` 미주입** → batch 실행 시 "runner image is required". helm values+deployment 로 주입.
+9. **runtime cgroup limit 미인식** → 3개 서버 바이너리에 `automaxprocs`/`automemlimit` blank import. (control-plane 로그로 GOMAXPROCS/GOMEMLIMIT 적용 확인)
 
 ## 확정된 결정 (사용자 선택)
 
@@ -42,10 +58,27 @@
 
 ## 구현 순서(안)
 
-- **Phase 1**: mock 컨테이너 3종(REST/MySQL/Kafka) + ES를 helm 차트에 서브차트/템플릿으로 추가(로컬 values에서만 켬).
-- **Phase 2**: seed.go(또는 values)에서 mock 서비스 DNS를 쓰도록 파이프라인 접속정보 파라미터화.
-- **Phase 3**: `make e2e-up` 단일 타깃 — colima 이미지 로드 + `helm upgrade --install -f values-local.yaml`(+mock) + 상태 대기 + 접속 안내.
-- **Phase 4**: 검증 스크립트/체크리스트 — 샘플 파이프라인 실행하고 mock 데이터가 소스→stage→싱크로 흐르는지 확인.
+- **Phase 1** ✅: mock 4종을 `deploy/helm/conduix/templates/mocks.yaml` 에 추가(`mocks.enabled` 게이트, 프로덕션 기본 false). `values.yaml` 에 `mocks` 블록.
+- **Phase 2** ✅: `seed.go` 를 `SEED_*` env 로 파라미터화(`loadEndpoints`/`envOr`). 미설정 시 placeholder 폴백(프로덕션 불변). DNS 는 `configmaps.yaml` 이 릴리스명에서 파생해 주입. 단위테스트 `seed_endpoints_test.go`.
+- **Phase 3** ✅: `make e2e-up`/`e2e-down`/`e2e-images`/`e2e-status`/`e2e-verify`/`e2e-restart` (Makefile). colima docker 데몬 공유라 별도 load 불필요. `values-e2e.yaml` 신규.
+- **Phase 4** (진행중): `deploy/e2e/verify.sh` — HS256 JWT 자가서명(OAuth 우회, JWT_SECRET=values-e2e 와 일치) → 샘플 트리거 → mock 타깃 DB 행 확인. **실배포 검증 남음**.
+
+### 구현 산출물
+| 파일 | 내용 |
+|------|------|
+| `deploy/helm/conduix/templates/mocks.yaml` | mock-rest(nginx JSON), mock-mysql(seed+타깃테이블), mock-kafka(KRaft+seed Job), mock-es |
+| `deploy/helm/conduix/templates/configmaps.yaml` | `mocks.enabled` 시 `SEED_MOCK_*` env 주입 (릴리스명 파생 DNS) |
+| `deploy/helm/conduix/values.yaml` | `mocks:{enabled:false,...}` 게이트 |
+| `deploy/helm/conduix/values-e2e.yaml` | 인프라+mock+앱(NodePort 30000/30080, tag=e2e) |
+| `control-plane/internal/seed/seed.go` | `endpoints`/`loadEndpoints`/`envOr`, 파이프라인 접속정보 파라미터화 |
+| `control-plane/internal/seed/seed_endpoints_test.go` | 폴백/오버라이드 단위테스트 (통과) |
+| `deploy/e2e/verify.sh` | E2E 데이터 흐름 검증 스크립트 |
+| `Makefile` | `e2e-*` 타깃 |
+
+### 알려진 제약
+- REST→PostgreSQL 샘플은 mock Postgres 가 없어 E2E 미검증(placeholder 유지). 나머지 5종은 mock 대상 존재.
+- seed 는 최초 마이그레이션 1회만 실행 → `e2e-down`(namespace+PVC 삭제) 후 `e2e-up` 해야 SEED_* 반영된 샘플이 새로 시딩됨.
+- Colima 2 CPU/8Gi 여유 빠듯(추정 스택 ~5Gi). Pending 발생 시 Bitnami request 하향 필요.
 
 ## 주의/리스크
 

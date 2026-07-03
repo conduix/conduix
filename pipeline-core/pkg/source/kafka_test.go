@@ -75,6 +75,36 @@ func TestNewKafkaSource_StartOffset(t *testing.T) {
 	}
 }
 
+func TestNewKafkaSource_OnParseError(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"default (raw)", "", parseErrorRaw},
+		{"raw explicit", "raw", parseErrorRaw},
+		{"drop", "drop", parseErrorDrop},
+		{"error", "error", parseErrorError},
+		{"unknown falls back to raw", "bogus", parseErrorRaw},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := NewKafkaSource(config.SourceV2{
+				Type:         "kafka",
+				Brokers:      []string{"localhost:9092"},
+				Topics:       []string{"test"},
+				OnParseError: tt.in,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if source.onParseError != tt.want {
+				t.Errorf("OnParseError=%q → %q, want %q", tt.in, source.onParseError, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewKafkaSource_ByteSettings(t *testing.T) {
 	cfg := config.SourceV2{
 		Type:     "kafka",

@@ -83,6 +83,7 @@ type InputV2 struct {
 	MaxBytes       int              `yaml:"max_bytes,omitempty"`
 	MaxWait        int              `yaml:"max_wait,omitempty"`        // milliseconds
 	CommitInterval int              `yaml:"commit_interval,omitempty"` // milliseconds
+	OnParseError   string           `yaml:"on_parse_error,omitempty"`  // raw(기본), drop, error — JSON 파싱 실패 시 처리
 	SASL           *SASLConfig      `yaml:"sasl,omitempty" json:"sasl,omitempty"`
 	TLS            *TLSClientConfig `yaml:"tls,omitempty" json:"tls,omitempty"`
 

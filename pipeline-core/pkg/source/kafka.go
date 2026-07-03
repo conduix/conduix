@@ -22,6 +22,13 @@ import (
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
 
+// JSON 파싱 실패 시 처리 정책.
+const (
+	parseErrorRaw   = "raw"   // raw key/value 로 통과(기본, 하위호환)
+	parseErrorDrop  = "drop"  // 레코드 폐기
+	parseErrorError = "error" // 에러 발생시켜 소스 중단
+)
+
 // KafkaSource Kafka 데이터 소스
 type KafkaSource struct {
 	brokers        []string
@@ -32,6 +39,7 @@ type KafkaSource struct {
 	maxBytes       int
 	maxWait        time.Duration
 	commitInterval time.Duration
+	onParseError   string
 
 	// 보안 설정
 	saslMechanism sasl.Mechanism
@@ -73,6 +81,12 @@ func NewKafkaSource(cfg config.SourceV2) (*KafkaSource, error) {
 		commitInterval = time.Duration(cfg.CommitInterval) * time.Millisecond
 	}
 
+	onParseError := parseErrorRaw // 기본: 하위호환(raw 통과)
+	switch cfg.OnParseError {
+	case parseErrorDrop, parseErrorError:
+		onParseError = cfg.OnParseError
+	}
+
 	source := &KafkaSource{
 		brokers:        cfg.Brokers,
 		topics:         cfg.Topics,
@@ -82,6 +96,7 @@ func NewKafkaSource(cfg config.SourceV2) (*KafkaSource, error) {
 		maxBytes:       maxBytes,
 		maxWait:        maxWait,
 		commitInterval: commitInterval,
+		onParseError:   onParseError,
 		checkpoints:    make(map[string]int64),
 	}
 
@@ -308,10 +323,24 @@ func (s *KafkaSource) readFromReader(ctx context.Context, reader *kafka.Reader, 
 		// 데이터 파싱
 		var data map[string]any
 		if err := json.Unmarshal(msg.Value, &data); err != nil {
-			// JSON이 아닌 경우 raw value로 처리
-			data = map[string]any{
-				"key":   string(msg.Key),
-				"value": string(msg.Value),
+			// 파싱 실패 처리 정책. raw fallback 은 id 등 필드가 없어 downstream 싱크에서
+			// 조용히 반복 실패할 수 있으므로 drop/error 로 방어 가능.
+			switch s.onParseError {
+			case parseErrorDrop:
+				slog.Warn("kafka: dropping unparseable message",
+					"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset, "error", err)
+				continue
+			case parseErrorError:
+				select {
+				case errs <- fmt.Errorf("kafka: parse message at %s[%d]@%d: %w", msg.Topic, msg.Partition, msg.Offset, err):
+				default:
+				}
+				return
+			default: // parseErrorRaw
+				data = map[string]any{
+					"key":   string(msg.Key),
+					"value": string(msg.Value),
+				}
 			}
 		}
 

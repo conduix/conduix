@@ -3,8 +3,10 @@ module github.com/conduix/conduix/pipeline-batch-job
 go 1.26
 
 require (
+	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/conduix/conduix/pipeline-core v0.0.0
 	github.com/conduix/conduix/shared v0.0.0
+	go.uber.org/automaxprocs v1.6.0
 )
 
 require (
@@ -118,6 +120,7 @@ require (
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee // indirect
 	github.com/pingcap/failpoint v0.0.0-20251231045439-91d91e123837 // indirect

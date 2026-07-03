@@ -3,6 +3,7 @@ module github.com/conduix/conduix/control-plane
 go 1.26
 
 require (
+	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/caarlos0/env/v10 v10.0.0
 	github.com/conduix/conduix/pipeline-core v0.0.0-00010101000000-000000000000
 	github.com/conduix/conduix/shared v0.0.0
@@ -18,6 +19,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/segmentio/kafka-go v0.4.50
 	github.com/stretchr/testify v1.11.1
+	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/oauth2 v0.35.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
@@ -144,6 +146,7 @@ require (
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee // indirect

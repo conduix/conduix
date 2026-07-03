@@ -10,6 +10,10 @@ import (
 
 	"github.com/caarlos0/env/v10"
 
+	// K8s CPU/메모리 limit(cgroup)을 Go 런타임에 반영: GOMAXPROCS/GOMEMLIMIT 자동 설정.
+	_ "github.com/KimMachineGun/automemlimit"
+	_ "go.uber.org/automaxprocs"
+
 	"github.com/conduix/conduix/control-plane/internal/api"
 	"github.com/conduix/conduix/control-plane/internal/seed"
 	"github.com/conduix/conduix/control-plane/internal/services"
@@ -140,6 +144,13 @@ func main() {
 		// 첫 실행 시 샘플 파이프라인 기본 등록 (삭제 가능, 재시딩 안 함)
 		if err := seed.Run(db); err != nil {
 			fmt.Printf("Warning: sample seed failed (non-fatal): %v\n", err)
+		}
+
+		// --migrate 는 마이그레이션 전용 1회 실행(K8s Job 등). 완료 후 종료한다.
+		// AUTO_MIGRATE 는 서버 기동 시 자동 마이그레이션이므로 계속 진행한다.
+		if cfg.Migrate {
+			fmt.Println("Migration-only mode: exiting")
+			os.Exit(0)
 		}
 	}
 

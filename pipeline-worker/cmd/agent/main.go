@@ -10,6 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	// K8s CPU/메모리 limit(cgroup)을 Go 런타임에 반영: GOMAXPROCS/GOMEMLIMIT 자동 설정.
+	_ "github.com/KimMachineGun/automemlimit"
+	_ "go.uber.org/automaxprocs"
+
 	"github.com/conduix/conduix/pipeline-worker/api"
 	"github.com/conduix/conduix/pipeline-worker/internal/agent"
 )

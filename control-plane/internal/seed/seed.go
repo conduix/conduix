@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +21,36 @@ const (
 	sampleProjectAlias = "samples"
 	sampleProjectName  = "Sample Pipelines"
 )
+
+// endpoints는 샘플 파이프라인이 가리킬 소스/싱크 접속정보다.
+// 기본값은 데모용 placeholder이며, 로컬 E2E에서는 SEED_* env로 mock 클러스터 DNS를 주입한다.
+// (프로덕션은 env를 설정하지 않으므로 placeholder 그대로 — 동작 불변.)
+type endpoints struct {
+	restBaseURL string // REST 소스 base URL (예: http://mock-rest:8080)
+	sourceDSN   string // 소스 MySQL DSN (mysqlInput용)
+	targetDSN   string // 타깃 MySQL DSN (sqlOutput용)
+	pgTargetDSN string // 타깃 PostgreSQL DSN
+	kafkaBroker string // Kafka 브로커 주소
+	cdcHost     string // MySQL CDC 소스 호스트
+}
+
+func loadEndpoints() endpoints {
+	return endpoints{
+		restBaseURL: envOr("SEED_MOCK_REST_URL", "https://api.example.com"),
+		sourceDSN:   envOr("SEED_MOCK_SOURCE_DSN", "user:pass@tcp(localhost:3306)/sourcedb"),
+		targetDSN:   envOr("SEED_MOCK_TARGET_DSN", "user:pass@tcp(localhost:3306)/targetdb"),
+		pgTargetDSN: envOr("SEED_MOCK_PG_DSN", "postgres://user:pass@localhost:5432/targetdb?sslmode=disable"),
+		kafkaBroker: envOr("SEED_MOCK_KAFKA_BROKER", "localhost:9092"),
+		cdcHost:     envOr("SEED_MOCK_CDC_HOST", "localhost"),
+	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 // Run은 샘플 프로젝트가 없을 때만 샘플 프로젝트+워크플로우를 생성한다(멱등, 첫 실행 1회).
 func Run(db *database.DB) error {
@@ -143,12 +174,12 @@ func jsonExtractStage() types.Stage {
 	}
 }
 
-func mysqlInput(table string) types.WorkflowInput {
+func mysqlInput(ep endpoints, table string) types.WorkflowInput {
 	return types.WorkflowInput{
 		Type: "sql", Name: "mysql-src",
 		Config: map[string]any{
 			"driver": "mysql",
-			"dsn":    "user:pass@tcp(localhost:3306)/sourcedb",
+			"dsn":    ep.sourceDSN,
 			"query":  "SELECT * FROM " + table,
 		},
 	}
@@ -169,30 +200,31 @@ func sqlOutput(name, driver, dsn, table string) types.Output {
 }
 
 // sampleWorkflows는 요청된 6종 샘플(bulk 3 + cdc 3)을 커스텀 stage와 함께 구성한다.
-// config의 접속정보는 데모용 placeholder이며, 사용자가 web-ui에서 수정해 사용한다.
+// 접속정보는 endpoints(기본 placeholder, 로컬 E2E는 SEED_* env로 mock DNS 주입)에서 온다.
 func sampleWorkflows(projectID string) []*models.Workflow {
+	ep := loadEndpoints()
 	return []*models.Workflow{
 		// --- Bulk ---
 		newWorkflow(projectID, "[bulk] MySQL → MySQL", "MySQL 소스를 커스텀 변환 후 MySQL에 적재", types.PipelineGroupTypeBatch,
 			[]types.GroupedPipeline{{
 				Name:    "mysql-to-mysql",
-				Input:   mysqlInput("orders"),
+				Input:   mysqlInput(ep, "orders"),
 				Stages:  []types.Stage{textToNumberStage(), jsonTransformStage()},
-				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", "user:pass@tcp(localhost:3306)/targetdb", "orders_out")},
+				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "orders_out")},
 			}}),
 		newWorkflow(projectID, "[bulk] REST → MySQL", "REST API를 폴링해 JSON 추출 후 MySQL 적재", types.PipelineGroupTypeBatch,
 			[]types.GroupedPipeline{{
 				Name:    "rest-to-mysql",
-				Input:   restInput("https://api.example.com/orders"),
+				Input:   restInput(ep.restBaseURL + "/orders"),
 				Stages:  []types.Stage{jsonExtractStage(), textToNumberStage()},
-				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", "user:pass@tcp(localhost:3306)/targetdb", "orders_out")},
+				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "orders_out")},
 			}}),
 		newWorkflow(projectID, "[bulk] REST → PostgreSQL", "REST API를 폴링해 가공 후 PostgreSQL 적재", types.PipelineGroupTypeBatch,
 			[]types.GroupedPipeline{{
 				Name:    "rest-to-postgres",
-				Input:   restInput("https://api.example.com/events"),
+				Input:   restInput(ep.restBaseURL + "/events"),
 				Stages:  []types.Stage{jsonExtractStage(), jsonTransformStage()},
-				Outputs: []types.Output{sqlOutput("pg-sink", "postgres", "postgres://user:pass@localhost:5432/targetdb?sslmode=disable", "events_out")},
+				Outputs: []types.Output{sqlOutput("pg-sink", "postgres", ep.pgTargetDSN, "events_out")},
 			}}),
 
 		// --- CDC / streaming ---
@@ -201,10 +233,10 @@ func sampleWorkflows(projectID string) []*models.Workflow {
 				Name: "rest-cdc-to-mysql",
 				Input: types.WorkflowInput{
 					Type: "rest_api", Name: "rest-poll",
-					Config: map[string]any{"url": "https://api.example.com/changes", "method": "GET"},
+					Config: map[string]any{"url": ep.restBaseURL + "/changes", "method": "GET"},
 				},
 				Stages:  []types.Stage{jsonExtractStage(), textToNumberStage()},
-				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", "user:pass@tcp(localhost:3306)/targetdb", "changes_out")},
+				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "changes_out")},
 			}}),
 		newWorkflow(projectID, "[cdc] Kafka → MySQL", "Kafka CDC 이벤트를 가공/추출 후 MySQL 적재", types.PipelineGroupTypeRealtime,
 			[]types.GroupedPipeline{{
@@ -212,11 +244,11 @@ func sampleWorkflows(projectID string) []*models.Workflow {
 				Input: types.WorkflowInput{
 					Type: "kafka", Name: "kafka-src",
 					Config: map[string]any{
-						"brokers": []any{"localhost:9092"}, "topics": []any{"cdc.orders"}, "group_id": "conduix-sample",
+						"brokers": []any{ep.kafkaBroker}, "topics": []any{"cdc.orders"}, "group_id": "conduix-sample",
 					},
 				},
 				Stages:  []types.Stage{jsonExtractStage(), jsonTransformStage()},
-				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", "user:pass@tcp(localhost:3306)/targetdb", "orders_cdc")},
+				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "orders_cdc")},
 			}}),
 		newWorkflow(projectID, "[cdc] MySQL CDC → MySQL", "MySQL binlog CDC를 커스텀 변환 후 MySQL 적재", types.PipelineGroupTypeRealtime,
 			[]types.GroupedPipeline{{
@@ -224,13 +256,13 @@ func sampleWorkflows(projectID string) []*models.Workflow {
 				Input: types.WorkflowInput{
 					Type: "cdc", Name: "mysql-cdc",
 					Config: map[string]any{
-						"driver": "mysql", "host": "localhost", "port": 3306,
-						"username": "repl", "password": "repl", "database": "sourcedb",
+						"driver": "mysql", "host": ep.cdcHost, "port": 3306,
+						"username": "root", "password": "rootpassword", "database": "sourcedb",
 						"tables": []any{"orders"}, "server_id": 101,
 					},
 				},
 				Stages:  []types.Stage{textToNumberStage(), jsonTransformStage()},
-				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", "user:pass@tcp(localhost:3306)/targetdb", "orders_replica")},
+				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "orders_replica")},
 			}}),
 	}
 }

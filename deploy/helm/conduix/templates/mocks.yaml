@@ -1,0 +1,405 @@
+{{- if .Values.mocks.enabled }}
+# =============================================================================
+# Mock 데이터 소스/싱크 (로컬 E2E 전용)
+# mocks.enabled=true 일 때만 배포. 프로덕션 values 에는 존재하지 않음.
+#   - mock-rest   : 고정 JSON 을 반환하는 REST API 소스 (nginx static)
+#   - mock-mysql  : orders/events seed row 를 담은 소스 + 빈 타깃 테이블
+#   - mock-kafka  : KRaft 단일 브로커 + events 토픽 seed 프로듀서(Job)
+#   - mock-es     : 결과 검증용 Elasticsearch 싱크
+# 접속 DNS 는 seed.go 가 SEED_* env 로 주입받는다(configmaps.yaml 참고).
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Mock REST API — nginx 가 고정 JSON 을 서빙
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-rest-data
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-rest
+data:
+  # seed.go REST 소스 URL 경로와 일치해야 함: /orders, /events, /changes
+  orders.json: |
+    [
+      {"id": 1, "customer": "Alice", "price": "19.99", "quantity": "2", "status": "PAID"},
+      {"id": 2, "customer": "Bob", "price": "5.50", "quantity": "10", "status": "Pending"},
+      {"id": 3, "customer": "Carol", "price": "120.00", "quantity": "1", "status": "PAID"}
+    ]
+  events.json: |
+    [
+      {"id": 101, "first_name": "Alice", "last_name": "Kim", "status": "ACTIVE", "payload_json": "{\"user\":{\"email\":\"alice@example.com\"},\"event\":{\"type\":\"signup\"}}"},
+      {"id": 102, "first_name": "Bob", "last_name": "Lee", "status": "Inactive", "payload_json": "{\"user\":{\"email\":\"bob@example.com\"},\"event\":{\"type\":\"login\"}}"}
+    ]
+  changes.json: |
+    [
+      {"id": 201, "price": "42", "quantity": "3", "payload_json": "{\"user\":{\"email\":\"carol@example.com\"},\"event\":{\"type\":\"update\"}}"}
+    ]
+  default.conf: |
+    server {
+      listen 8080;
+      charset utf-8;
+      default_type application/json;
+      # seed 의 REST 소스는 확장자 없는 경로(/orders, /events, /changes)를 친다.
+      # 각 경로를 대응 .json 파일로 매핑한다.
+      location = /orders  { root /usr/share/nginx/html; try_files /orders.json =404; }
+      location = /events  { root /usr/share/nginx/html; try_files /events.json =404; }
+      location = /changes { root /usr/share/nginx/html; try_files /changes.json =404; }
+      location / { root /usr/share/nginx/html; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-rest
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-rest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "conduix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mock-rest
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mock-rest
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/nginx/html/orders.json
+              subPath: orders.json
+            - name: data
+              mountPath: /usr/share/nginx/html/events.json
+              subPath: events.json
+            - name: data
+              mountPath: /usr/share/nginx/html/changes.json
+              subPath: changes.json
+            - name: data
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: data
+          configMap:
+            name: {{ include "conduix.fullname" . }}-mock-rest-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-rest
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-rest
+spec:
+  selector:
+    {{- include "conduix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-rest
+  ports:
+    - port: 8080
+      targetPort: 8080
+
+# -----------------------------------------------------------------------------
+# Mock 소스 MySQL — seed row(orders/events) + 빈 타깃 테이블(orders_out 등)
+# SQL 싱크는 첫 레코드로 컬럼을 추론해 ON DUPLICATE KEY UPDATE 하므로 타깃 테이블 선존재 필요.
+# -----------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-mysql-init
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-mysql
+data:
+  init.sql: |
+    -- control-plane 저장소 DB(별도 MySQL 대신 mock-mysql 재사용) + 소스/타깃 DB
+    CREATE DATABASE IF NOT EXISTS conduix CHARACTER SET utf8mb4;
+    CREATE DATABASE IF NOT EXISTS sourcedb CHARACTER SET utf8mb4;
+    CREATE DATABASE IF NOT EXISTS targetdb CHARACTER SET utf8mb4;
+
+    USE sourcedb;
+    CREATE TABLE IF NOT EXISTS orders (
+      id INT PRIMARY KEY,
+      customer VARCHAR(128),
+      price VARCHAR(32),
+      quantity VARCHAR(32),
+      status VARCHAR(32)
+    );
+    INSERT INTO orders (id, customer, price, quantity, status) VALUES
+      (1, 'Alice', '19.99', '2', 'PAID'),
+      (2, 'Bob', '5.50', '10', 'Pending'),
+      (3, 'Carol', '120.00', '1', 'PAID')
+    ON DUPLICATE KEY UPDATE id=id;
+
+    CREATE TABLE IF NOT EXISTS events (
+      id INT PRIMARY KEY,
+      first_name VARCHAR(64),
+      last_name VARCHAR(64),
+      status VARCHAR(32),
+      payload_json TEXT
+    );
+    INSERT INTO events (id, first_name, last_name, status, payload_json) VALUES
+      (101, 'Alice', 'Kim', 'ACTIVE', '{"user":{"email":"alice@example.com"},"event":{"type":"signup"}}'),
+      (102, 'Bob', 'Lee', 'Inactive', '{"user":{"email":"bob@example.com"},"event":{"type":"login"}}')
+    ON DUPLICATE KEY UPDATE id=id;
+
+    -- 타깃 테이블: 싱크가 INSERT 하므로 PK + 추론 가능한 컬럼을 미리 선언
+    USE targetdb;
+    CREATE TABLE IF NOT EXISTS orders_out (
+      id INT PRIMARY KEY,
+      customer VARCHAR(128),
+      price DOUBLE,
+      quantity INT,
+      status VARCHAR(32),
+      full_name VARCHAR(128)
+    );
+    CREATE TABLE IF NOT EXISTS changes_out (
+      id INT PRIMARY KEY,
+      price DOUBLE,
+      quantity INT,
+      user_email VARCHAR(128),
+      event_type VARCHAR(64)
+    );
+    CREATE TABLE IF NOT EXISTS orders_cdc (
+      id INT PRIMARY KEY,
+      full_name VARCHAR(128),
+      user_email VARCHAR(128),
+      event_type VARCHAR(64)
+    );
+    CREATE TABLE IF NOT EXISTS orders_replica (
+      id INT PRIMARY KEY,
+      customer VARCHAR(128),
+      price DOUBLE,
+      quantity INT,
+      status VARCHAR(32),
+      full_name VARCHAR(128)
+    );
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-mysql
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "conduix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mock-mysql
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mock-mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "rootpassword"
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h127.0.0.1 -uroot -prootpassword"]
+            initialDelaySeconds: 20
+            periodSeconds: 5
+      volumes:
+        - name: init
+          configMap:
+            name: {{ include "conduix.fullname" . }}-mock-mysql-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-mysql
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-mysql
+spec:
+  selector:
+    {{- include "conduix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+
+# -----------------------------------------------------------------------------
+# Mock Kafka — Bitnami Kafka(KRaft) 단일 브로커 + events 토픽 seed 프로듀서
+# -----------------------------------------------------------------------------
+{{- if .Values.mocks.kafka.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-kafka
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "conduix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mock-kafka
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mock-kafka
+    spec:
+      containers:
+        - name: kafka
+          image: {{ .Values.mocks.kafka.image | default "bitnamilegacy/kafka:3.7" }}
+          ports:
+            - containerPort: 9092
+          env:
+            - name: KAFKA_CFG_NODE_ID
+              value: "0"
+            - name: KAFKA_CFG_PROCESS_ROLES
+              value: "controller,broker"
+            - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+              value: "0@localhost:9093"
+            - name: KAFKA_CFG_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            - name: KAFKA_CFG_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://{{ include "conduix.fullname" . }}-mock-kafka:9092"
+            - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 15
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-kafka
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-kafka
+spec:
+  selector:
+    {{- include "conduix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-kafka
+  ports:
+    - port: 9092
+      targetPort: 9092
+---
+# events 토픽에 seed 메시지 주입 (Kafka 준비 후 1회 실행)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-kafka-seed
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-kafka
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mock-kafka
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: producer
+          image: {{ .Values.mocks.kafka.image | default "bitnamilegacy/kafka:3.7" }}
+          command:
+            - sh
+            - -c
+            - |
+              BROKER={{ include "conduix.fullname" . }}-mock-kafka:9092
+              echo "waiting for kafka at $BROKER ..."
+              until kafka-topics.sh --bootstrap-server "$BROKER" --list >/dev/null 2>&1; do sleep 3; done
+              kafka-topics.sh --bootstrap-server "$BROKER" --create --if-not-exists --topic cdc.orders --partitions 1 --replication-factor 1
+              printf '%s\n' \
+                '{"id":301,"first_name":"Dave","last_name":"Park","status":"NEW","payload_json":"{\"user\":{\"email\":\"dave@example.com\"},\"event\":{\"type\":\"order.created\"}}"}' \
+                '{"id":302,"first_name":"Eve","last_name":"Song","status":"NEW","payload_json":"{\"user\":{\"email\":\"eve@example.com\"},\"event\":{\"type\":\"order.created\"}}"}' \
+                | kafka-console-producer.sh --bootstrap-server "$BROKER" --topic cdc.orders
+              echo "seeded cdc.orders"
+{{- end }}
+
+# -----------------------------------------------------------------------------
+# Mock Elasticsearch — 결과 검증용 싱크 (단일 노드, 보안 off)
+# -----------------------------------------------------------------------------
+{{- if .Values.mocks.elasticsearch.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-es
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-es
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "conduix.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mock-es
+  template:
+    metadata:
+      labels:
+        {{- include "conduix.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mock-es
+    spec:
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+          ports:
+            - containerPort: 9200
+          env:
+            - name: discovery.type
+              value: "single-node"
+            - name: xpack.security.enabled
+              value: "false"
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "conduix.fullname" . }}-mock-es
+  labels:
+    {{- include "conduix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-es
+spec:
+  selector:
+    {{- include "conduix.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mock-es
+  ports:
+    - port: 9200
+      targetPort: 9200
+{{- end }}
+{{- end }}

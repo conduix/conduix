@@ -286,6 +286,71 @@ release: check package docker-build ## 릴리스 빌드 (체크 + 패키지 + Do
 	@echo "    Time: $(BUILD_TIME)"
 
 # ============================================================================
+# 로컬 E2E 통합 테스트 환경 (Colima K8s + helm + mock 데이터 소스/싱크)
+# ============================================================================
+
+# 기존 conduix ns 는 ArgoCD(auto-sync/selfHeal)가 관리하므로 e2e 는 별도 ns 로 격리한다.
+E2E_NS ?= conduix-e2e
+E2E_RELEASE ?= conduix
+E2E_CHART := ./deploy/helm/conduix
+E2E_VALUES := $(E2E_CHART)/values-e2e.yaml
+E2E_TAG := e2e
+E2E_ARCH := $(shell go env GOARCH)
+
+.PHONY: e2e-images e2e-up e2e-down e2e-status e2e-verify e2e-restart
+
+e2e-images: ## E2E 이미지 빌드 (colima docker 데몬에 직접 로드됨)
+	@echo "==> E2E 이미지 빌드 중 (platform=linux/$(E2E_ARCH), tag=$(E2E_TAG))..."
+	@echo "    (docker context: $$(docker context show))"
+	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.control-plane -t $(DOCKER_REGISTRY)/control-plane:$(E2E_TAG) .
+	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.agent -t $(DOCKER_REGISTRY)/agent:$(E2E_TAG) .
+	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.web-ui -t $(DOCKER_REGISTRY)/web-ui:$(E2E_TAG) .
+	docker build --platform linux/$(E2E_ARCH) -f pipeline-batch-job/Dockerfile -t $(DOCKER_REGISTRY)/pipeline-batch-job:$(E2E_TAG) .
+	@echo "==> E2E 이미지 빌드 완료"
+
+e2e-up: e2e-images ## E2E 환경 기동 (이미지 빌드 → helm install → 안내)
+	@echo "==> kubectl context 확인: $$(kubectl config current-context)"
+	kubectl create namespace $(E2E_NS) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> helm upgrade --install (mock 소스/싱크 포함)..."
+	helm dependency build $(E2E_CHART) >/dev/null 2>&1 || true
+	helm upgrade --install $(E2E_RELEASE) $(E2E_CHART) \
+		--namespace $(E2E_NS) \
+		-f $(E2E_VALUES) \
+		--set controlPlane.image.repository=$(DOCKER_REGISTRY)/control-plane \
+		--set agent.image.repository=$(DOCKER_REGISTRY)/agent \
+		--set webUI.image.repository=$(DOCKER_REGISTRY)/web-ui \
+		--wait --timeout 10m
+	@echo ""
+	@echo "==> E2E 환경 기동 완료 (namespace: $(E2E_NS), ClusterIP)."
+	@echo "    포트포워드   : make e2e-forward   # Web UI :30000, API :30080 로 로컬 노출"
+	@echo "    상태 확인    : make e2e-status"
+	@echo "    데이터 검증  : make e2e-verify    # 포트포워드 자동 처리"
+
+e2e-forward: ## Web UI/API 를 로컬 포트로 포워딩 (30000/30080)
+	@echo "==> port-forward: Web UI http://localhost:30000, API http://localhost:30080 (Ctrl-C 로 중지)"
+	@kubectl -n $(E2E_NS) port-forward svc/$(E2E_RELEASE)-web-ui 30000:80 & \
+	 kubectl -n $(E2E_NS) port-forward svc/$(E2E_RELEASE)-control-plane 30080:8080 & \
+	 wait
+
+e2e-down: ## E2E 환경 중지 (helm uninstall + namespace 삭제)
+	@echo "==> E2E 환경 중지 중..."
+	-helm uninstall $(E2E_RELEASE) --namespace $(E2E_NS)
+	-kubectl delete namespace $(E2E_NS) --wait=false
+	@echo "==> 중지 완료"
+
+e2e-restart: ## 앱 이미지만 다시 빌드하고 롤아웃 재시작
+	$(MAKE) e2e-images
+	kubectl -n $(E2E_NS) rollout restart deployment \
+		$(E2E_RELEASE)-control-plane $(E2E_RELEASE)-agent $(E2E_RELEASE)-web-ui
+
+e2e-status: ## E2E pod/서비스 상태
+	@echo "==> Pods:"; kubectl -n $(E2E_NS) get pods
+	@echo "==> Services:"; kubectl -n $(E2E_NS) get svc
+
+e2e-verify: ## E2E 데이터 흐름 검증 (샘플 파이프라인 실행 → mock 싱크 확인)
+	@bash deploy/e2e/verify.sh $(E2E_NS) $(E2E_RELEASE)
+
+# ============================================================================
 # 정리
 # ============================================================================
 

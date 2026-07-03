@@ -47,6 +47,11 @@ spec:
               value: {{ .Values.agent.clusterId | default "default" | quote }}
             - name: CONTROL_PLANE_URL
               value: "http://{{ include "conduix.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}"
+            {{- if .Values.agent.runnerImage }}
+            # 배치 워크플로우를 K8s Job 으로 위임할 때 쓰는 pipeline-batch-job 이미지.
+            - name: RUNNER_IMAGE
+              value: {{ .Values.agent.runnerImage | quote }}
+            {{- end }}
           envFrom:
             # ConfigMap에서 환경변수 주입
             - configMapRef:

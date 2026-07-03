@@ -58,5 +58,7 @@ ENV CONDUIX_SDK_PATH=/app/plugin-sdk
 
 EXPOSE 8080
 
+# 기본은 서버 실행. 마이그레이션은 AUTO_MIGRATE=true(서버 기동 시) 또는
+# migration Job(args: [--migrate], 완료 후 종료)이 담당한다.
+# CMD로 --migrate를 주면 일반 pod가 마이그레이션만 하고 종료해버린다.
 ENTRYPOINT ["./control-plane-server"]
-CMD ["--migrate"]

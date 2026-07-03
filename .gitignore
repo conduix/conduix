@@ -6,6 +6,13 @@
 *.so
 *.dylib
 
+# Go build binaries (go build ./cmd/<name> 출력 — 확장자 없어 위 패턴에 안 걸림)
+/control-plane/server
+/control-plane/control-plane-server
+/pipeline-worker/agent
+/pipeline-batch-job/runner
+/pipeline-core/pipeline
+
 # Test binary
 *.test
 

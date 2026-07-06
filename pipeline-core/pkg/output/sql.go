@@ -310,14 +310,29 @@ func (o *SQLOutput) batchInsert(ctx context.Context, records []source.Record, co
 			suffix = " ON CONFLICT DO NOTHING"
 		}
 	case "update":
-		// MySQL: ON DUPLICATE KEY UPDATE
-		// PostgreSQL: ON CONFLICT DO UPDATE (requires unique constraint)
+		// MySQL: ON DUPLICATE KEY UPDATE / PostgreSQL: ON CONFLICT (cols) DO UPDATE
 		if o.driver == "mysql" {
 			updates := make([]string, len(columns))
 			for i, col := range quotedCols {
 				updates[i] = fmt.Sprintf("%s=VALUES(%s)", col, col)
 			}
 			suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(updates, ", ")
+		} else if o.driver == "postgres" {
+			// PostgreSQL 은 충돌 대상 컬럼(unique/PK)을 명시해야 한다. conflict_columns 미지정 시
+			// 어느 제약으로 수렴할지 알 수 없어 plain INSERT 로 두면 중복키 에러가 난다 → 명시 요구.
+			if len(o.conflictColumns) == 0 {
+				return fmt.Errorf("postgres upsert(on_conflict=update) requires conflict_columns")
+			}
+			conflictCols := make([]string, len(o.conflictColumns))
+			for i, c := range o.conflictColumns {
+				conflictCols[i] = o.quoteIdentifier(c)
+			}
+			updates := make([]string, 0, len(quotedCols))
+			for _, col := range quotedCols {
+				updates = append(updates, fmt.Sprintf("%s=EXCLUDED.%s", col, col))
+			}
+			suffix = fmt.Sprintf(" ON CONFLICT (%s) DO UPDATE SET %s",
+				strings.Join(conflictCols, ", "), strings.Join(updates, ", "))
 		}
 	}
 

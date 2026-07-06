@@ -182,9 +182,11 @@ func (s *CDCSource) Name() string {
 func (s *CDCSource) Open(ctx context.Context) error {
 	switch s.driver {
 	case "mysql":
-		return s.openMySQL()
+		// canal 은 Read→runCanalOnce 에서 매 (재)연결마다 새로 만든다(끊긴 canal 은 재사용 불가).
+		// 여기서 미리 만들면 runCanalOnce 가 그것을 Close 후 재생성해야 해 낭비·경합이다.
+		return nil
 	case "postgres":
-		// pg 는 복제 연결을 Read(run) 시점에 연다(재연결마다 새 연결 필요). 여기선 검증만.
+		// pg 도 복제 연결을 Read(run) 시점에 연다(재연결마다 새 연결 필요). 여기선 준비만.
 		if s.pg == nil {
 			s.pg = newPostgresReplicator(s)
 		}
@@ -426,13 +428,15 @@ func (s *CDCSource) runOnce(ctx context.Context) error {
 // 재연결을 위해 매번 canal 을 새로 만든다(끊긴 canal 은 재사용 불가).
 // 반환: nil=정상 종료(Stop/ctx), err=연결 실패/끊김.
 func (s *CDCSource) runCanalOnce(ctx context.Context) error {
-	// 이전 canal 정리 후 새로 생성
+	// 이전 canal 정리 후 새로 생성. canal.Close() 는 핸들러(s.mu 잡음)를 동기 호출하므로
+	// 락 밖에서 Close 한다(Close() 와 동일한 재진입 데드락 회피).
 	s.mu.Lock()
-	if s.canal != nil {
-		s.canal.Close()
-		s.canal = nil
-	}
+	old := s.canal
+	s.canal = nil
 	s.mu.Unlock()
+	if old != nil {
+		old.Close()
+	}
 	if err := s.openMySQL(); err != nil {
 		return fmt.Errorf("reopen canal: %w", err)
 	}
@@ -650,23 +654,24 @@ func (s *CDCSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error 
 }
 
 func (s *CDCSource) Close() error {
+	// canal.Close() 는 동기적으로 이벤트 핸들러(OnPosSynced 등)를 호출하는데, 그 핸들러가
+	// s.mu 를 잡는다. 따라서 canal.Close() 를 s.mu 를 쥔 채 호출하면 재진입 데드락이 된다.
+	// → 락 안에서는 상태 정리만 하고 canal 참조를 빼낸 뒤, 락을 놓고 Close() 를 호출한다.
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.running = false
-
 	// stopCh 닫아 OnRow 의 블로킹 전송을 깨운다(중복 close 방지).
 	select {
 	case <-s.stopCh: // 이미 닫힘
 	default:
 		close(s.stopCh)
 	}
+	c := s.canal
+	s.canal = nil
+	s.mu.Unlock()
 
-	if s.canal != nil {
-		s.canal.Close()
-		s.canal = nil
+	if c != nil {
+		c.Close() // 락 밖: 핸들러 콜백이 s.mu 를 잡아도 데드락 없음.
 	}
-
 	return nil
 }
 
@@ -809,17 +814,27 @@ func (h *mysqlEventHandler) String() string {
 	return "CDCSourceEventHandler"
 }
 
-// rowToMap 행 데이터를 map으로 변환.
-// []byte 는 텍스트 컬럼(TEXT/VARCHAR/JSON 등)에서만 string 으로 변환한다.
-// 바이너리 컬럼(BLOB/BINARY/VARBINARY, TYPE_BINARY)은 string 강제 시 비UTF-8 바이트가
-// 손상되므로 원본 []byte 를 유지한다(직렬화/싱크가 base64 등으로 처리).
+// rowToMap 행 데이터를 map으로 변환하며 컬럼 타입에 따라 값 표현을 정규화한다.
+// go-mysql binlog 디코더는 BINARY/VARBINARY 를 string 으로, BLOB 를 []byte 로 주는 등
+// 타입별 표현이 일관되지 않다. 그래서 여기서 결정적으로 맞춘다:
+//   - 바이너리 컬럼(TYPE_BINARY: BINARY/VARBINARY/BLOB)  → []byte (비UTF-8 바이트 보존, 싱크가 base64 등)
+//   - 그 외 텍스트/JSON 등의 []byte                       → string
+//
+// (Go string 은 임의 바이트를 손실 없이 담지만, 다운스트림 타입 판별을 위해 바이너리는 []byte 로 통일.)
 func rowToMap(columns []schema.TableColumn, row []any) map[string]any {
 	data := make(map[string]any)
 	for i, col := range columns {
 		if i < len(row) {
 			val := row[i]
-			if b, ok := val.([]byte); ok && col.Type != schema.TYPE_BINARY {
-				val = string(b)
+			switch col.Type {
+			case schema.TYPE_BINARY:
+				if s, ok := val.(string); ok {
+					val = []byte(s)
+				}
+			default:
+				if b, ok := val.([]byte); ok {
+					val = string(b)
+				}
 			}
 			data[col.Name] = val
 		}

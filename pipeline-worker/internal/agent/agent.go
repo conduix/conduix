@@ -831,7 +831,7 @@ func (a *Agent) claimRenewalLoop(ctx context.Context, cancel context.CancelFunc,
 			return
 		case <-ticker.C:
 			if !a.renewClaim(executionID) {
-				slog.Error("execution claim lost, cancelling to prevent duplicate execution",
+				slog.Error("execution claim lost, canceling to prevent duplicate execution",
 					"execution_id", executionID, "agent_id", a.ID)
 				cancel()
 				return

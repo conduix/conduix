@@ -106,6 +106,10 @@ type InputV2 struct {
 	Tables   []string `yaml:"tables,omitempty"`    // tables to watch
 	ServerID uint32   `yaml:"server_id,omitempty"` // MySQL server ID for binlog
 	SlotName string   `yaml:"slot_name,omitempty"` // PostgreSQL replication slot
+	// CDC 시작 지점(checkpoint 없을 때). bulk 초기적재↔CDC 경계를 맞출 때 쓴다.
+	// StartGTID 가 있으면 우선, 없으면 StartPosition(file:pos), 둘 다 없으면 현재 위치부터.
+	StartPosition string `yaml:"start_position,omitempty"` // "binlog_file:pos" (MySQL)
+	StartGTID     string `yaml:"start_gtid,omitempty"`     // GTID set (MySQL)
 
 	// Database TLS (SQL, CDC 공통 - TLS 필드는 Kafka에서도 사용)
 	// DSN 대신 개별 필드로 TLS 설정 시 사용

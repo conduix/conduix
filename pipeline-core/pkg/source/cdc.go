@@ -106,7 +106,7 @@ func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
 		serverID = cfg.ServerID
 	}
 
-	return &CDCSource{
+	s := &CDCSource{
 		driver:    cfg.Driver,
 		host:      cfg.Host,
 		port:      port,
@@ -120,7 +120,31 @@ func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
 		eventCh:   make(chan *CDCEvent, 1000),
 		errorCh:   make(chan error, 10),
 		stopCh:    make(chan struct{}),
-	}, nil
+	}
+
+	// 시작 지점 지정(checkpoint 없을 때 시작점). bulk↔CDC 경계 맞춤용.
+	// committedPos/GTID 로 설정 → Read 가 이 값을 시작점으로 쓴다(checkpoint 복원과 동일 경로).
+	if cfg.StartGTID != "" {
+		if _, err := mysql.ParseMysqlGTIDSet(cfg.StartGTID); err != nil {
+			return nil, fmt.Errorf("invalid start_gtid %q: %w", cfg.StartGTID, err)
+		}
+		s.committedGTID = cfg.StartGTID
+		s.curGTID = cfg.StartGTID
+	} else if cfg.StartPosition != "" {
+		parts := strings.SplitN(cfg.StartPosition, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid start_position %q (want \"binlog_file:pos\")", cfg.StartPosition)
+		}
+		pos, err := ParseNumeric(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid start_position offset %q: %w", parts[1], err)
+		}
+		p := mysql.Position{Name: parts[0], Pos: uint32(pos)}
+		s.position = p
+		s.committedPos = p
+	}
+
+	return s, nil
 }
 
 func (s *CDCSource) Name() string {

@@ -33,7 +33,7 @@ Conduix is a scalable, Kubernetes-native data pipeline platform: native-Go conne
 **Architecture**:
 - **Native-Go Connectors**: Built-in sources/sinks (Kafka, SQL, REST, MySQL CDC, S3, Elasticsearch, MongoDB, BigQuery, …) implemented in Go — no external connector process.
 - **Parallel Processing**: Stage-level parallel processing, batch optimization (configurable workers).
-- **Pure Go**: Single binary, no external runtime dependency.
+- **Pure Go**: Statically linked (`CGO_ENABLED=0`) single binary — no JVM/Python runtime to install, and libc-independent (runs on Alpine/musl). Build per target OS/arch (e.g. linux/amd64, linux/arm64).
 - **Bento**: The [Bento](https://github.com/warpstreamlabs/bento) (MIT, a Benthos fork) dependency is kept as an adapter seam for future connector/Bloblang reuse, but is not on the runtime path today — connectors and transforms are Conduix's own Go implementations. See [ADR-0001](docs/adr/0001-bento-adoption.md).
 
 ## Key Features
@@ -327,7 +327,7 @@ conduix/
 ### Prerequisites
 
 - Go 1.26+
-- Node.js 18+
+- Node.js 20.19+ (web-ui build requires it)
 - Docker & Docker Compose
 - MySQL 8.0
 - Redis 7.0

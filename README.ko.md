@@ -33,7 +33,7 @@ Conduix는 native Go 커넥터, Stage 병렬 처리, 워크플로우 오케스�
 **아키텍처**:
 - **Native Go 커넥터**: 소스/싱크(Kafka, SQL, REST, MySQL CDC, S3, Elasticsearch, MongoDB, BigQuery, …)를 Go로 직접 구현 — 별도 커넥터 프로세스 없음.
 - **병렬 처리**: Stage 단위 병렬 처리, 배치 최적화(workers 설정 가능).
-- **순수 Go**: 단일 바이너리, 외부 런타임 의존성 없음.
+- **순수 Go**: 정적 링크(`CGO_ENABLED=0`) 단일 바이너리 — JVM/Python 같은 별도 런타임 설치 불필요, libc 독립적(Alpine/musl에서도 동작). 단, 타깃 OS/아키텍처별 빌드 필요(linux/amd64, linux/arm64 등).
 - **Bento**: [Bento](https://github.com/warpstreamlabs/bento)(MIT, Benthos fork) 의존성은 향후 커넥터/Bloblang 재사용을 위한 어댑터 접점으로 두었으나 **현재 런타임 경로에는 없다** — 커넥터·변환은 모두 Conduix 자체 Go 구현. [ADR-0001](docs/adr/0001-bento-adoption.md) 참고.
 
 ## 주요 기능
@@ -328,7 +328,7 @@ conduix/
 ### 사전 요구사항
 
 - Go 1.21+
-- Node.js 18+
+- Node.js 20.19+ (web-ui build requires it)
 - Docker & Docker Compose
 - MySQL 8.0
 - Redis 7.0

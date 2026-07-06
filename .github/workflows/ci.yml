@@ -51,7 +51,8 @@ jobs:
         id: setup-node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          # Vite 8 requires Node 20.19+/22.12+ (Node 18 fails: CustomEvent not defined)
+          node-version: "22"
 
       - name: Cache node_modules
         id: cache-web

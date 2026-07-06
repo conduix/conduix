@@ -26,7 +26,7 @@ Input → [공통 Stage] → [Output별 PreStages] → Output
 ### Prerequisites
 
 - Go 1.26+
-- Node.js 18+
+- Node.js 20.19+ (web-ui build requires it)
 - Docker & Docker Compose
 - MySQL 8.0
 - Redis 7.0

@@ -10,6 +10,22 @@
 
 [English](README.md)
 
+## 30초 요약
+
+**무엇인가:** *커넥터 + 스트림/배치 변환 + 오케스트레이션*을 하나의 워크플로우로 묶은 Kubernetes-네이티브 데이터 파이프라인 플랫폼. Kafka Connect·Flink·Airflow를 각각 운영하지 않아도 된다.
+
+**무엇을 하나:** 소스에서 읽어 → 변환하고 → 하나 또는 여러 싱크에 (싱크별로 다른 변환을 적용해) 적재한다. **배치**든 **실시간**이든, **GUI 또는 YAML/API**(동일 모델)로 정의한다.
+
+- **소스 16종 / 싱크 9종** 내장 (Kafka, SQL, REST, MySQL CDC, 파일, S3, Elasticsearch, MongoDB, BigQuery, …).
+- **내장 변환 stage 21종** + 커스텀 로직: **JavaScript(빌드 없이 저장→실행)** 또는 **native Go 플러그인**(runner 이미지에 컴파일).
+- **한 소스 → 여러 싱크, 각각 다른 형태로**(Output별 PreStages), 라우팅(fan-out/condition/filter), 부모-자식 파이프라인.
+- **운영 기능 내장:** 서킷 브레이커, DLQ, retry+백오프, 고아 실행 감지, Prometheus 메트릭, 구조화 로깅.
+
+**언제 고르나:** 커넥터+변환+스케줄을 하나의 K8s-네이티브 플랫폼으로 통합하고, 운영자는 GUI로·엔지니어는 YAML로 같은 파이프라인을 다루며, 변환을 빠르게 반복하고 싶을 때.
+**언제 아닌가:** 대규모 상태 기반 exactly-once 스트림 연산(→ Flink), 범용 태스크 오케스트레이션(→ Airflow), PostgreSQL CDC(미지원 — Debezium/Kafka 경유).
+
+→ 전체 비교·선택 가이드: **[docs/COMPARISON.md](docs/COMPARISON.md)** · 아키텍처: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · 설계 결정: **[docs/adr/](docs/adr/)**
+
 ## 개요
 
 Conduix는 [Bento](https://github.com/warpstreamlabs/bento)(MIT 라이선스)의 검증된 커넥터와 병렬 처리 아키텍처를 결합한 확장 가능한 데이터 파이프라인 시스템입니다.

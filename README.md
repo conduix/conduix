@@ -10,6 +10,22 @@ Scalable Data Pipeline Platform with Parallel Processing
 
 [한국어](README.ko.md)
 
+## In 30 Seconds
+
+**What it is:** A Kubernetes-native data pipeline platform that unifies *connectors + stream/batch transformation + orchestration* into one workflow — so you don't run Kafka Connect, Flink, and Airflow as three separate stacks.
+
+**What you do with it:** Read from a source → transform → load into one or many sinks (each with its own per-output transforms), as either a **batch** job or a **realtime** stream, defined through a **GUI or YAML/API** (same model).
+
+- **16 sources / 9 sinks** built in (Kafka, SQL, REST, MySQL CDC, files, S3, Elasticsearch, MongoDB, BigQuery, …).
+- **21 built-in transform stages** + custom logic via **JavaScript (no build, edit→save→run)** or **native Go plugins** (compiled into the runner image).
+- **One source → many sinks, each shaped differently** (per-output PreStages), plus routing (fan-out/condition/filter) and parent–child pipelines.
+- **Ops built in:** circuit breaker, DLQ, retry+backoff, orphan-execution detection, Prometheus metrics, structured logging.
+
+**When to pick it:** you want to consolidate connector + transform + schedule into one K8s-native platform, let operators build pipelines in a GUI while engineers version them as YAML, and iterate transforms fast.
+**When not to:** heavy stateful exactly-once stream compute (→ Flink), general-purpose task orchestration (→ Airflow), or PostgreSQL CDC (not supported — route via Debezium/Kafka).
+
+→ Full comparison & selection guide: **[docs/COMPARISON.md](docs/COMPARISON.md)** · Architecture: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Design decisions: **[docs/adr/](docs/adr/)**
+
 ## Overview
 
 Conduix is a scalable data pipeline system that combines [Bento](https://github.com/warpstreamlabs/bento) (MIT License) proven connectors with parallel processing architecture.

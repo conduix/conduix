@@ -28,18 +28,19 @@
 
 ## 개요
 
-Conduix는 [Bento](https://github.com/warpstreamlabs/bento)(MIT 라이선스)의 검증된 커넥터와 병렬 처리 아키텍처를 결합한 확장 가능한 데이터 파이프라인 시스템입니다.
+Conduix는 native Go 커넥터, Stage 병렬 처리, 워크플로우 오케스트레이션을 하나로 묶은 Kubernetes-네이티브 데이터 파이프라인 플랫폼입니다.
 
-**하이브리드 아키텍처**:
-- **병렬 처리**: Stage 단위 병렬 처리, 배치 최적화
-- **Bento Connectors**: Kafka, Elasticsearch, S3 등 검증된 커넥터 재사용
-- **순수 Go**: 단일 바이너리, 외부 의존성 없음
+**아키텍처**:
+- **Native Go 커넥터**: 소스/싱크(Kafka, SQL, REST, MySQL CDC, S3, Elasticsearch, MongoDB, BigQuery, …)를 Go로 직접 구현 — 별도 커넥터 프로세스 없음.
+- **병렬 처리**: Stage 단위 병렬 처리, 배치 최적화(workers 설정 가능).
+- **순수 Go**: 단일 바이너리, 외부 런타임 의존성 없음.
+- **Bento**: [Bento](https://github.com/warpstreamlabs/bento)(MIT, Benthos fork) 의존성은 향후 커넥터/Bloblang 재사용을 위한 어댑터 접점으로 두었으나 **현재 런타임 경로에는 없다** — 커넥터·변환은 모두 Conduix 자체 Go 구현. [ADR-0001](docs/adr/0001-bento-adoption.md) 참고.
 
 ## 주요 기능
 
 - **병렬 배치 처리**: Stage는 항상 병렬 처리, Output은 bulk/individual 모드 선택
 - **Input/Stage/Output 분리**: 입력(Input), 변환(Stage), 출력(Output) 명확한 분리
-- **Bento 커넥터 통합**: Kafka, ES, S3, HTTP, NATS, AMQP 등 풍부한 커넥터
+- **풍부한 내장 커넥터**: 소스 16종 / 싱크 9종 — Kafka, SQL, REST/HTTP, MySQL CDC, 파일, K8s 로그, MQTT, WebSocket, SSE, SQS, RabbitMQ, Pub/Sub, Redis Stream; S3, GCS, Elasticsearch, MongoDB, BigQuery 등
 - **고가용성**: Redis 기반 체크포인트, 자동 장애 대응
 - **운영툴**: 웹 기반 파이프라인 설정, 모니터링, 스케줄링
 - **SSO 지원**: OAuth2/OIDC 기반 로그인
@@ -61,7 +62,7 @@ Conduix는 [Bento](https://github.com/warpstreamlabs/bento)(MIT 라이선스)의
 ┌─────────────────────────────────────────────────────────────┐
 │                   Pipeline Agent Cluster                     │
 │  ┌───────────────────────────────────────────────────┐      │
-│  │  Agent (Bento Connectors + 병렬 처리)              │      │
+│  │  Agent (Native 커넥터 + 병렬 처리)                 │      │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐           │      │
 │  │  │ Source  │→ │  Stage  │→ │ Output  │           │      │
 │  │  │ (Kafka) │  │ (병렬)  │  │  (ES)   │           │      │
@@ -309,7 +310,7 @@ stages:
 
 ```
 conduix/
-├── pipeline-core/     # 파이프라인 코어 (Actor 시스템, Bento 통합)
+├── pipeline-core/     # 파이프라인 코어 (GroupExecutor 실행 엔진, native 커넥터)
 ├── pipeline-worker/    # 파이프라인 실행 에이전트
 ├── control-plane/     # 운영툴 백엔드 API
 ├── web-ui/            # 운영툴 프론트엔드
@@ -394,7 +395,7 @@ pipelines:
       workers: 20
 ```
 
-### Flat 구조 (Bento 호환, 레거시)
+### Flat 구조 (레거시 — sources/transforms/sinks 포맷)
 
 ```yaml
 version: "1.0"

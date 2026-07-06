@@ -28,18 +28,19 @@ Scalable Data Pipeline Platform with Parallel Processing
 
 ## Overview
 
-Conduix is a scalable data pipeline system that combines [Bento](https://github.com/warpstreamlabs/bento) (MIT License) proven connectors with parallel processing architecture.
+Conduix is a scalable, Kubernetes-native data pipeline platform: native-Go connectors, parallel stage processing, and workflow orchestration in one system.
 
-**Hybrid Architecture**:
-- **Parallel Processing**: Stage-level parallel processing, batch optimization
-- **Bento Connectors**: Reuse proven connectors for Kafka, Elasticsearch, S3, etc.
-- **Pure Go**: Single binary, no external dependencies
+**Architecture**:
+- **Native-Go Connectors**: Built-in sources/sinks (Kafka, SQL, REST, MySQL CDC, S3, Elasticsearch, MongoDB, BigQuery, …) implemented in Go — no external connector process.
+- **Parallel Processing**: Stage-level parallel processing, batch optimization (configurable workers).
+- **Pure Go**: Single binary, no external runtime dependency.
+- **Bento**: The [Bento](https://github.com/warpstreamlabs/bento) (MIT, a Benthos fork) dependency is kept as an adapter seam for future connector/Bloblang reuse, but is not on the runtime path today — connectors and transforms are Conduix's own Go implementations. See [ADR-0001](docs/adr/0001-bento-adoption.md).
 
 ## Key Features
 
 - **Parallel Batch Processing**: Stage always parallel, Output selectable bulk/individual mode
 - **Input/Stage/Output Separation**: Clear separation of data ingestion (Input), transformation (Stage+PreStages), and storage (Output)
-- **Bento Connector Integration**: Rich connectors including Kafka, ES, S3, HTTP, NATS, AMQP
+- **Rich Built-in Connectors**: 16 sources / 9 sinks — Kafka, SQL, REST/HTTP, MySQL CDC, files, K8s logs, MQTT, WebSocket, SSE, SQS, RabbitMQ, Pub/Sub, Redis Stream; S3, GCS, Elasticsearch, MongoDB, BigQuery, and more
 - **High Availability**: Redis-based checkpoints, automatic fault handling
 - **Operations Tools**: Web-based pipeline configuration, monitoring, scheduling
 - **SSO Support**: OAuth2/OIDC-based login
@@ -61,7 +62,7 @@ Conduix is a scalable data pipeline system that combines [Bento](https://github.
 ┌─────────────────────────────────────────────────────────────┐
 │                   Pipeline Agent Cluster                     │
 │  ┌───────────────────────────────────────────────────┐      │
-│  │  Agent (Parallel Processing + Bento Connectors)   │      │
+│  │  Agent (Parallel Processing + Native Connectors)  │      │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐           │      │
 │  │  │  Input  │→ │  Stage  │→ │ Output  │           │      │
 │  │  │ (Kafka) │  │ (remap) │  │  (ES)   │           │      │
@@ -307,7 +308,7 @@ pipelines:
 
 ```
 conduix/
-├── pipeline-core/     # Pipeline core (Parallel processing, Bento integration)
+├── pipeline-core/     # Pipeline core (Parallel processing, native connectors)
 ├── pipeline-worker/    # Pipeline execution agent
 ├── control-plane/     # Operations tool backend API
 ├── web-ui/            # Operations tool frontend

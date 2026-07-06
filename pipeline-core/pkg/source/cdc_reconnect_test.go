@@ -21,7 +21,7 @@ func TestCDC_Reconnect_ExitsOnCtxCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { s.runCanalWithReconnect(ctx); close(done) }()
+	go func() { s.runWithReconnect(ctx); close(done) }()
 
 	// 잠깐 돌게 둔 뒤 취소 → 곧 탈출해야 함.
 	time.Sleep(300 * time.Millisecond)
@@ -48,7 +48,7 @@ func TestCDC_Reconnect_ExitsOnStop(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	go func() { s.runCanalWithReconnect(context.Background()); close(done) }()
+	go func() { s.runWithReconnect(context.Background()); close(done) }()
 
 	time.Sleep(300 * time.Millisecond)
 	s.mu.Lock()

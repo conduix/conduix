@@ -98,18 +98,20 @@ type InputV2 struct {
 	PollInterval    int      `yaml:"poll_interval,omitempty"` // milliseconds, default: 1000
 
 	// CDC (Change Data Capture)
-	Host     string   `yaml:"host,omitempty"`
-	Port     int      `yaml:"port,omitempty"`
-	Username string   `yaml:"username,omitempty"`
-	Password string   `yaml:"password,omitempty"`
-	Database string   `yaml:"database,omitempty"`
-	Tables   []string `yaml:"tables,omitempty"`    // tables to watch
-	ServerID uint32   `yaml:"server_id,omitempty"` // MySQL server ID for binlog
-	SlotName string   `yaml:"slot_name,omitempty"` // PostgreSQL replication slot
+	Host        string   `yaml:"host,omitempty"`
+	Port        int      `yaml:"port,omitempty"`
+	Username    string   `yaml:"username,omitempty"`
+	Password    string   `yaml:"password,omitempty"`
+	Database    string   `yaml:"database,omitempty"`
+	Tables      []string `yaml:"tables,omitempty"`      // tables to watch
+	ServerID    uint32   `yaml:"server_id,omitempty"`   // MySQL server ID for binlog
+	SlotName    string   `yaml:"slot_name,omitempty"`   // PostgreSQL replication slot
+	Publication string   `yaml:"publication,omitempty"` // PostgreSQL publication name
 	// CDC 시작 지점(checkpoint 없을 때). bulk 초기적재↔CDC 경계를 맞출 때 쓴다.
 	// StartGTID 가 있으면 우선, 없으면 StartPosition(file:pos), 둘 다 없으면 현재 위치부터.
 	StartPosition string `yaml:"start_position,omitempty"` // "binlog_file:pos" (MySQL)
 	StartGTID     string `yaml:"start_gtid,omitempty"`     // GTID set (MySQL)
+	StartLSN      string `yaml:"start_lsn,omitempty"`      // "0/1A2B3C4D" LSN (PostgreSQL)
 
 	// Database TLS (SQL, CDC 공통 - TLS 필드는 Kafka에서도 사용)
 	// DSN 대신 개별 필드로 TLS 설정 시 사용

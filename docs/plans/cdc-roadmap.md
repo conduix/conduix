@@ -23,7 +23,7 @@
 
 ## 남은 작업 (코드에서 확인된 gap 만)
 
-### [ ] #1 SQL 싱크의 CDC delete 반영 — 규모: 중, 우선순위: **최상**
+### [x] #1 SQL 싱크의 CDC delete 반영 — 규모: 중, 우선순위: **최상**
 
 **확인된 사실**: CDC 소스는 delete 이벤트를 `_cdc_type=delete` + `_old_data` + `_primary_key` 로 만들어 흘린다(`cdc.go` convertEventToRecord). 그러나 **SQL 싱크(`sql.go`)는 `_cdc_type` 을 읽지 않고 모든 레코드를 INSERT/upsert 한다**(grep 결과 `sql.go` 에 `_cdc_type`/delete 처리 0건).
 → **소스에서 행이 삭제되면 타깃에 그대로 남는다.** upsert 로 수렴하는 것은 insert/update 뿐, delete 는 반영 안 됨.
@@ -34,7 +34,7 @@
 - 옵션: delete 반영 on/off (soft-delete 표시만 원하는 경우 대비).
 - 테스트: delete 이벤트 → 타깃 행 삭제 확인.
 
-### [ ] #2 canal 연결 끊김 재연결 — 규모: 중
+### [x] #2 canal 연결 끊김 재연결 — 규모: 중
 
 **확인된 사실**: `cdc.go` Read 에서 `c.RunFrom(pos)` 가 에러나면 errorCh 로 보내고 goroutine 종료(재연결 로직 없음, `cdc.go:297-304`). DB 재시작·네트워크 순단 시 CDC 가 멈춘다.
 
@@ -44,7 +44,7 @@
 - 반복 실패는 서킷/에러로 종료(무한 재시도 방지).
 - 테스트: 연결 끊김 → 재연결 → committedPos 부터 재개.
 
-### [ ] #3 BLOB 바이너리 컬럼 처리 — 규모: 소
+### [x] #3 BLOB 바이너리 컬럼 처리 — 규모: 소
 
 **확인된 사실**: `rowToMap`(`cdc.go`)이 모든 `[]byte` 를 `string(b)` 로 강제 변환한다. TEXT/JSON 은 문제없지만 순수 바이너리(BLOB/BINARY)는 UTF-8 이 아니면 손상될 수 있다. (go-mysql 은 BLOB 를 `[]byte` 로 준다.)
 
@@ -53,7 +53,7 @@
 - TEXT/VARCHAR/JSON 은 기존대로 string.
 - 테스트: 바이너리 라운드트립(비UTF-8 바이트 보존).
 
-### [ ] #4 bulk↔CDC 경계 (CDC 시작 position 지정) — 규모: 소~중
+### [x] #4 bulk↔CDC 경계 (CDC 시작 position 지정) — 규모: 소~중
 
 **확인된 사실**: CDC config(`SourceV2`)에 시작 position/GTID 필드가 없다(kafka 의 `start_offset` 만 있고 cdc 용 없음). checkpoint 없으면 `GetMasterPos()`(현재 시점)부터 시작(`cdc.go`). 기존 데이터는 bulk 파이프라인이 적재하지만, "bulk 시작 시점부터 CDC" 를 맞출 수단이 없어 bulk 소요 시간 동안의 변경분이 누락될 수 있다.
 
@@ -62,15 +62,20 @@
 - 운영 가이드: bulk 시작 전 position 확보 → bulk 적재 → CDC 를 그 position 부터. 경계 중복은 upsert 로 흡수.
 - 테스트: 지정한 position/GTID 부터 시작.
 
-### [ ] #5 PostgreSQL CDC — 규모: 대
+### [x] #5 PostgreSQL CDC — 규모: 대
 
-**확인된 사실**: `NewCDCSource(driver=postgres)` 는 생성 시 조기 거부(`cdc.go:92-93`). openPostgreSQL 은 방어적 에러만(`cdc.go:231-234`).
+**구현**: `pglogrepl`(pgoutput proto v2) 논리복제로 구현(`cdc_postgres.go`).
+- 복제 연결(`replication=database`)로 스트림 수신, 별도 일반 연결로 퍼블리케이션 생성/확인.
+- slot/publication idempotent 생성(중복 42710/pg_publication 조회 가드).
+- LSN 기반 checkpoint(`committedLSN`, OffsetType="lsn"), standby status update 로 slot advance(소비 완료 LSN 만).
+- unchanged TOAST('u') 컬럼은 직전 행 값 재사용(null 오염 방지), NULL/text 구분.
+- replica identity 키(Flags==1) → `_primary_key(_columns)` 로 #1 delete 싱크와 연결.
+- `NewCDCSource(driver=postgres)` 조기 거부 제거, `type: cdc` + `driver: postgres` 로 MySQL 과 동일 인터페이스.
+- 시작 지점: `start_lsn`("0/1A2B3C4D").
 
-**완료 기준(DoD)**:
-- `pglogrepl` + replication slot + logical decoding 으로 변경 스트림 수신.
-- LSN 기반 checkpoint(committedPos 구조 확장).
-- slot 생성/정리(미정리 시 WAL 폭증) 처리.
-- 조기 거부 제거, MySQL CDC 와 동일 인터페이스.
+**테스트**: TOAST 재사용/NULL·text, PK 추출, LSN checkpoint 라운드트립, 드라이버 수용(단위). 실 스트림 e2e 는 K8s 환경 필요.
+
+**운영 전제**: `wal_level=logical`, 테이블 REPLICA IDENTITY(기본=PK; DELETE 반영 시 필수).
 
 ### [ ] #6 CDC 소스 중복 실행 방지 — 규모: 중
 

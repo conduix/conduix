@@ -120,8 +120,8 @@ func TestNewCDCSource_ServerID(t *testing.T) {
 	}
 }
 
-// PostgreSQL CDC는 미지원 — 생성 시점에 명확한 에러로 거부되어야 한다(실행 후 미동작 발견 방지).
-func TestNewCDCSource_PostgreSQLRejected(t *testing.T) {
+// PostgreSQL CDC는 이제 지원된다(pglogrepl 논리복제). 생성 시 pg 복제기가 세팅되어야 한다.
+func TestNewCDCSource_PostgreSQLAccepted(t *testing.T) {
 	cfg := config.SourceV2{
 		Type:     "cdc",
 		Driver:   "postgres",
@@ -133,8 +133,15 @@ func TestNewCDCSource_PostgreSQLRejected(t *testing.T) {
 		SlotName: "my_replication_slot",
 	}
 
-	if _, err := NewCDCSource(cfg); err == nil {
-		t.Fatal("expected PostgreSQL CDC to be rejected at construction, got nil error")
+	s, err := NewCDCSource(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error for PostgreSQL CDC: %v", err)
+	}
+	if s.pg == nil {
+		t.Fatal("expected pg replicator to be initialized")
+	}
+	if s.pg.slotName != "my_replication_slot" {
+		t.Errorf("slotName = %q, want my_replication_slot", s.pg.slotName)
 	}
 }
 

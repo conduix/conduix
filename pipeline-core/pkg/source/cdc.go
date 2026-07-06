@@ -17,9 +17,13 @@ import (
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
 	"github.com/go-mysql-org/go-mysql/schema"
+	"github.com/jackc/pglogrepl"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
+
+// timeNow 는 이벤트 타임스탬프/백오프 계산에 쓴다(테스트 대체 여지 확보).
+var timeNow = time.Now
 
 // CDCEventType CDC 이벤트 타입
 type CDCEventType string
@@ -34,15 +38,16 @@ const (
 // CDCSource CDC(Change Data Capture) 소스
 // MySQL binlog 또는 PostgreSQL WAL을 통해 변경 사항 캡처
 type CDCSource struct {
-	driver   string // mysql, postgres
-	host     string
-	port     uint16
-	username string
-	password string
-	database string
-	tables   []string // 감시할 테이블 목록 (빈 경우 전체)
-	serverID uint32   // MySQL server ID (binlog용)
-	slotName string   // PostgreSQL replication slot name
+	driver      string // mysql, postgres
+	host        string
+	port        uint16
+	username    string
+	password    string
+	database    string
+	tables      []string // 감시할 테이블 목록 (빈 경우 전체)
+	serverID    uint32   // MySQL server ID (binlog용)
+	slotName    string   // PostgreSQL replication slot name
+	publication string   // PostgreSQL publication name
 
 	// TLS 설정
 	tlsConfig *config.DBTLSConfig
@@ -57,6 +62,11 @@ type CDCSource struct {
 	committedPos  mysql.Position
 	curGTID       string // read-ahead GTID (OnPosSynced 갱신)
 	committedGTID string // 소비 완료된 GTID set (있으면 position 보다 우선 — 페일오버 강함)
+
+	// PostgreSQL 논리 복제 소비 완료 LSN. Read 소비 루프가 event.lsn 으로 갱신하고
+	// pg 복제기(postgresReplicator)가 standby update/재시작 시작점으로 읽는다.
+	committedLSN pglogrepl.LSN
+	pg           *postgresReplicator
 
 	// 이벤트 핸들러
 	eventCh chan *CDCEvent
@@ -82,21 +92,26 @@ type CDCEvent struct {
 	// (canal read-ahead 가 아니라, 파이프라인이 실제 소비한 위치).
 	pos  mysql.Position `json:"-"`
 	gtid string         `json:"-"`
+
+	// PostgreSQL 논리 복제 커밋 기준 LSN(MySQL 경로에선 0).
+	lsn pglogrepl.LSN `json:"-"`
 }
 
 // NewCDCSource CDC 소스 생성
 func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
 	// 드라이버 조기 검증: 미지원 드라이버는 실행 시작 전에 실패시킨다(미동작을 실행 후 발견 방지).
 	switch cfg.Driver {
-	case "mysql":
+	case "mysql", "postgres":
 		// 지원됨
-	case "postgres":
-		return nil, fmt.Errorf("PostgreSQL CDC is not supported; use MySQL CDC, or route Postgres changes through Kafka (e.g. Debezium) and use a kafka source")
 	default:
-		return nil, fmt.Errorf("unsupported CDC driver: %q (supported: mysql)", cfg.Driver)
+		return nil, fmt.Errorf("unsupported CDC driver: %q (supported: mysql, postgres)", cfg.Driver)
 	}
 
-	port := uint16(3306)
+	defaultPort := uint16(3306)
+	if cfg.Driver == "postgres" {
+		defaultPort = 5432
+	}
+	port := defaultPort
 	if cfg.Port > 0 {
 		port = uint16(cfg.Port)
 	}
@@ -107,23 +122,36 @@ func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
 	}
 
 	s := &CDCSource{
-		driver:    cfg.Driver,
-		host:      cfg.Host,
-		port:      port,
-		username:  cfg.Username,
-		password:  cfg.Password,
-		database:  cfg.Database,
-		tables:    cfg.Tables,
-		serverID:  serverID,
-		slotName:  cfg.SlotName,
-		tlsConfig: cfg.DBTLS,
-		eventCh:   make(chan *CDCEvent, 1000),
-		errorCh:   make(chan error, 10),
-		stopCh:    make(chan struct{}),
+		driver:      cfg.Driver,
+		host:        cfg.Host,
+		port:        port,
+		username:    cfg.Username,
+		password:    cfg.Password,
+		database:    cfg.Database,
+		tables:      cfg.Tables,
+		serverID:    serverID,
+		slotName:    cfg.SlotName,
+		publication: cfg.Publication,
+		tlsConfig:   cfg.DBTLS,
+		eventCh:     make(chan *CDCEvent, 1000),
+		errorCh:     make(chan error, 10),
+		stopCh:      make(chan struct{}),
 	}
 
 	// 시작 지점 지정(checkpoint 없을 때 시작점). bulk↔CDC 경계 맞춤용.
-	// committedPos/GTID 로 설정 → Read 가 이 값을 시작점으로 쓴다(checkpoint 복원과 동일 경로).
+	// committedPos/GTID(MySQL)·committedLSN(PostgreSQL)로 설정 → Read 가 이 값을 시작점으로 쓴다.
+	if cfg.Driver == "postgres" {
+		if cfg.StartLSN != "" {
+			lsn, err := pglogrepl.ParseLSN(cfg.StartLSN)
+			if err != nil {
+				return nil, fmt.Errorf("invalid start_lsn %q: %w", cfg.StartLSN, err)
+			}
+			s.committedLSN = lsn
+		}
+		s.pg = newPostgresReplicator(s)
+		return s, nil
+	}
+
 	if cfg.StartGTID != "" {
 		if _, err := mysql.ParseMysqlGTIDSet(cfg.StartGTID); err != nil {
 			return nil, fmt.Errorf("invalid start_gtid %q: %w", cfg.StartGTID, err)
@@ -156,7 +184,11 @@ func (s *CDCSource) Open(ctx context.Context) error {
 	case "mysql":
 		return s.openMySQL()
 	case "postgres":
-		return s.openPostgreSQL()
+		// pg 는 복제 연결을 Read(run) 시점에 연다(재연결마다 새 연결 필요). 여기선 검증만.
+		if s.pg == nil {
+			s.pg = newPostgresReplicator(s)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported CDC driver: %s", s.driver)
 	}
@@ -253,11 +285,6 @@ func buildCDCTLSConfig(cfg *config.DBTLSConfig) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func (s *CDCSource) openPostgreSQL() error {
-	// NewCDCSource에서 postgres를 이미 거부하므로 여기 도달하지 않는다(방어적 유지).
-	return fmt.Errorf("PostgreSQL CDC is not supported")
-}
-
 func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 	records := make(chan Record, 100)
 	errs := make(chan error, 1)
@@ -272,8 +299,8 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 	}
 	s.mu.Unlock()
 
-	// MySQL binlog 시작 (연결 끊김 시 지수 백오프 재연결)
-	go s.runCanalWithReconnect(ctx)
+	// 변경 스트림 시작 (연결 끊김 시 지수 백오프 재연결). 드라이버별 1회 실행 함수만 다르다.
+	go s.runWithReconnect(ctx)
 
 	// 이벤트 변환 및 전달
 	go func() {
@@ -298,6 +325,14 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 					if event.gtid != "" {
 						s.committedGTID = event.gtid
 					}
+					if event.lsn != 0 {
+						s.committedLSN = event.lsn
+						if s.pg != nil {
+							s.pg.mu.Lock()
+							s.pg.committedLSN = event.lsn
+							s.pg.mu.Unlock()
+						}
+					}
 					s.mu.Unlock()
 				case <-ctx.Done():
 					return
@@ -316,10 +351,10 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 	return records, errs
 }
 
-// runCanalWithReconnect 는 canal 을 실행하고, 연결이 끊기면(RunFrom/StartFromGTID 반환)
-// 지수 백오프로 재연결한다. 재개는 committedPos/committedGTID 부터라 유실이 없다.
+// runWithReconnect 는 변경 스트림(MySQL canal / PostgreSQL 논리복제)을 실행하고,
+// 연결이 끊기면 지수 백오프로 재연결한다. 재개는 committedPos/GTID/LSN 부터라 유실이 없다.
 // ctx 취소·stopCh 종료·연속 실패 상한 도달 시 멈춘다.
-func (s *CDCSource) runCanalWithReconnect(ctx context.Context) {
+func (s *CDCSource) runWithReconnect(ctx context.Context) {
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 	const maxConsecutiveFailures = 10
@@ -344,7 +379,7 @@ func (s *CDCSource) runCanalWithReconnect(ctx context.Context) {
 		default:
 		}
 
-		err := s.runCanalOnce(ctx)
+		err := s.runOnce(ctx)
 		if err == nil {
 			// 정상 종료(Stop/ctx) — 재연결 불필요.
 			return
@@ -352,11 +387,11 @@ func (s *CDCSource) runCanalWithReconnect(ctx context.Context) {
 
 		failures++
 		if failures >= maxConsecutiveFailures {
-			s.sendError(fmt.Errorf("cdc: giving up after %d consecutive canal failures: %w", failures, err))
+			s.sendError(fmt.Errorf("cdc: giving up after %d consecutive %s failures: %w", failures, s.driver, err))
 			return
 		}
-		slog.Default().Warn("CDC canal disconnected, will reconnect",
-			"host", s.host, "attempt", failures, "backoff", backoff, "error", err)
+		slog.Default().Warn("CDC stream disconnected, will reconnect",
+			"driver", s.driver, "host", s.host, "attempt", failures, "backoff", backoff, "error", err)
 
 		// 백오프 대기(취소 가능)
 		t := time.NewTimer(backoff)
@@ -374,6 +409,17 @@ func (s *CDCSource) runCanalWithReconnect(ctx context.Context) {
 			backoff = maxBackoff
 		}
 	}
+}
+
+// runOnce 는 드라이버별 변경 스트림을 1회 실행(블로킹)한다. 반환 nil=정상 종료, err=끊김.
+func (s *CDCSource) runOnce(ctx context.Context) error {
+	if s.driver == "postgres" {
+		if s.pg == nil {
+			s.pg = newPostgresReplicator(s)
+		}
+		return s.pg.run(ctx)
+	}
+	return s.runCanalOnce(ctx)
 }
 
 // runCanalOnce 는 canal 을 committedPos/GTID 부터 1회 실행(블로킹)한다.
@@ -503,6 +549,19 @@ func (s *CDCSource) GetSourceCheckpoints() []*SourceCheckpoint {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// PostgreSQL 은 LSN 하나로 위치를 표현한다(MySQL 의 file:pos+GTID 와 다름).
+	if s.driver == "postgres" {
+		return []*SourceCheckpoint{
+			{
+				PartitionKey: fmt.Sprintf("%s:lsn", s.database),
+				OffsetValue:  s.committedLSN.String(),
+				OffsetType:   "lsn",
+				RecordCount:  int64(s.committedLSN),
+				UpdatedAt:    time.Now(),
+			},
+		}
+	}
+
 	// checkpoint 는 read-ahead(s.position)가 아니라 committedPos(파이프라인이 실제 소비한 위치)를
 	// 저장한다. 아직 소비 안 된 이벤트가 아직 커밋되지 않아야 재시작 시 다시 읽어 유실을 막는다.
 	cp := s.committedPos
@@ -541,6 +600,21 @@ func (s *CDCSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error 
 	defer s.mu.Unlock()
 
 	for _, cp := range checkpoints {
+		if cp.OffsetType == "lsn" {
+			lsn, err := pglogrepl.ParseLSN(cp.OffsetValue)
+			if err != nil {
+				slog.Default().Error("CDC failed to parse LSN checkpoint", "host", s.host, "lsn", cp.OffsetValue, "error", err)
+				continue
+			}
+			s.committedLSN = lsn
+			if s.pg != nil {
+				s.pg.mu.Lock()
+				s.pg.committedLSN = lsn
+				s.pg.mu.Unlock()
+			}
+			slog.Default().Info("CDC restored LSN checkpoint", "host", s.host, "lsn", cp.OffsetValue)
+			continue
+		}
 		if cp.OffsetType == "gtid" {
 			s.committedGTID = cp.OffsetValue
 			s.curGTID = cp.OffsetValue
@@ -777,15 +851,16 @@ func getPrimaryKeyColumns(table *schema.Table) []string {
 
 // CDCConfig CDC 설정 구조체 (JSON 직렬화용)
 type CDCConfig struct {
-	Driver   string   `json:"driver"`
-	Host     string   `json:"host"`
-	Port     int      `json:"port"`
-	Username string   `json:"username"`
-	Password string   `json:"password"`
-	Database string   `json:"database"`
-	Tables   []string `json:"tables"`
-	ServerID uint32   `json:"server_id"`
-	SlotName string   `json:"slot_name"`
+	Driver      string   `json:"driver"`
+	Host        string   `json:"host"`
+	Port        int      `json:"port"`
+	Username    string   `json:"username"`
+	Password    string   `json:"password"`
+	Database    string   `json:"database"`
+	Tables      []string `json:"tables"`
+	ServerID    uint32   `json:"server_id"`
+	SlotName    string   `json:"slot_name"`
+	Publication string   `json:"publication"`
 }
 
 // ToJSON 설정을 JSON으로 직렬화

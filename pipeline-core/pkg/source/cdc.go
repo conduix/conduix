@@ -248,62 +248,8 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 	}
 	s.mu.Unlock()
 
-	// MySQL binlog 시작
-	go func() {
-		s.mu.RLock()
-		c := s.canal
-		pos := s.position
-		gtidStr := s.committedGTID
-		s.mu.RUnlock()
-
-		if c == nil {
-			errs <- fmt.Errorf("canal not initialized")
-			close(records)
-			close(errs)
-			return
-		}
-
-		// GTID 가 복원돼 있으면 그걸로 시작(페일오버·binlog 교체에 강함). 없으면 position.
-		if gtidStr != "" {
-			gtidSet, err := mysql.ParseMysqlGTIDSet(gtidStr)
-			if err != nil {
-				errs <- fmt.Errorf("failed to parse restored GTID %q: %w", gtidStr, err)
-				close(records)
-				close(errs)
-				return
-			}
-			go func() {
-				if err := c.StartFromGTID(gtidSet); err != nil {
-					select {
-					case errs <- fmt.Errorf("canal run(gtid) error: %w", err):
-					default:
-					}
-				}
-			}()
-			return
-		}
-
-		// Position이 설정되어 있으면 해당 위치부터, 아니면 현재 위치부터
-		if pos.Name == "" {
-			currentPos, err := c.GetMasterPos()
-			if err != nil {
-				errs <- fmt.Errorf("failed to get master position: %w", err)
-				close(records)
-				close(errs)
-				return
-			}
-			pos = currentPos
-		}
-
-		go func() {
-			if err := c.RunFrom(pos); err != nil {
-				select {
-				case errs <- fmt.Errorf("canal run error: %w", err):
-				default:
-				}
-			}
-		}()
-	}()
+	// MySQL binlog 시작 (연결 끊김 시 지수 백오프 재연결)
+	go s.runCanalWithReconnect(ctx)
 
 	// 이벤트 변환 및 전달
 	go func() {
@@ -344,6 +290,119 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 	}()
 
 	return records, errs
+}
+
+// runCanalWithReconnect 는 canal 을 실행하고, 연결이 끊기면(RunFrom/StartFromGTID 반환)
+// 지수 백오프로 재연결한다. 재개는 committedPos/committedGTID 부터라 유실이 없다.
+// ctx 취소·stopCh 종료·연속 실패 상한 도달 시 멈춘다.
+func (s *CDCSource) runCanalWithReconnect(ctx context.Context) {
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+	const maxConsecutiveFailures = 10
+	failures := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		s.mu.RLock()
+		stopCh := s.stopCh
+		running := s.running
+		s.mu.RUnlock()
+		if !running {
+			return
+		}
+		select {
+		case <-stopCh:
+			return
+		default:
+		}
+
+		err := s.runCanalOnce(ctx)
+		if err == nil {
+			// 정상 종료(Stop/ctx) — 재연결 불필요.
+			return
+		}
+
+		failures++
+		if failures >= maxConsecutiveFailures {
+			s.sendError(fmt.Errorf("cdc: giving up after %d consecutive canal failures: %w", failures, err))
+			return
+		}
+		slog.Default().Warn("CDC canal disconnected, will reconnect",
+			"host", s.host, "attempt", failures, "backoff", backoff, "error", err)
+
+		// 백오프 대기(취소 가능)
+		t := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-stopCh:
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+// runCanalOnce 는 canal 을 committedPos/GTID 부터 1회 실행(블로킹)한다.
+// 재연결을 위해 매번 canal 을 새로 만든다(끊긴 canal 은 재사용 불가).
+// 반환: nil=정상 종료(Stop/ctx), err=연결 실패/끊김.
+func (s *CDCSource) runCanalOnce(ctx context.Context) error {
+	// 이전 canal 정리 후 새로 생성
+	s.mu.Lock()
+	if s.canal != nil {
+		s.canal.Close()
+		s.canal = nil
+	}
+	s.mu.Unlock()
+	if err := s.openMySQL(); err != nil {
+		return fmt.Errorf("reopen canal: %w", err)
+	}
+
+	s.mu.RLock()
+	c := s.canal
+	gtidStr := s.committedGTID
+	pos := s.committedPos
+	if pos.Name == "" {
+		pos = s.position
+	}
+	s.mu.RUnlock()
+	if c == nil {
+		return fmt.Errorf("canal not initialized")
+	}
+
+	// GTID 우선(페일오버·binlog 교체에 강함), 없으면 position.
+	if gtidStr != "" {
+		gtidSet, err := mysql.ParseMysqlGTIDSet(gtidStr)
+		if err != nil {
+			return fmt.Errorf("parse GTID %q: %w", gtidStr, err)
+		}
+		return c.StartFromGTID(gtidSet) // 블로킹: 끊기면 err, Close 되면 nil
+	}
+	if pos.Name == "" {
+		currentPos, err := c.GetMasterPos()
+		if err != nil {
+			return fmt.Errorf("get master position: %w", err)
+		}
+		pos = currentPos
+	}
+	return c.RunFrom(pos) // 블로킹
+}
+
+// sendError 는 fatal 에러를 errorCh 로 보낸다(Read 소비 루프가 errs 로 전달).
+func (s *CDCSource) sendError(err error) {
+	select {
+	case s.errorCh <- err:
+	default:
+	}
 }
 
 func (s *CDCSource) convertEventToRecord(event *CDCEvent) Record {

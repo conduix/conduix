@@ -20,7 +20,7 @@ Status 값: `Accepted`(현행) / `Superseded by ADR-N`(대체됨) / `Proposed` /
 | [0001](0001-bento-adoption.md) | Bento(Benthos fork) 채택과 실제 사용 범위 | Accepted (제한적) | 라이선스 안전한 MIT fork를 의존성으로 두되, 커넥터는 자체 Go 구현 |
 | [0002](0002-remove-actor-engine.md) | Actor 실행 엔진 제거, GroupExecutor 단일화 | Accepted | 도달 불가능한 이중 실행 엔진(~4,700 LOC) 제거 |
 | [0003](0003-plugin-architecture-evolution.md) | 플러그인 아키텍처 V2→V3→V4 진화 | Accepted (V4) | Docker→gRPC go-plugin→인프로세스(built-in + JS + native Go) |
-| [0004](0004-cdc-debezium-parity.md) | CDC를 Debezium 없이 안전하게 | In progress | 안전성(offset/GTID/DDL/backpressure) 완료, 스냅샷·PG·HA 로드맵 |
+| [0004](0004-cdc-safety.md) | CDC 안전성(backpressure·offset·GTID·DDL) | Accepted | MySQL 변경분 유실 없이 단독 처리. 남은 스냅샷·PG·HA는 [plans/cdc-roadmap](../plans/cdc-roadmap.md) |
 
 ## 관련 문서
 - [EXECUTION_TOPOLOGY_INTENT.md](../EXECUTION_TOPOLOGY_INTENT.md) — 실행 토폴로지 결정(D1~D6). ADR 이전에 작성됐으나 사실상 ADR 역할.

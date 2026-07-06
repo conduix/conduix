@@ -24,6 +24,7 @@
 
 ### 현행 작업
 - [REMAINING_WORK_CHECKLIST.md](REMAINING_WORK_CHECKLIST.md) — 남은 작업 체크리스트
+- [plans/](plans/) — 대규모 작업의 실행 계획(목표·범위·단계·완료기준). 예: `plans/cdc-roadmap.md`
 
 > 현재 지원 기능·구현 현황은 [ARCHITECTURE.md](ARCHITECTURE.md)를 본다. 시점 스냅샷 문서는 archive에 있다.
 

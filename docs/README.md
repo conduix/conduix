@@ -11,6 +11,7 @@
 ## 현재 유효 문서
 
 ### 아키텍처 · 설계
+- [adr/](adr/) — **Architecture Decision Records**: 주요 결정의 "왜"와 트레이드오프 (Bento 채택 / Actor 제거 / 플러그인 V2→V4)
 - [design-v2.md](design-v2.md) — 파이프라인 근간 설계(배치/실시간, 소스, Input→Stage→Output 모델)
 - [EXECUTION_TOPOLOGY_INTENT.md](EXECUTION_TOPOLOGY_INTENT.md) — **실행 토폴로지 설계 결정(D1~D6)**: 멀티 K8s 위임 구조의 의도·트레이드오프
 - [PLUGIN_ARCHITECTURE_V4.md](PLUGIN_ARCHITECTURE_V4.md) — **현재 플러그인 아키텍처(V4)**: native Go stage 레지스트리 + goja 스크립트 stage

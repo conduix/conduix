@@ -5,19 +5,21 @@
 
 ## 먼저 읽기
 
+- **[COMPARISON.md](COMPARISON.md) — 왜 Conduix인가: Airflow/Flink/Kafka Connect/NiFi 대비 선택 가이드 (신규 사용자·의사결정자용)**
 - **[ARCHITECTURE.md](ARCHITECTURE.md) — 프로젝트 가치·설계·구현 핵심 요약 (단일 진입점)**
 
 ## 현재 유효 문서
 
 ### 아키텍처 · 설계
 - [design-v2.md](design-v2.md) — 파이프라인 근간 설계(배치/실시간, 소스, Input→Stage→Output 모델)
+- [EXECUTION_TOPOLOGY_INTENT.md](EXECUTION_TOPOLOGY_INTENT.md) — **실행 토폴로지 설계 결정(D1~D6)**: 멀티 K8s 위임 구조의 의도·트레이드오프
 - [PLUGIN_ARCHITECTURE_V4.md](PLUGIN_ARCHITECTURE_V4.md) — **현재 플러그인 아키텍처(V4)**: native Go stage 레지스트리 + goja 스크립트 stage
 - [STAGE_SCHEMA_ARCHITECTURE.md](STAGE_SCHEMA_ARCHITECTURE.md) — Stage 스키마 기반 GUI 자동생성 시스템
 
 ### 참조 · 가이드
 - [STAGE_SCHEMA_USER_GUIDE.md](STAGE_SCHEMA_USER_GUIDE.md) — 새 Stage 추가 가이드
-- [STAGE_IMPLEMENTATION_STATUS.md](STAGE_IMPLEMENTATION_STATUS.md) — 내장 Stage 구현 현황
 - [standalone-usage.md](standalone-usage.md) — pipeline-core 단독 실행 가이드
+  (내장 Stage 구현 현황 스냅샷은 archive/STAGE_IMPLEMENTATION_STATUS.md — 현행은 ARCHITECTURE.md)
 
 ### 현행 작업
 - [REMAINING_WORK_CHECKLIST.md](REMAINING_WORK_CHECKLIST.md) — 남은 작업 체크리스트

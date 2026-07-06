@@ -28,6 +28,7 @@ const (
 	CDCEventInsert CDCEventType = "insert"
 	CDCEventUpdate CDCEventType = "update"
 	CDCEventDelete CDCEventType = "delete"
+	CDCEventDDL    CDCEventType = "ddl" // 스키마 변경(ALTER/CREATE/DROP/RENAME)
 )
 
 // CDCSource CDC(Change Data Capture) 소스
@@ -595,6 +596,39 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 		}
 	}
 
+	return nil
+}
+
+// OnDDL 은 스키마 변경(ALTER/CREATE/DROP/RENAME)을 감지한다.
+// canal 이 스키마 캐시를 갱신하므로 컬럼 매핑은 자동 갱신되지만, 스키마 변경이 조용히 무시되지 않도록
+// DDL 이벤트를 파이프라인에 흘리고(type=ddl) 로그로 남긴다(downstream 이 스키마 진화를 인지 가능).
+func (h *mysqlEventHandler) OnDDL(header *replication.EventHeader, nextPos mysql.Position, queryEvent *replication.QueryEvent) error {
+	h.source.mu.RLock()
+	running := h.source.running
+	stopCh := h.source.stopCh
+	pos := h.source.position
+	gtid := h.source.curGTID
+	h.source.mu.RUnlock()
+	if !running || queryEvent == nil {
+		return nil
+	}
+
+	ddlSQL := string(queryEvent.Query)
+	schema := string(queryEvent.Schema)
+	slog.Default().Info("CDC schema change (DDL)", "host", h.source.host, "schema", schema, "query", ddlSQL)
+
+	event := &CDCEvent{
+		Type:      CDCEventDDL,
+		Database:  schema,
+		Timestamp: time.Now(),
+		Data:      map[string]any{"ddl": ddlSQL},
+		pos:       pos,
+		gtid:      gtid,
+	}
+	select {
+	case h.source.eventCh <- event:
+	case <-stopCh:
+	}
 	return nil
 }
 

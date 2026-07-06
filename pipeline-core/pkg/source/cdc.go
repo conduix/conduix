@@ -711,14 +711,16 @@ func (h *mysqlEventHandler) String() string {
 	return "CDCSourceEventHandler"
 }
 
-// rowToMap 행 데이터를 map으로 변환
+// rowToMap 행 데이터를 map으로 변환.
+// []byte 는 텍스트 컬럼(TEXT/VARCHAR/JSON 등)에서만 string 으로 변환한다.
+// 바이너리 컬럼(BLOB/BINARY/VARBINARY, TYPE_BINARY)은 string 강제 시 비UTF-8 바이트가
+// 손상되므로 원본 []byte 를 유지한다(직렬화/싱크가 base64 등으로 처리).
 func rowToMap(columns []schema.TableColumn, row []any) map[string]any {
 	data := make(map[string]any)
 	for i, col := range columns {
 		if i < len(row) {
 			val := row[i]
-			// byte slice를 string으로 변환
-			if b, ok := val.([]byte); ok {
+			if b, ok := val.([]byte); ok && col.Type != schema.TYPE_BINARY {
 				val = string(b)
 			}
 			data[col.Name] = val

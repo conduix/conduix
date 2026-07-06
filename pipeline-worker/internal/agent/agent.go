@@ -57,6 +57,9 @@ type Agent struct {
 	redisHealthy    bool
 	healthMu        sync.RWMutex
 
+	// claimRenewInterval: claim 갱신 주기(0이면 기본 claimRenewInterval). 테스트에서 단축용.
+	claimRenewEvery time.Duration
+
 	// batch 위임: control-plane이 이 cluster에 batch 워크플로우 실행을 위임하면
 	// worker가 자기 cluster에 K8s Job을 생성한다. K8s 클라이언트가 없는 환경(로컬 등)에서는 nil.
 	jobManager   *k8s.JobManager
@@ -725,6 +728,18 @@ func (a *Agent) getJobManager() *k8s.JobManager {
 	return a.jobManager
 }
 
+// claim TTL/갱신 주기. CDC 같은 장기 실행은 실행 시간이 TTL 을 넘으므로 반드시 주기 갱신이
+// 필요하다(갱신 없이 만료되면 다른 에이전트가 같은 소스를 잡아 중복 실행 — binlog/slot 이중 소비).
+// 갱신 주기는 TTL 의 1/3 로 두 번 놓쳐도 만료 전 복구 여지를 남긴다.
+const (
+	claimTTL           = 30 * time.Second
+	claimRenewInterval = claimTTL / 3
+)
+
+func executionClaimKey(executionID string) string {
+	return fmt.Sprintf("execution:claim:%s", executionID)
+}
+
 // claimExecution은 Redis SETNX로 execution 소유권을 원자적으로 획득한다.
 // true면 이 에이전트가 실행 담당이다. Redis 미가용 시 false(실행 안 함) — 중복보다 미실행이 안전.
 // ExecutionID가 없으면(레거시/브로드캐스트) claim 없이 true (기존 동작 보존).
@@ -737,14 +752,92 @@ func (a *Agent) claimExecution(executionID string) bool {
 		return true
 	}
 
-	key := fmt.Sprintf("execution:claim:%s", executionID)
-	// TTL은 실행 최대 시간(10분)보다 넉넉히. 담당 에이전트 크래시 시 만료되어 재배치 가능.
-	acquired, err := a.redisClient.SetNX(a.ctx, key, a.ID, 15*time.Minute)
+	// TTL 짧게(claimTTL) 두고 실행 중 renewClaim 으로 연장. 크래시 시 빠르게 만료되어 재배치.
+	acquired, err := a.redisClient.SetNX(a.ctx, executionClaimKey(executionID), a.ID, claimTTL)
 	if err != nil {
 		slog.Error("failed to claim execution, skipping to avoid duplicate", "error", err, "execution_id", executionID, "agent_id", a.ID)
 		return false
 	}
 	return acquired
+}
+
+// renewClaim은 이 에이전트가 여전히 소유한 claim의 TTL을 연장한다.
+// 반환 false = 소유권 상실(다른 에이전트가 가져갔거나 만료 후 회수됨) → 호출자는 실행을 멈춰야 한다.
+// standalone(Redis nil)/executionID 없음은 항상 true(소유 전제 유지).
+func (a *Agent) renewClaim(executionID string) bool {
+	if executionID == "" || a.redisClient == nil {
+		return true
+	}
+
+	key := executionClaimKey(executionID)
+	owner, err := a.redisClient.Get(a.ctx, key)
+	if err == nil && owner == a.ID {
+		// 여전히 우리 소유 → TTL 연장.
+		if err := a.redisClient.Set(a.ctx, key, a.ID, claimTTL); err != nil {
+			slog.Warn("failed to renew claim TTL, will retry next tick", "error", err, "execution_id", executionID, "agent_id", a.ID)
+			return true // 일시적 오류는 즉시 상실로 보지 않음(다음 tick 재시도). 만료되면 소유자 부재로 회수.
+		}
+		return true
+	}
+	if err == nil && owner != "" && owner != a.ID {
+		slog.Warn("claim taken over by another agent, stopping", "execution_id", executionID, "current_owner", owner, "agent_id", a.ID)
+		return false
+	}
+
+	// owner 비어있음(키 만료/삭제): 우리가 재획득 시도. 성공하면 계속, 실패하면 남이 가져간 것.
+	reacquired, sErr := a.redisClient.SetNX(a.ctx, key, a.ID, claimTTL)
+	if sErr != nil {
+		slog.Warn("failed to reacquire claim, will retry next tick", "error", sErr, "execution_id", executionID, "agent_id", a.ID)
+		return true // Redis 순단은 즉시 중단시키지 않음(중단이 곧 중복은 아님; 다음 tick 판정).
+	}
+	if !reacquired {
+		slog.Warn("claim lost and reacquire failed, stopping", "execution_id", executionID, "agent_id", a.ID)
+		return false
+	}
+	return true
+}
+
+// releaseClaim은 실행 종료 시 claim을 해제해 TTL 대기 없이 즉시 재배치 가능하게 한다.
+// 소유자 확인 없이 Del 하지 않도록, 우리 소유일 때만 해제한다(다른 에이전트 claim 삭제 방지).
+func (a *Agent) releaseClaim(executionID string) {
+	if executionID == "" || a.redisClient == nil {
+		return
+	}
+	key := executionClaimKey(executionID)
+	if owner, err := a.redisClient.Get(a.ctx, key); err == nil && owner == a.ID {
+		if err := a.redisClient.Del(a.ctx, key); err != nil {
+			slog.Warn("failed to release claim (will expire via TTL)", "error", err, "execution_id", executionID)
+		}
+	}
+}
+
+// claimRenewalLoop은 실행 ctx가 끝날 때까지 주기적으로 claim을 갱신한다.
+// 소유권 상실 시 cancel()로 실행 ctx를 취소해 소스(CDC 포함)를 멈춘다.
+// standalone/executionID 없음은 갱신이 항상 true라 취소되지 않는다(단일 인스턴스 전제).
+func (a *Agent) claimRenewalLoop(ctx context.Context, cancel context.CancelFunc, executionID string) {
+	if executionID == "" || a.redisClient == nil {
+		return
+	}
+	interval := a.claimRenewEvery
+	if interval <= 0 {
+		interval = claimRenewInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !a.renewClaim(executionID) {
+				slog.Error("execution claim lost, cancelling to prevent duplicate execution",
+					"execution_id", executionID, "agent_id", a.ID)
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 // executeGroup 파이프라인 그룹 실행
@@ -786,11 +879,12 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	}
 	a.execMu.Unlock()
 
-	// 함수 종료 시 실행 추적 제거
+	// 함수 종료 시 실행 추적 제거 + claim 해제(즉시 재배치 가능).
 	defer func() {
 		a.execMu.Lock()
 		delete(a.runningExecs, cmd.ExecutionID)
 		a.execMu.Unlock()
+		a.releaseClaim(cmd.ExecutionID)
 	}()
 
 	// 실행 시작 (타임아웃은 설정값, 미설정 시 기본 10분)
@@ -800,6 +894,11 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
 	defer cancel()
+
+	// claim 갱신 루프: 소유권을 잃으면(다른 에이전트 인수/만료 후 회수 실패) ctx 를 취소해
+	// 실행을 멈춘다. CDC 소스는 이 ctx 를 관측하므로 binlog/slot 이중 소비를 막는다.
+	// 새 소유자는 checkpoint(committedPos/LSN)부터 재개하므로 유실 없이 이어받는다.
+	go a.claimRenewalLoop(ctx, cancel, cmd.ExecutionID)
 
 	_, err := groupExecutor.Start(ctx, cmd.TriggeredBy)
 	if err != nil {
@@ -828,7 +927,12 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Error("group execution timed out", "name", workflow.Name, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
+			// 타임아웃(DeadlineExceeded)과 claim 상실(Canceled)을 구분해 보고한다.
+			reason := "execution timed out"
+			if ctx.Err() == context.Canceled {
+				reason = "execution stopped: claim lost (another agent took over)"
+			}
+			slog.Error("group execution ended", "reason", reason, "name", workflow.Name, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 			_ = groupExecutor.Stop()
 
 			completedAt := time.Now()
@@ -838,7 +942,7 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 				Status:       types.PipelineGroupStatusError,
 				StartedAt:    startTime,
 				CompletedAt:  &completedAt,
-				ErrorMessage: "execution timed out",
+				ErrorMessage: reason,
 			}
 			if err := a.reportGroupExecutionResult(executionResult); err != nil {
 				slog.Error("failed to report group execution result", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)

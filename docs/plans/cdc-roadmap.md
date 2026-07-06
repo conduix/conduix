@@ -77,14 +77,17 @@
 
 **운영 전제**: `wal_level=logical`, 테이블 REPLICA IDENTITY(기본=PK; DELETE 반영 시 필수).
 
-### [ ] #6 CDC 소스 중복 실행 방지 — 규모: 중
+### [x] #6 CDC 소스 중복 실행 방지 — 규모: 중
 
-**확인된 사실**: CDC 소스 자체에 단일 실행 보장이 없다(`cdc.go` 에 claim/leader 로직 없음). 현재는 상위 파이프라인 레벨 SETNX claim 에 의존. 같은 binlog 를 두 인스턴스가 읽으면 중복 이벤트.
+**확인된 사실(수정 전)**: SETNX claim(`agent.go`)이 15분 TTL 로 **1회 획득 후 갱신 안 됨**. CDC 는 장기 실행이라 TTL 만료 후 다른 에이전트가 같은 execution 을 재획득 → 같은 binlog/slot 이중 소비(중복 이벤트).
 
-**완료 기준(DoD)**:
-- CDC 소스 lifecycle 에 claim 결합(리더만 canal 실행).
-- claim 상실 시 정지, 재획득 시 committedPos 부터 재개.
-- 테스트: 리더 교체 시 중복 없음.
+**구현**:
+- claim TTL 을 30s 로 줄이고 실행 중 `claimRenewalLoop` 이 TTL/3 마다 갱신(`agent.go`).
+- 소유권 상실(다른 에이전트 인수 / 만료 후 회수 실패) 시 실행 ctx 를 cancel → CDC 소스가 ctx 관측해 정지(canal/pg 복제 중단). 새 소유자는 checkpoint(committedPos/GTID/LSN)부터 재개.
+- 실행 종료 시 `releaseClaim`(우리 소유일 때만 Del)로 TTL 대기 없이 즉시 재배치.
+- Redis 순단은 즉시 중단 아님(다음 tick 재시도) — false positive 방지. 종료 사유를 timeout↔claim-lost 로 구분 보고.
+
+**테스트**(miniredis): 획득/갱신, 타 에이전트 인수 시 정지, 만료 후 재획득, 소유자만 해제, 갱신루프의 ctx cancel, standalone 항상 소유.
 
 ---
 

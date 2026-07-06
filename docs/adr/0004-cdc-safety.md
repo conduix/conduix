@@ -6,7 +6,7 @@
 
 ## Context (문제)
 
-Conduix MySQL CDC 는 소스 DB(binlog)가 진실의 원천이므로, 이론상 유실 없이 처리할 수 있어야 한다(처리 안 된 offset 을 다시 읽으면 됨). 그러나 구현에 세 가지 결함이 있어 실제로는 유실·정확성 문제가 있었다:
+Conduix MySQL CDC 는 소스 DB(binlog)가 진실의 원천이므로, 이론상 유실 없이 처리할 수 있어야 한다(처리 안 된 offset 을 다시 읽으면 됨). 그러나 구현에 다음 결함이 있어 실제로는 유실·복구 문제가 있었다:
 
 1. **이벤트 drop**: `OnRow` 가 내부 채널(eventCh, 버퍼 1000)이 가득 차면 `select default` 로 이벤트를 **조용히 버렸다**. 다운스트림이 느리면 유실.
 2. **offset 이 "읽은 위치"**: `OnPosSynced` 가 canal 이 binlog 를 읽는 즉시 position 을 갱신했다. 싱크 적재 성공과 무관 → 재시작 시 "읽었지만 미소비" 구간을 건너뛰어 유실 가능.
@@ -40,7 +40,7 @@ CDC 소스가 소스 DB 를 진실의 원천으로 삼아 **유실 없이** 처�
 **트레이드오프/한계:**
 - **at-least-once**(exactly-once 아님): 처리성공 offset 커밋으로 유실은 없으나, 재시작 시 committed 이후 이벤트가 재처리될 수 있음 → downstream 은 PK upsert 등 멱등 처리 권장.
 - **소비 기준 커밋의 정밀도**: "records 채널로 나감"을 소비 성공으로 본다. 싱크 최종 적재 실패까지 offset 을 되돌리는 완전한 end-to-end ack 은 아니다(그건 소스-싱크 offset 전파가 필요한 별도 작업).
-- **아직 남은 작업**: 이 ADR 은 **A(유실 0)** 까지다. "Debezium 대체" 를 주장하려면 **B(정확성)** 이 더 필요하다 — 데이터 타입 매핑(DECIMAL/BLOB/unsigned 등 왜곡), 트랜잭션 경계(OnXID), 이벤트 완전성/재연결. 그 외 경계 조율·PostgreSQL·HA. → `docs/plans/cdc-roadmap.md` 로드맵(정확성 #6~#8, 경계 #2, PG #4, HA #5). **"유실 없음 ≠ 정확함"** — 현재는 단순 숫자/텍스트 데이터에 한해 안전.
+- **아직 남은 작업(코드 확인된 gap 만)**: SQL 싱크가 CDC delete 를 반영 안 함(insert/update 만 upsert), canal 연결 끊김 재연결 없음, BLOB `string([]byte)` 강제, bulk↔CDC 경계 start position config, PostgreSQL 미지원, CDC 소스 중복실행 방지. → `docs/plans/cdc-roadmap.md`. (타입 매핑·트랜잭션 원자성은 go-mysql/canal 이 이미 처리 — 앞선 우려는 오진이었음.)
 
 ## Evidence (근거)
 

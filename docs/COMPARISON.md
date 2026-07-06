@@ -23,7 +23,7 @@ Airflow처럼 Python DAG를 짜지 않고, Flink 클러스터를 따로 운영�
 | Kafka → 변환 → DB/ES 적재 (실시간) | Kafka Connect + KSQL/Flink | realtime 워크플로우 1개 | kafka source + stage + sql/es sink |
 | DB 대량 조회 → 가공 → 웨어하우스 | Airflow + Spark/dbt | batch 워크플로우 (K8s Job) | sql/partitioned_sql source + bigquery sink |
 | REST API 폴링 → 정규화 → 저장 | 커스텀 스크립트 + cron | rest_api source + cron 스케줄 | http source + scheduler_service |
-| MySQL CDC → 이벤트 스트림 | Debezium + Kafka Connect | cdc source (MySQL binlog) — **단순 숫자/텍스트는 유실 없이 단독 처리**(backpressure·offset·GTID·DDL, [ADR-0004](adr/0004-cdc-safety.md)). DECIMAL/BLOB/unsigned·트랜잭션 정확성은 로드맵 [plans/cdc-roadmap](plans/cdc-roadmap.md) #6~#8 | source/cdc.go |
+| MySQL CDC → 이벤트 스트림 | Debezium + Kafka Connect | cdc source (MySQL binlog) — 유실 없이 단독 처리, insert/update 는 upsert 로 소스와 수렴(backpressure·offset·GTID·DDL, [ADR-0004](adr/0004-cdc-safety.md)). **단 SQL 싱크의 하드 delete 반영은 미구현** → 로드맵 [plans/cdc-roadmap](plans/cdc-roadmap.md) #1 | source/cdc.go |
 | 한 소스 → 여러 대상에 다른 포맷 | 파이프라인 N개 복제 | Output별 PreStages 1개 워크플로우 | group_executor PreStages |
 | 조건 분기/팬아웃 라우팅 | NiFi 프로세서 그래프 | router stage (fan_out/condition/filter) | stream/router_stage.go |
 | 커스텀 변환 로직 | Flink UDF (빌드·배포) | js_script(빌드 0) 또는 native Go plugin | js_script_stage / native_stage_adapter |

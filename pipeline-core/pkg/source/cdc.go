@@ -49,7 +49,13 @@ type CDCSource struct {
 	canal    *canal.Canal
 	mu       sync.RWMutex
 	running  bool
-	position mysql.Position // MySQL binlog position
+	position mysql.Position // canal read-ahead position (binlog 읽은 위치)
+
+	// committedPos: 파이프라인이 실제 소비(records 채널로 전달)한 마지막 위치.
+	// checkpoint 는 이 값을 저장한다 → 재시작 시 read-ahead 로 앞서간 미소비 구간을 다시 읽어 유실 방지.
+	committedPos  mysql.Position
+	curGTID       string // read-ahead GTID (OnPosSynced 갱신)
+	committedGTID string // 소비 완료된 GTID set (있으면 position 보다 우선 — 페일오버 강함)
 
 	// 이벤트 핸들러
 	eventCh chan *CDCEvent
@@ -69,6 +75,11 @@ type CDCEvent struct {
 	Data       map[string]any `json:"data"`        // 현재 데이터 (INSERT, UPDATE)
 	OldData    map[string]any `json:"old_data"`    // 이전 데이터 (UPDATE, DELETE)
 	PrimaryKey []any          `json:"primary_key"` // PK 값들
+
+	// 이 이벤트 시점의 binlog position/GTID. checkpoint 커밋 기준으로 쓴다
+	// (canal read-ahead 가 아니라, 파이프라인이 실제 소비한 위치).
+	pos  mysql.Position `json:"-"`
+	gtid string         `json:"-"`
 }
 
 // NewCDCSource CDC 소스 생성
@@ -240,6 +251,7 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 		s.mu.RLock()
 		c := s.canal
 		pos := s.position
+		gtidStr := s.committedGTID
 		s.mu.RUnlock()
 
 		if c == nil {
@@ -249,9 +261,28 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 			return
 		}
 
+		// GTID 가 복원돼 있으면 그걸로 시작(페일오버·binlog 교체에 강함). 없으면 position.
+		if gtidStr != "" {
+			gtidSet, err := mysql.ParseMysqlGTIDSet(gtidStr)
+			if err != nil {
+				errs <- fmt.Errorf("failed to parse restored GTID %q: %w", gtidStr, err)
+				close(records)
+				close(errs)
+				return
+			}
+			go func() {
+				if err := c.StartFromGTID(gtidSet); err != nil {
+					select {
+					case errs <- fmt.Errorf("canal run(gtid) error: %w", err):
+					default:
+					}
+				}
+			}()
+			return
+		}
+
 		// Position이 설정되어 있으면 해당 위치부터, 아니면 현재 위치부터
 		if pos.Name == "" {
-			// 현재 binlog position 가져오기
 			currentPos, err := c.GetMasterPos()
 			if err != nil {
 				errs <- fmt.Errorf("failed to get master position: %w", err)
@@ -289,6 +320,13 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 				record := s.convertEventToRecord(event)
 				select {
 				case records <- record:
+					// 파이프라인이 실제로 소비함 → 이 위치까지 커밋 가능.
+					s.mu.Lock()
+					s.committedPos = event.pos
+					if event.gtid != "" {
+						s.committedGTID = event.gtid
+					}
+					s.mu.Unlock()
 				case <-ctx.Done():
 					return
 				}
@@ -377,20 +415,36 @@ func (s *CDCSource) GetSourceCheckpoints() []*SourceCheckpoint {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// CDC Source는 binlog position을 체크포인트로 사용
-	// 파티션 키: database.table 형식 또는 binlog 파일명
-	partitionKey := fmt.Sprintf("%s:%s", s.database, s.position.Name)
-	offsetValue := fmt.Sprintf("%s:%d", s.position.Name, s.position.Pos)
+	// checkpoint 는 read-ahead(s.position)가 아니라 committedPos(파이프라인이 실제 소비한 위치)를
+	// 저장한다. 아직 소비 안 된 이벤트가 아직 커밋되지 않아야 재시작 시 다시 읽어 유실을 막는다.
+	cp := s.committedPos
+	if cp.Name == "" {
+		// 아직 아무것도 소비 안 함 → 시작 position 을 그대로(재시작 시 같은 지점부터).
+		cp = s.position
+	}
+	partitionKey := fmt.Sprintf("%s:%s", s.database, cp.Name)
+	offsetValue := fmt.Sprintf("%s:%d", cp.Name, cp.Pos)
 
-	return []*SourceCheckpoint{
+	cps := []*SourceCheckpoint{
 		{
 			PartitionKey: partitionKey,
 			OffsetValue:  offsetValue,
 			OffsetType:   "string", // binlog position은 문자열 형식
-			RecordCount:  int64(s.position.Pos),
+			RecordCount:  int64(cp.Pos),
 			UpdatedAt:    time.Now(),
 		},
 	}
+
+	// GTID 도 함께 저장(있으면). 복원 시 GTID 를 우선 사용 — 서버 페일오버·binlog 교체에 강함.
+	if s.committedGTID != "" {
+		cps = append(cps, &SourceCheckpoint{
+			PartitionKey: fmt.Sprintf("%s:gtid", s.database),
+			OffsetValue:  s.committedGTID,
+			OffsetType:   "gtid",
+			UpdatedAt:    time.Now(),
+		})
+	}
+	return cps
 }
 
 // SetSourceCheckpoints 체크포인트 설정 (CheckpointableSource 구현)
@@ -399,6 +453,12 @@ func (s *CDCSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error 
 	defer s.mu.Unlock()
 
 	for _, cp := range checkpoints {
+		if cp.OffsetType == "gtid" {
+			s.committedGTID = cp.OffsetValue
+			s.curGTID = cp.OffsetValue
+			slog.Default().Info("CDC restored GTID checkpoint", "host", s.host, "gtid", cp.OffsetValue)
+			continue
+		}
 		if cp.OffsetType != "string" {
 			continue
 		}
@@ -418,6 +478,7 @@ func (s *CDCSource) SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error 
 			continue
 		}
 		s.position.Pos = uint32(pos)
+		s.committedPos = s.position // 복원 지점이 곧 마지막 커밋 지점
 		slog.Default().Info("CDC restored checkpoint",
 			"host", s.host, "partition_key", cp.PartitionKey,
 			"binlog_file", s.position.Name, "position", s.position.Pos)
@@ -457,6 +518,8 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 	h.source.mu.RLock()
 	running := h.source.running
 	stopCh := h.source.stopCh
+	pos := h.source.position // 이 이벤트가 속한 read-ahead position (소비 시 커밋 기준)
+	gtid := h.source.curGTID
 	h.source.mu.RUnlock()
 
 	if !running {
@@ -495,6 +558,8 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 				Data:       rowToMap(columns, newRow),
 				OldData:    rowToMap(columns, oldRow),
 				PrimaryKey: getPrimaryKeyValues(e.Table, newRow),
+				pos:        pos,
+				gtid:       gtid,
 			}
 
 			// 블로킹 전송: 채널이 가득 차면 backpressure(canal 이 느려짐). 종료 시에만 탈출.
@@ -512,6 +577,8 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 				Table:      e.Table.Name,
 				Timestamp:  time.Now(),
 				PrimaryKey: getPrimaryKeyValues(e.Table, row),
+				pos:        pos,
+				gtid:       gtid,
 			}
 
 			if eventType == CDCEventDelete {
@@ -534,6 +601,9 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 func (h *mysqlEventHandler) OnPosSynced(header *replication.EventHeader, pos mysql.Position, set mysql.GTIDSet, force bool) error {
 	h.source.mu.Lock()
 	h.source.position = pos
+	if set != nil {
+		h.source.curGTID = set.String() // read-ahead GTID (커밋은 소비 시점에)
+	}
 	h.source.mu.Unlock()
 	return nil
 }

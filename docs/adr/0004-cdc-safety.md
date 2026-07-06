@@ -40,7 +40,7 @@ CDC 소스가 소스 DB 를 진실의 원천으로 삼아 **유실 없이** 처�
 **트레이드오프/한계:**
 - **at-least-once**(exactly-once 아님): 처리성공 offset 커밋으로 유실은 없으나, 재시작 시 committed 이후 이벤트가 재처리될 수 있음 → downstream 은 PK upsert 등 멱등 처리 권장.
 - **소비 기준 커밋의 정밀도**: "records 채널로 나감"을 소비 성공으로 본다. 싱크 최종 적재 실패까지 offset 을 되돌리는 완전한 end-to-end ack 은 아니다(그건 소스-싱크 offset 전파가 필요한 별도 작업).
-- **아직 남은 작업**: bulk↔CDC 경계 조율(CDC start position config), PostgreSQL CDC, CDC 소스 HA. → `docs/plans/cdc-roadmap.md` 로드맵(#2/#4/#5). (초기 데이터 적재 자체는 bulk 파이프라인으로 이미 가능.)
+- **아직 남은 작업**: 이 ADR 은 **A(유실 0)** 까지다. "Debezium 대체" 를 주장하려면 **B(정확성)** 이 더 필요하다 — 데이터 타입 매핑(DECIMAL/BLOB/unsigned 등 왜곡), 트랜잭션 경계(OnXID), 이벤트 완전성/재연결. 그 외 경계 조율·PostgreSQL·HA. → `docs/plans/cdc-roadmap.md` 로드맵(정확성 #6~#8, 경계 #2, PG #4, HA #5). **"유실 없음 ≠ 정확함"** — 현재는 단순 숫자/텍스트 데이터에 한해 안전.
 
 ## Evidence (근거)
 

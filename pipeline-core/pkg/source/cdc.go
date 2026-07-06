@@ -69,13 +69,14 @@ type CDCSource struct {
 
 // CDCEvent CDC 이벤트
 type CDCEvent struct {
-	Type       CDCEventType   `json:"type"`
-	Database   string         `json:"database"`
-	Table      string         `json:"table"`
-	Timestamp  time.Time      `json:"timestamp"`
-	Data       map[string]any `json:"data"`        // 현재 데이터 (INSERT, UPDATE)
-	OldData    map[string]any `json:"old_data"`    // 이전 데이터 (UPDATE, DELETE)
-	PrimaryKey []any          `json:"primary_key"` // PK 값들
+	Type           CDCEventType   `json:"type"`
+	Database       string         `json:"database"`
+	Table          string         `json:"table"`
+	Timestamp      time.Time      `json:"timestamp"`
+	Data           map[string]any `json:"data"`                // 현재 데이터 (INSERT, UPDATE)
+	OldData        map[string]any `json:"old_data"`            // 이전 데이터 (UPDATE, DELETE)
+	PrimaryKey     []any          `json:"primary_key"`         // PK 값들
+	PrimaryKeyCols []string       `json:"primary_key_columns"` // PK 컬럼명 (delete WHERE 구성용)
 
 	// 이 이벤트 시점의 binlog position/GTID. checkpoint 커밋 기준으로 쓴다
 	// (canal read-ahead 가 아니라, 파이프라인이 실제 소비한 위치).
@@ -363,9 +364,12 @@ func (s *CDCSource) convertEventToRecord(event *CDCEvent) Record {
 		data["_old_data"] = oldData
 	}
 
-	// PK 정보
+	// PK 정보 (delete 반영 시 WHERE 절 구성용: 컬럼명↔값)
 	if len(event.PrimaryKey) > 0 {
 		data["_primary_key"] = event.PrimaryKey
+	}
+	if len(event.PrimaryKeyCols) > 0 {
+		data["_primary_key_columns"] = event.PrimaryKeyCols
 	}
 
 	return Record{
@@ -552,15 +556,16 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 			newRow := e.Rows[i+1]
 
 			event := &CDCEvent{
-				Type:       eventType,
-				Database:   e.Table.Schema,
-				Table:      e.Table.Name,
-				Timestamp:  time.Now(),
-				Data:       rowToMap(columns, newRow),
-				OldData:    rowToMap(columns, oldRow),
-				PrimaryKey: getPrimaryKeyValues(e.Table, newRow),
-				pos:        pos,
-				gtid:       gtid,
+				Type:           eventType,
+				Database:       e.Table.Schema,
+				Table:          e.Table.Name,
+				Timestamp:      time.Now(),
+				Data:           rowToMap(columns, newRow),
+				OldData:        rowToMap(columns, oldRow),
+				PrimaryKey:     getPrimaryKeyValues(e.Table, newRow),
+				PrimaryKeyCols: getPrimaryKeyColumns(e.Table),
+				pos:            pos,
+				gtid:           gtid,
 			}
 
 			// 블로킹 전송: 채널이 가득 차면 backpressure(canal 이 느려짐). 종료 시에만 탈출.
@@ -573,13 +578,14 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 	} else {
 		for _, row := range e.Rows {
 			event := &CDCEvent{
-				Type:       eventType,
-				Database:   e.Table.Schema,
-				Table:      e.Table.Name,
-				Timestamp:  time.Now(),
-				PrimaryKey: getPrimaryKeyValues(e.Table, row),
-				pos:        pos,
-				gtid:       gtid,
+				Type:           eventType,
+				Database:       e.Table.Schema,
+				Table:          e.Table.Name,
+				Timestamp:      time.Now(),
+				PrimaryKey:     getPrimaryKeyValues(e.Table, row),
+				PrimaryKeyCols: getPrimaryKeyColumns(e.Table),
+				pos:            pos,
+				gtid:           gtid,
 			}
 
 			if eventType == CDCEventDelete {
@@ -671,6 +677,17 @@ func getPrimaryKeyValues(table *schema.Table, row []any) []any {
 		}
 	}
 	return pkValues
+}
+
+// getPrimaryKeyColumns PK 컬럼명 추출 (delete 반영 시 WHERE 절 구성에 필요)
+func getPrimaryKeyColumns(table *schema.Table) []string {
+	names := make([]string, 0, len(table.PKColumns))
+	for _, idx := range table.PKColumns {
+		if idx < len(table.Columns) {
+			names = append(names, table.Columns[idx].Name)
+		}
+	}
+	return names
 }
 
 // CDCConfig CDC 설정 구조체 (JSON 직렬화용)

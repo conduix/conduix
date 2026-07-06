@@ -13,25 +13,28 @@ backpressure(`e8f57eb`), 처리성공 offset 커밋·GTID(`b2aa9e5`), DDL 추적
 
 ---
 
-## [ ] #2 초기 스냅샷 (Initial Snapshot) — 규모: 대 (~수일)
+## [ ] #2 초기 적재 ↔ CDC 경계 조율 (start position 지정) — 규모: 소~중
 
-**문제**: 현재 CDC 는 binlog 현재 위치부터만 읽는다. 기존 테이블 데이터 전량이 필요한 첫 적재를 못 한다(Debezium 의 snapshot 단계 부재).
+> **Debezium 식 "CDC 소스 내장 스냅샷"은 만들지 않는다.** Conduix 는 이미 bulk(batch) 파이프라인이
+> 기존 데이터 전량 적재를 담당한다(`source/sql.go` 전량 SELECT, `source/partitioned_sql.go` 병렬).
+> 따라서 CDC 소스에 SELECT 스냅샷 단계를 넣는 것은 **중복 기능**이다.
 
-**완료 기준(Definition of Done)**:
-- 스냅샷 시작 시점의 binlog position(또는 GTID)을 고정한다.
-- 대상 테이블의 기존 행을 `SELECT`(PK 기준 페이지네이션)로 전량 읽어 이벤트로 흘린다.
-- 스냅샷 완료 후 고정해둔 position 부터 스트리밍 전환한다.
-- 스냅샷/스트리밍 경계 중복은 downstream PK upsert 로 흡수(문서화).
-- 설정: `snapshot.mode`(none/initial/when_needed 상당) config 노출.
-- 테스트: 스냅샷→스트리밍 전환 시 유실·역전 없음.
+**진짜 문제(코드 검증됨)**: bulk 로 초기 적재하고 CDC 로 이후 변경을 이어받을 때 **경계에서 유실이 생긴다**.
+CDC 는 checkpoint 가 없으면 `GetMasterPos()`(=지금 시점)부터 시작하고(`cdc.go` Read), **config 로 시작 position/GTID 를 지정할 수단이 없다**(`v2_config.go` 의 InputV2 에 cdc 용 start_position/start_gtid 없음 — kafka 의 start_offset 만 있음).
+→ "bulk 시작 직전 position 을 잡아 → bulk 적재 → CDC 를 그 position 부터" 를 하고 싶어도 CDC 에 그 시작점을 넣을 방법이 없다. bulk 소요 시간 동안의 변경분이 유실된다.
+
+**완료 기준(DoD)**:
+- CDC config 에 `start_position`(binlog file:pos) 또는 `start_gtid` 지정 옵션 추가 → 지정 시 그 지점부터 시작.
+- 운영 절차 문서화: (1) bulk 시작 전 `SHOW MASTER STATUS`/GTID 로 position 확보 → (2) bulk 적재 → (3) CDC 를 그 position 으로 시작. 경계 중복은 sink PK upsert(on_conflict=update)로 흡수.
+- (선택) bulk→CDC 를 한 워크플로우로 연결(bulk 완료 시 잡아둔 position 을 자식 CDC 파이프라인에 주입)하는 편의 기능.
+- 테스트: 지정한 position/GTID 부터 시작하는지, 경계 유실 없음(upsert 흡수).
 
 **단계**:
-1. config(`SnapshotMode`) + 상태기계(snapshot→streaming) 설계.
-2. position 고정 + 페이지네이션 SELECT 리더.
-3. 전환 로직 + 중복 흡수 검증.
-4. 회귀 테스트.
+1. `InputV2` 에 `start_position`/`start_gtid` 필드 추가 + `NewCDCSource` 가 이를 초기 committedPos/GTID 로 설정.
+2. 운영 가이드(bulk→CDC 경계 맞추기) 문서화.
+3. 회귀 테스트.
 
-**리스크**: 대용량 테이블 스냅샷 시간·부하 → 페이지네이션·rate limit 필요.
+**규모 정정**: 애초 "스냅샷 구현(대)"으로 잘못 적었으나, 실제로는 "start position config + 경계 문서화"라 **소~중**. bulk 파이프라인 재사용이 핵심.
 
 ---
 
@@ -75,6 +78,6 @@ backpressure(`e8f57eb`), 처리성공 offset 커밋·GTID(`b2aa9e5`), DDL 추적
 ## 현시점 사용자 권장 (완료 전까지)
 
 - MySQL + 지금부터 변경분 → **Conduix 단독으로 안전**(완료).
-- MySQL + 기존 데이터 전량 → #2 완료 전까지 1회 벌크 초기적재 또는 Debezium.
+- MySQL + 기존 데이터 적재 → **bulk 파이프라인으로 지금도 가능**. 단 bulk→CDC 경계 유실 없이 이어받으려면 #2(CDC start position 지정) 필요 — 그 전까지는 sink upsert + 수동 position 맞춤으로 운영.
 - PostgreSQL → #4 완료 전까지 Debezium 경유.
 - CDC 소스 고가용성 → #5 완료 전까지 단일 worker 운영.

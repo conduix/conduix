@@ -26,7 +26,7 @@ CDC 소스가 소스 DB 를 진실의 원천으로 삼아 **유실 없이** 처�
 
 ## Alternatives (대안)
 
-- **Debezium→Kafka 경유** — CDC 도구로 성숙하지만 별도 스택(Kafka Connect+Kafka) 운영 부담. "지금부터의 변경분 유실 없이"라는 목표에는 Conduix 단독 구현이 스택을 줄인다. (초기 스냅샷·PostgreSQL·HA 등 Debezium 고유 기능은 별도 로드맵 — `docs/plans/cdc-roadmap.md`.)
+- **Debezium→Kafka 경유** — CDC 도구로 성숙하지만 별도 스택(Kafka Connect+Kafka) 운영 부담. "지금부터의 변경분 유실 없이"라는 목표에는 Conduix 단독 구현이 스택을 줄인다. (기존 데이터 초기 적재는 Conduix 의 bulk 파이프라인이 담당하므로 CDC 소스에 스냅샷을 넣지 않는다. bulk↔CDC 경계 조율·PostgreSQL·HA 는 별도 로드맵 — `docs/plans/cdc-roadmap.md`.)
 - **drop 유지 + 무한 버퍼** — 거부. 무한 버퍼는 메모리 폭증, drop 은 유실. backpressure 가 정답(소스 DB 가 데이터를 보관하므로 느려도 됨).
 - **at-most-once 수용** — 거부. CDC 는 유실이 곧 데이터 불일치.
 
@@ -40,7 +40,7 @@ CDC 소스가 소스 DB 를 진실의 원천으로 삼아 **유실 없이** 처�
 **트레이드오프/한계:**
 - **at-least-once**(exactly-once 아님): 처리성공 offset 커밋으로 유실은 없으나, 재시작 시 committed 이후 이벤트가 재처리될 수 있음 → downstream 은 PK upsert 등 멱등 처리 권장.
 - **소비 기준 커밋의 정밀도**: "records 채널로 나감"을 소비 성공으로 본다. 싱크 최종 적재 실패까지 offset 을 되돌리는 완전한 end-to-end ack 은 아니다(그건 소스-싱크 offset 전파가 필요한 별도 작업).
-- **여전히 Debezium 이 필요한 경우**: 초기 스냅샷·PostgreSQL·CDC 소스 HA. → `docs/plans/cdc-roadmap.md` 로드맵(#2/#4/#5).
+- **아직 남은 작업**: bulk↔CDC 경계 조율(CDC start position config), PostgreSQL CDC, CDC 소스 HA. → `docs/plans/cdc-roadmap.md` 로드맵(#2/#4/#5). (초기 데이터 적재 자체는 bulk 파이프라인으로 이미 가능.)
 
 ## Evidence (근거)
 

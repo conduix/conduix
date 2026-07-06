@@ -54,6 +54,10 @@ type CDCSource struct {
 	// 이벤트 핸들러
 	eventCh chan *CDCEvent
 	errorCh chan error
+
+	// 종료 신호. OnRow의 eventCh 블로킹 전송이 Stop 시 빠져나가는 데 쓴다.
+	// (채널이 가득 차도 이벤트를 drop 하지 않고 backpressure 를 걸되, 종료는 가능하게.)
+	stopCh chan struct{}
 }
 
 // CDCEvent CDC 이벤트
@@ -102,6 +106,7 @@ func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
 		tlsConfig: cfg.DBTLS,
 		eventCh:   make(chan *CDCEvent, 1000),
 		errorCh:   make(chan error, 10),
+		stopCh:    make(chan struct{}),
 	}, nil
 }
 
@@ -222,6 +227,12 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 
 	s.mu.Lock()
 	s.running = true
+	// 재시작 대비: 이전 Stop 에서 닫힌 stopCh 를 새로 연다.
+	select {
+	case <-s.stopCh: // 이미 닫힘 → 새로 생성
+		s.stopCh = make(chan struct{})
+	default:
+	}
 	s.mu.Unlock()
 
 	// MySQL binlog 시작
@@ -421,6 +432,13 @@ func (s *CDCSource) Close() error {
 
 	s.running = false
 
+	// stopCh 닫아 OnRow 의 블로킹 전송을 깨운다(중복 close 방지).
+	select {
+	case <-s.stopCh: // 이미 닫힘
+	default:
+		close(s.stopCh)
+	}
+
 	if s.canal != nil {
 		s.canal.Close()
 		s.canal = nil
@@ -438,6 +456,7 @@ type mysqlEventHandler struct {
 func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 	h.source.mu.RLock()
 	running := h.source.running
+	stopCh := h.source.stopCh
 	h.source.mu.RUnlock()
 
 	if !running {
@@ -478,10 +497,11 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 				PrimaryKey: getPrimaryKeyValues(e.Table, newRow),
 			}
 
+			// 블로킹 전송: 채널이 가득 차면 backpressure(canal 이 느려짐). 종료 시에만 탈출.
 			select {
 			case h.source.eventCh <- event:
-			default:
-				// 채널이 가득 차면 스킵
+			case <-stopCh:
+				return nil
 			}
 		}
 	} else {
@@ -502,7 +522,8 @@ func (h *mysqlEventHandler) OnRow(e *canal.RowsEvent) error {
 
 			select {
 			case h.source.eventCh <- event:
-			default:
+			case <-stopCh:
+				return nil
 			}
 		}
 	}

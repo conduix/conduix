@@ -39,6 +39,73 @@ jobs:
         run: cd ${{ matrix.package }} && go test -v -p 4 -parallel 8 ./...
 
   # ============================================================
+  # 1b. CDC 통합 테스트 (실 MySQL binlog + PostgreSQL logical)
+  # build tag `cdcintegration` 로 분리된 테스트를 실제 DB 대상으로 실행.
+  # services: 는 컨테이너에 command args(--log-bin, -c wal_level 등)를 못 넘기므로
+  # step 에서 직접 docker run 한다(로컬 검증과 동일 구성 → 재현성).
+  # 포트는 테스트 코드가 기대하는 13306/15432 에 맞춘다.
+  # ============================================================
+  test-cdc-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+          cache-dependency-path: "pipeline-core/go.sum"
+
+      - name: Start MySQL (binlog + ROW + GTID)
+        run: |
+          docker run -d --name cdc-mysql \
+            -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=cdcdb \
+            -p 13306:3306 mysql:8.0 \
+            --log-bin=mysql-bin --binlog-format=ROW --server-id=1 \
+            --gtid-mode=ON --enforce-gtid-consistency=ON
+
+      - name: Start PostgreSQL (wal_level=logical)
+        run: |
+          docker run -d --name cdc-pg \
+            -e POSTGRES_PASSWORD=pgpw -e POSTGRES_DB=cdcdb \
+            -p 15432:5432 postgres:16 \
+            -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec cdc-mysql mysqladmin ping -uroot -prootpw --silent 2>/dev/null; then
+              echo "mysql ready"; break
+            fi
+            sleep 2
+          done
+          docker exec cdc-mysql mysql -uroot -prootpw -N -e "SELECT @@log_bin, @@binlog_format, @@gtid_mode;"
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec cdc-pg pg_isready -U postgres 2>/dev/null | grep -q "accepting"; then
+              echo "pg ready"; break
+            fi
+            sleep 2
+          done
+          docker exec cdc-pg psql -U postgres -d cdcdb -tAc "SHOW wal_level;"
+
+      - name: Run CDC integration tests
+        run: |
+          cd pipeline-core
+          go test -tags cdcintegration -count=1 -timeout 300s -v \
+            ./pkg/source/ ./pkg/cdce2e/ \
+            -run 'TestIntegration_MySQLCDC|TestIntegration_PostgresCDC'
+
+      - name: Dump DB logs on failure
+        if: failure()
+        run: |
+          echo "=== MySQL logs ==="; docker logs cdc-mysql 2>&1 | tail -50 || true
+          echo "=== PostgreSQL logs ==="; docker logs cdc-pg 2>&1 | tail -50 || true
+
+  # ============================================================
   # 2. Web UI 고속 빌드 (node_modules 직접 캐싱)
   # npm ci의 설치 시간(60s+)을 캐시 히트 시 0초로 만듦
   # ============================================================
@@ -80,7 +147,7 @@ jobs:
   # 서비스 × 아키텍처 = 6개 runner에서 동시 실행 → 빌드시간 증가 없음
   # ============================================================
   build:
-    needs: [test-go, test-web]
+    needs: [test-go, test-cdc-integration, test-web]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     strategy:

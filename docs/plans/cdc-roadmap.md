@@ -73,7 +73,7 @@
 - `NewCDCSource(driver=postgres)` 조기 거부 제거, `type: cdc` + `driver: postgres` 로 MySQL 과 동일 인터페이스.
 - 시작 지점: `start_lsn`("0/1A2B3C4D").
 
-**테스트**: TOAST 재사용/NULL·text, PK 추출, LSN checkpoint 라운드트립, 드라이버 수용(단위). 실 스트림 e2e 는 K8s 환경 필요.
+**테스트**: TOAST 재사용/NULL·text, PK 추출, LSN checkpoint 라운드트립, 드라이버 수용(단위) + **실 PostgreSQL e2e**(아래).
 
 **운영 전제**: `wal_level=logical`, 테이블 REPLICA IDENTITY(기본=PK; DELETE 반영 시 필수).
 
@@ -98,9 +98,23 @@
 - **#3(BLOB)**: 바이너리 컬럼 쓰는 경우만. 범위 작음.
 - **#4~#6**: 경계·범위확장·HA. 규모 크거나 특정 요건.
 
+## 실환경 e2e 검증 (2026-07, 완료)
+
+실 MySQL(binlog)·PostgreSQL(logical) 컨테이너 대상으로 이벤트 타입별 전수 검증.
+테스트: `pkg/source/cdc_mysql_integration_test.go`, `pkg/cdce2e/` (build tag `cdcintegration`).
+
+**검증 통과**:
+- MySQL: insert/update(after+_old_data)/delete(_primary_key) 캡처, VARBINARY 보존, CDC→SQL 싱크 수렴(delete 로 타깃 행 삭제).
+- PostgreSQL: insert/update/delete 캡처(REPLICA IDENTITY DEFAULT→PK=[id]), slot/publication 자동 생성, CDC→SQL 싱크 수렴+delete 반영.
+
+**e2e 로 드러나 수정한 실결함**(커밋 f6876f1):
+1. `Close`/`runCanalOnce` 재진입 데드락 — `s.mu` 쥔 채 `canal.Close()`(핸들러가 `s.mu` 재획득) → stop/재연결 무한 hang. 락 밖에서 Close 로 수정.
+2. mysql `Open()` 의 불필요한 canal 선생성 → 미실행 canal Close 가 스트리밍 시작을 블록. Open() no-op 화.
+3. `rowToMap` 바이너리 전달 타입 불일치 — go-mysql 은 VARBINARY 를 string 으로 준다. TYPE_BINARY→[]byte 로 정규화.
+4. SQL 싱크 PostgreSQL upsert 누락 — `on_conflict=update` 의 postgres 분기가 비어 UPDATE 이벤트가 중복키 에러. `ON CONFLICT DO UPDATE` 추가.
+
 ## 현시점 사용자 권장
 
-- MySQL + INSERT/UPDATE 중심(삭제 드물거나 soft-delete) + upsert 싱크 → **Conduix 단독으로 소스와 수렴**.
-- **하드 DELETE 를 타깃에 반영해야 함** → #1 완료 전까지는 route stage 로 delete 를 별도 처리하거나 주의.
-- 장기 무중단 운영 → #2(재연결) 전까지 실패 시 수동 재기동 필요.
-- 바이너리 컬럼 / PostgreSQL / 소스 HA → 각각 #3 / #5 / #6.
+- MySQL/PostgreSQL + upsert 싱크 → **Conduix 단독으로 소스와 수렴**(insert/update/delete 실검증 완료).
+- PostgreSQL 은 `wal_level=logical` + REPLICA IDENTITY(DELETE 반영 시), publication/slot 은 자동 생성.
+- 바이너리 컬럼 / PostgreSQL / 소스 HA → 각각 #3 / #5 / #6 (모두 완료).

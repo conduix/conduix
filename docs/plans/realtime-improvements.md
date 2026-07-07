@@ -24,7 +24,9 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
   - [x] executor flush→Ack 배선(realtime) + 파이프라인 레벨 실 Kafka e2e(GroupExecutor: 1차 5건 커밋 → 재시작 새 5건만, 유실 0)
 - [x] **CDC 소스 ack 기반 커밋 전환** (seq 부착 + Ack 시 committed 전진, 유실 창 제거. 단위+race 검증, CDC e2e 회귀 통과)
 - [ ] **R2** 다중 컨슈머 fan-out
-- [ ] **R3** DDL 방어(안전 정지 + 샘플 validation)
+- [x] **R3** DDL 방어(안전 정지 + 샘플 validation)
+  - [x] A: DDL 감지 시 "schema_changed" 정지 (실 MySQL e2e)
+  - [x] B: 샘플 dry-run validation(ValidatePipelines) — 재개 게이트 (단위 검증)
 - [ ] **R3b** JSON-only DDL 허용 (후순위)
 - [ ] **R4** exactly-once/상태 복구 (Kafka at-most-once 제거는 R4a 로 일부, 상태 자동복구 남음)
 
@@ -87,7 +89,7 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 - 구독자별 offset 재개.
 - 테스트: 2 구독자, 서로 다른 처리 속도, 각자 정확히 소비 확인.
 
-## [ ] R3. DDL 방어 (스키마 변경 시 안전 정지 + validation) — 규모: 중
+## [x] R3. DDL 방어 (스키마 변경 시 안전 정지 + validation) — 규모: 중
 
 **설계 원칙(중요)**: 데이터 파이프라인은 도중에 소스 스키마가 바뀌면 **그 전후 데이터의 정합성·유효성이 깨진다.** 컬럼 타입 변경은 기존 적재 값의 의미를 바꾸고, 컬럼 삭제는 downstream 계약을 무너뜨린다. 따라서 **스키마 진화를 "자동 흡수"하는 것은 금물** — 스키마 레지스트리/자동 마이그레이션은 **만들지 않는다**(정합성 위험 + 관심사 초과). 올바른 기본 동작은 **DDL 감지 시 안전 정지 → 사람이 판단**이다.
 

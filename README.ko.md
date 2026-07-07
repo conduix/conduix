@@ -16,13 +16,14 @@
 
 **무엇을 하나:** 소스에서 읽어 → 변환하고 → 하나 또는 여러 싱크에 (싱크별로 다른 변환을 적용해) 적재한다. **배치**든 **실시간**이든, **GUI 또는 YAML/API**(동일 모델)로 정의한다.
 
-- **소스 16종 / 싱크 9종** 내장 (Kafka, SQL, REST, MySQL CDC, 파일, S3, Elasticsearch, MongoDB, BigQuery, …).
+- **소스 16종 / 싱크 9종** 내장 (Kafka, SQL, MySQL/PostgreSQL CDC, REST, 파일, S3, Elasticsearch, MongoDB, BigQuery, …).
 - **내장 변환 stage 21종** + 커스텀 로직: **JavaScript(빌드 없이 저장→실행)** 또는 **native Go 플러그인**(runner 이미지에 컴파일).
 - **한 소스 → 여러 싱크, 각각 다른 형태로**(Output별 PreStages), 라우팅(fan-out/condition/filter), 부모-자식 파이프라인.
 - **운영 기능 내장:** 서킷 브레이커, DLQ, retry+백오프, 고아 실행 감지, Prometheus 메트릭, 구조화 로깅.
 
 **언제 고르나:** 커넥터+변환+스케줄을 하나의 K8s-네이티브 플랫폼으로 통합하고, 운영자는 GUI로·엔지니어는 YAML로 같은 파이프라인을 다루며, 변환을 빠르게 반복하고 싶을 때.
-**언제 아닌가:** 대규모 상태 기반 exactly-once 스트림 연산(→ Flink), 범용 태스크 오케스트레이션(→ Airflow), PostgreSQL CDC(미지원 — Debezium/Kafka 경유).
+**MySQL·PostgreSQL CDC 를 Debezium/Kafka 없이 네이티브로** 지원합니다 — [CDC](#change-data-capture-cdc) 참고.
+**언제 아닌가:** 대규모 상태 기반 exactly-once 스트림 연산(→ Flink), 범용 태스크 오케스트레이션(→ Airflow).
 
 → 전체 비교·선택 가이드: **[docs/COMPARISON.md](docs/COMPARISON.md)** · 아키텍처: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · 설계 결정: **[docs/adr/](docs/adr/)**
 
@@ -31,7 +32,7 @@
 Conduix는 native Go 커넥터, Stage 병렬 처리, 워크플로우 오케스트레이션을 하나로 묶은 Kubernetes-네이티브 데이터 파이프라인 플랫폼입니다.
 
 **아키텍처**:
-- **Native Go 커넥터**: 소스/싱크(Kafka, SQL, REST, MySQL CDC, S3, Elasticsearch, MongoDB, BigQuery, …)를 Go로 직접 구현 — 별도 커넥터 프로세스 없음.
+- **Native Go 커넥터**: 소스/싱크(Kafka, SQL, MySQL/PostgreSQL CDC, REST, S3, Elasticsearch, MongoDB, BigQuery, …)를 Go로 직접 구현 — 별도 커넥터 프로세스 없음.
 - **병렬 처리**: Stage 단위 병렬 처리, 배치 최적화(workers 설정 가능).
 - **순수 Go**: 정적 링크(`CGO_ENABLED=0`) 단일 바이너리 — JVM/Python 같은 별도 런타임 설치 불필요, libc 독립적(Alpine/musl에서도 동작). 단, 타깃 OS/아키텍처별 빌드 필요(linux/amd64, linux/arm64 등).
 - **Bento**: [Bento](https://github.com/warpstreamlabs/bento)(MIT, Benthos fork) 의존성은 향후 커넥터/Bloblang 재사용을 위한 어댑터 접점으로 두었으나 **현재 런타임 경로에는 없다** — 커넥터·변환은 모두 Conduix 자체 Go 구현. [ADR-0001](docs/adr/0001-bento-adoption.md) 참고.
@@ -40,7 +41,7 @@ Conduix는 native Go 커넥터, Stage 병렬 처리, 워크플로우 오케스�
 
 - **병렬 배치 처리**: Stage는 항상 병렬 처리, Output은 bulk/individual 모드 선택
 - **Input/Stage/Output 분리**: 입력(Input), 변환(Stage), 출력(Output) 명확한 분리
-- **풍부한 내장 커넥터**: 소스 16종 / 싱크 9종 — Kafka, SQL, REST/HTTP, MySQL CDC, 파일, K8s 로그, MQTT, WebSocket, SSE, SQS, RabbitMQ, Pub/Sub, Redis Stream; S3, GCS, Elasticsearch, MongoDB, BigQuery 등
+- **풍부한 내장 커넥터**: 소스 16종 / 싱크 9종 — Kafka, SQL, MySQL/PostgreSQL CDC, REST/HTTP, 파일, K8s 로그, MQTT, WebSocket, SSE, SQS, RabbitMQ, Pub/Sub, Redis Stream; S3, GCS, Elasticsearch, MongoDB, BigQuery 등
 - **고가용성**: Redis 기반 체크포인트, 자동 장애 대응
 - **운영툴**: 웹 기반 파이프라인 설정, 모니터링, 스케줄링
 - **SSO 지원**: OAuth2/OIDC 기반 로그인
@@ -212,6 +213,43 @@ Input
   │
   └──→ [pre_stages: cast] → SQL Database
 ```
+
+### Change Data Capture (CDC)
+
+Conduix는 **MySQL**(binlog)과 **PostgreSQL**(논리 복제)의 행 단위 변경을 네이티브로 캡처합니다 — **Debezium/Kafka 불필요**. CDC 이벤트는 일반 소스와 동일한 stage/sink 파이프라인을 타므로, upsert 가능한 SQL 싱크는 타깃을 소스로 수렴시킵니다(insert/update 반영, 하드 `DELETE` 는 타깃 행 삭제로 반영).
+
+| 기능 | MySQL | PostgreSQL |
+|------|-------|------------|
+| 변경 스트림 | binlog (`go-mysql`/canal) | 논리 복제 (`pglogrepl`, pgoutput v2) |
+| 이벤트 | INSERT / UPDATE(after+old) / DELETE / DDL | INSERT / UPDATE / DELETE |
+| 오프셋/재개 | binlog position + **GTID** 체크포인트 | **LSN** 체크포인트 + standby status |
+| 재연결 | 지수 백오프, 마지막 커밋 오프셋부터 재개 | 동일 |
+| 시작 지점 | `start_position`(`file:pos`) / `start_gtid` | `start_lsn` |
+| 바이너리 컬럼 | 바이트 보존(UTF-8 강제 안 함) | — |
+| slot/publication | — | 자동 생성(idempotent) |
+| 중복 실행 방지(HA) | 리더 claim 을 CDC 라이프사이클에 결합, claim 상실 시 정지 → 새 리더가 체크포인트부터 재개 | 동일 |
+
+**서버 전제 조건:** MySQL `log_bin=ON`, `binlog_format=ROW`(GTID 권장); PostgreSQL `wal_level=logical` + 테이블 `REPLICA IDENTITY`(기본=PK; DELETE 반영에 필수).
+
+```yaml
+input:
+  type: cdc
+  driver: postgres           # 또는 mysql
+  host: db.internal
+  database: shop
+  tables: ["public.orders"]
+  # start_lsn: "0/1A2B3C4D"   # 선택: 알려진 지점부터 시작(bulk↔CDC 경계)
+outputs:
+  - name: replica
+    type: sql
+    driver: postgres
+    table: orders_replica
+    on_conflict: update       # upsert → 소스로 수렴
+    conflict_columns: ["id"]
+    # cdc_delete: true (기본) → 소스 DELETE 가 타깃 행 삭제
+```
+
+**검증:** 모든 이벤트 타입(insert/update/delete)과 CDC→SQL 싱크 수렴이 실 MySQL/PostgreSQL 대상으로 CI 에서 검증됩니다(`test-cdc-integration` job, build tag `cdcintegration`). [docs/plans/cdc-roadmap.md](docs/plans/cdc-roadmap.md), [ADR-0004](docs/adr/0004-cdc-safety.md) 참고.
 
 ### DataType 종속 관계 패턴
 

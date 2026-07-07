@@ -16,13 +16,13 @@ Scalable Data Pipeline Platform with Parallel Processing
 
 **What you do with it:** Read from a source → transform → load into one or many sinks (each with its own per-output transforms), as either a **batch** job or a **realtime** stream, defined through a **GUI or YAML/API** (same model).
 
-- **16 sources / 9 sinks** built in (Kafka, SQL, REST, MySQL CDC, files, S3, Elasticsearch, MongoDB, BigQuery, …).
+- **16 sources / 9 sinks** built in (Kafka, SQL, MySQL/PostgreSQL CDC, REST, files, S3, Elasticsearch, MongoDB, BigQuery, …).
 - **21 built-in transform stages** + custom logic via **JavaScript (no build, edit→save→run)** or **native Go plugins** (compiled into the runner image).
 - **One source → many sinks, each shaped differently** (per-output PreStages), plus routing (fan-out/condition/filter) and parent–child pipelines.
 - **Ops built in:** circuit breaker, DLQ, retry+backoff, orphan-execution detection, Prometheus metrics, structured logging.
 
-**When to pick it:** you want to consolidate connector + transform + schedule into one K8s-native platform, let operators build pipelines in a GUI while engineers version them as YAML, and iterate transforms fast.
-**When not to:** heavy stateful exactly-once stream compute (→ Flink), general-purpose task orchestration (→ Airflow), or PostgreSQL CDC (not supported — route via Debezium/Kafka).
+**When to pick it:** you want to consolidate connector + transform + schedule into one K8s-native platform, let operators build pipelines in a GUI while engineers version them as YAML, and iterate transforms fast. Includes **native MySQL & PostgreSQL CDC** (no Debezium/Kafka needed) — see [CDC](#change-data-capture-cdc).
+**When not to:** heavy stateful exactly-once stream compute (→ Flink), or general-purpose task orchestration (→ Airflow).
 
 → Full comparison & selection guide: **[docs/COMPARISON.md](docs/COMPARISON.md)** · Architecture: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Design decisions: **[docs/adr/](docs/adr/)**
 
@@ -31,7 +31,7 @@ Scalable Data Pipeline Platform with Parallel Processing
 Conduix is a scalable, Kubernetes-native data pipeline platform: native-Go connectors, parallel stage processing, and workflow orchestration in one system.
 
 **Architecture**:
-- **Native-Go Connectors**: Built-in sources/sinks (Kafka, SQL, REST, MySQL CDC, S3, Elasticsearch, MongoDB, BigQuery, …) implemented in Go — no external connector process.
+- **Native-Go Connectors**: Built-in sources/sinks (Kafka, SQL, MySQL/PostgreSQL CDC, REST, S3, Elasticsearch, MongoDB, BigQuery, …) implemented in Go — no external connector process.
 - **Parallel Processing**: Stage-level parallel processing, batch optimization (configurable workers).
 - **Pure Go**: Statically linked (`CGO_ENABLED=0`) single binary — no JVM/Python runtime to install, and libc-independent (runs on Alpine/musl). Build per target OS/arch (e.g. linux/amd64, linux/arm64).
 - **Bento**: The [Bento](https://github.com/warpstreamlabs/bento) (MIT, a Benthos fork) dependency is kept as an adapter seam for future connector/Bloblang reuse, but is not on the runtime path today — connectors and transforms are Conduix's own Go implementations. See [ADR-0001](docs/adr/0001-bento-adoption.md).
@@ -40,7 +40,7 @@ Conduix is a scalable, Kubernetes-native data pipeline platform: native-Go conne
 
 - **Parallel Batch Processing**: Stage always parallel, Output selectable bulk/individual mode
 - **Input/Stage/Output Separation**: Clear separation of data ingestion (Input), transformation (Stage+PreStages), and storage (Output)
-- **Rich Built-in Connectors**: 16 sources / 9 sinks — Kafka, SQL, REST/HTTP, MySQL CDC, files, K8s logs, MQTT, WebSocket, SSE, SQS, RabbitMQ, Pub/Sub, Redis Stream; S3, GCS, Elasticsearch, MongoDB, BigQuery, and more
+- **Rich Built-in Connectors**: 16 sources / 9 sinks — Kafka, SQL, MySQL/PostgreSQL CDC, REST/HTTP, files, K8s logs, MQTT, WebSocket, SSE, SQS, RabbitMQ, Pub/Sub, Redis Stream; S3, GCS, Elasticsearch, MongoDB, BigQuery, and more
 - **High Availability**: Redis-based checkpoints, automatic fault handling
 - **Operations Tools**: Web-based pipeline configuration, monitoring, scheduling
 - **SSO Support**: OAuth2/OIDC-based login
@@ -192,6 +192,43 @@ outputs:
     config:
       bucket: "backup"
 ```
+
+### Change Data Capture (CDC)
+
+Conduix captures row-level changes from **MySQL** (binlog) and **PostgreSQL** (logical replication) natively — **no Debezium or Kafka required**. CDC events flow through the same stage/sink pipeline as any other source, so an upsert-capable SQL sink converges the target to the source (insert/update reflected; hard `DELETE` reflected as target-row deletion).
+
+| Capability | MySQL | PostgreSQL |
+|------------|-------|------------|
+| Change stream | binlog (`go-mysql`/canal) | logical replication (`pglogrepl`, pgoutput v2) |
+| Events | INSERT / UPDATE (after + old) / DELETE / DDL | INSERT / UPDATE / DELETE |
+| Offset / resume | binlog position + **GTID** checkpoint | **LSN** checkpoint + standby status |
+| Reconnect | exponential backoff, resume from last committed offset | same |
+| Start point | `start_position` (`file:pos`) / `start_gtid` | `start_lsn` |
+| Binary columns | preserved as bytes (not UTF-8-forced) | — |
+| Slot/publication | — | auto-created (idempotent) |
+| Duplicate-run guard (HA) | leader claim bound to CDC lifecycle; loses claim → stops, new owner resumes from checkpoint | same |
+
+**Server prerequisites:** MySQL `log_bin=ON`, `binlog_format=ROW` (GTID recommended); PostgreSQL `wal_level=logical` + table `REPLICA IDENTITY` (default = PK; required for DELETE reflection).
+
+```yaml
+input:
+  type: cdc
+  driver: postgres           # or mysql
+  host: db.internal
+  database: shop
+  tables: ["public.orders"]
+  # start_lsn: "0/1A2B3C4D"   # optional: begin from a known point (bulk↔CDC boundary)
+outputs:
+  - name: replica
+    type: sql
+    driver: postgres
+    table: orders_replica
+    on_conflict: update       # upsert → converge to source
+    conflict_columns: ["id"]
+    # cdc_delete: true (default) → source DELETE removes the target row
+```
+
+**Verification:** all event types (insert/update/delete) and CDC→SQL-sink convergence are checked against real MySQL/PostgreSQL instances in CI (`test-cdc-integration` job, build tag `cdcintegration`). See [docs/plans/cdc-roadmap.md](docs/plans/cdc-roadmap.md) and [ADR-0004](docs/adr/0004-cdc-safety.md).
 
 ### DataType Dependency Patterns
 

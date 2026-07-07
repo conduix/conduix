@@ -27,7 +27,7 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
 - [x] **R3** DDL 방어(안전 정지 + 샘플 validation)
   - [x] A: DDL 감지 시 "schema_changed" 정지 (실 MySQL e2e)
   - [x] B: 샘플 dry-run validation(ValidatePipelines) — 재개 게이트 (단위 검증)
-- [ ] **R3b** JSON-only DDL 허용 (후순위, on_ddl=allow 옵션 — 실제 코드)
+- [x] **R3b** `on_ddl: allow` 옵션 — R3 에 이미 포함(별도 작업 아님). "JSON DDL 허용" 은 틀린 표현이었음(JSON 엔 DDL 없음) → "DDL 감지 시 정지 끄기" 로 정정.
 - [x] **R4** 상태 자동복구 — 코드 확인: 윈도우 집계는 이미 자동 복구(생성 시 restoreStateFromRedis), stream_join 은 at-least-once replay 로 커버. 추가 작업 없음(중복 구현 회피).
 
 ## 남은 gap (이 계획의 대상)
@@ -99,12 +99,18 @@ bulk partition 분산 — partition-distributed-execution.md 에서 다룬다.)
 - validation 통과 전에는 재개 불가(게이트).
 - 테스트: ALTER TABLE → 정지 + 사유 표시 / 잘못된 매핑으로 validation fail / 수정 후 pass.
 
-## [ ] R3b. (후순위) JSON-only 파이프라인의 DDL 허용 — 규모: 소, 우선순위: 낮음
+## [x] R3b. `on_ddl: allow` 옵션 — R3 에 이미 포함(별도 작업 아님)
 
-**전제**: R3(DDL 방어)가 완성된 **이후에만** 고려.
-- 스키마 검사 없이 JSON 으로만 처리하고 `id` 정도만 유지하는 특정 파이프라인은, 스키마가 자유로우므로 DDL 변경을 허용해도 정합성 문제가 없다.
-- 그런 파이프라인에 한해 `on_ddl: allow`(스키마 무관 처리) 를 옵션으로 허용. **기본은 여전히 정지(R3).**
-- 필수 아님 — R3 방어 기능 이후 필요 시.
+**표현 정정**: "JSON-only DDL 허용" 은 틀린 표현이었다. **JSON 은 스키마가 없으니 DDL 이 없고, "DDL 허용" 이라는 말이 성립하지 않는다.**
+실제로 다루려던 것은 "**DDL 감지 시 정지를 끄는 옵션**" 이다.
+
+**본질**: R3(DDL 방어)는 downstream 이 소스 스키마에 의존할 때(컬럼 매핑 등) 정합성을 위해 DDL 시 정지한다.
+하지만 파이프라인이 소스 컬럼을 개별 참조하지 않고 **레코드를 통째로(예: JSON blob) 처리·적재**하면
+소스 스키마 변경이 파이프라인에 영향을 주지 않으므로 정지할 필요가 없다.
+
+**상태**: 이 옵션은 R3 구현에 **이미 포함됨** — `on_ddl` config(`stop` 기본 / `allow`).
+`allow` 면 executor 가 DDL 이벤트를 무시하고 계속 흘린다(`group_executor.go` ddlStopEnabled).
+→ **별도 코드 작업 없음.** (config: `v2_config.go` OnDDL, executor: ddlStopEnabled)
 
 ## [x] R4. 윈도우/조인 상태 자동복구 — 코드 확인 결과 이미 충족(추가 작업 없음)
 
@@ -129,7 +135,9 @@ bulk partition 분산 — partition-distributed-execution.md 에서 다룬다.)
 - ✅ **R1** 초기적재+CDC 동시 수렴 — sink 버전가드 + CDC `_pos` + 병렬 기동.
 - ✅ **R2** — 폐기(사용법 커버).
 - ✅ **R4** 상태 자동복구 — 코드 확인 결과 이미 충족(윈도우 자동복구 + join replay).
-- ⏳ **R3b** JSON-only DDL 허용(`on_ddl=allow`) — 후순위, 미착수.
+- ✅ **R3b** `on_ddl: allow` — R3 에 이미 포함(별도 작업 아님). 표현 정정.
+
+**→ realtime 계획의 실제 코드 gap 은 전부 완료.** (남은 트랙: bulk 분산 6단계 실 다중노드 e2e)
 
 Bulk 분산(partition-distributed-execution.md)은 병행 트랙 — 배선 완료, 실 다중노드 e2e 남음.
 

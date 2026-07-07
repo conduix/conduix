@@ -112,8 +112,8 @@ type InputV2 struct {
 	StartPosition string `yaml:"start_position,omitempty"` // "binlog_file:pos" (MySQL)
 	StartGTID     string `yaml:"start_gtid,omitempty"`     // GTID set (MySQL)
 	StartLSN      string `yaml:"start_lsn,omitempty"`      // "0/1A2B3C4D" LSN (PostgreSQL)
-	// OnDDL: CDC DDL(스키마 변경) 감지 시 동작. stop(기본, 안전 정지) / allow(무시하고 계속,
-	// JSON-only 등 스키마 무관 파이프라인 전용). 스키마 변경은 정합성을 깨므로 기본은 정지.
+	// OnDDL: CDC DDL(스키마 변경) 감지 시 동작. stop(기본, 안전 정지) / allow(무시하고 계속 —
+	// 레코드를 통째로 처리해 소스 스키마에 의존 안 하는 파이프라인 전용). 기본은 정합성 위해 정지.
 	OnDDL string `yaml:"on_ddl,omitempty"`
 
 	// Database TLS (SQL, CDC 공통 - TLS 필드는 Kafka에서도 사용)

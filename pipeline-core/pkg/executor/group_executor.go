@@ -749,7 +749,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	input := pipeline.GetInput()
 
 	// DDL 방어: CDC 스키마 변경(_cdc_type=ddl) 감지 시 기본 정지(정합성 우선).
-	// on_ddl=allow 면 무시하고 계속(JSON-only 등 스키마 무관 파이프라인 전용).
+	// on_ddl=allow 면 무시하고 계속(레코드를 통째로 처리해 소스 스키마에 의존 안 하는 파이프라인 전용).
 	onDDL, _ := input.Config["on_ddl"].(string)
 	ddlStopEnabled := onDDL != "allow"
 

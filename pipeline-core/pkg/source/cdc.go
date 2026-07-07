@@ -346,6 +346,10 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 				record.Metadata.PartitionKey = s.database
 				record.Metadata.Offset = strconv.FormatUint(seq, 10)
 
+				// R1 version guard 용 단조 position(_pos): 소스 커밋 위치 기반(bulk snapshot 과 비교 가능).
+				// postgres=LSN(uint64), mysql=binlog file·pos 인코딩. sink 의 version_column 으로 쓴다.
+				record.Data["_pos"] = monotonicPos(s.driver, event.pos, event.lsn)
+
 				select {
 				case records <- record:
 				case <-ctx.Done():
@@ -883,6 +887,25 @@ func (h *mysqlEventHandler) String() string {
 //   - 그 외 텍스트/JSON 등의 []byte                       → string
 //
 // (Go string 은 임의 바이트를 손실 없이 담지만, 다운스트림 타입 판별을 위해 바이너리는 []byte 로 통일.)
+// monotonicPos 는 CDC 이벤트의 소스 커밋 위치를 단조증가 int64 로 인코딩한다(R1 version guard 용).
+// - postgres: LSN(uint64) 자체가 단조 → 그대로.
+// - mysql: binlog 는 파일 rotation 시 pos 가 리셋되므로 "파일 시퀀스번호<<32 | pos" 로 인코딩.
+//   파일명 mysql-bin.NNNNNN 의 NNNNNN 이 단조 증가하므로 (파일,pos) 쌍이 전체 단조.
+// bulk snapshot 행은 CDC 시작 position 이하의 값을 부여하면 이 값과 비교 가능(순서 무관 수렴).
+func monotonicPos(driver string, pos mysql.Position, lsn pglogrepl.LSN) int64 {
+	if driver == "postgres" {
+		return int64(lsn)
+	}
+	// mysql: 파일명 끝 숫자(시퀀스) 추출. 예: "mysql-bin.000007" → 7.
+	var fileSeq int64
+	if dot := strings.LastIndex(pos.Name, "."); dot >= 0 {
+		if n, err := strconv.ParseInt(pos.Name[dot+1:], 10, 64); err == nil {
+			fileSeq = n
+		}
+	}
+	return fileSeq<<32 | int64(pos.Pos)
+}
+
 func rowToMap(columns []schema.TableColumn, row []any) map[string]any {
 	data := make(map[string]any)
 	for i, col := range columns {

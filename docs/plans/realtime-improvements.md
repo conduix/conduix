@@ -15,10 +15,10 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
 
 ## 진행 상태 (이번 goal)
 
-- [~] **R1** 초기적재+CDC 동시실행 수렴
+- [x] **R1** 초기적재+CDC 동시실행 수렴
   - [x] sink position 버전 가드 upsert (`08fc757`, 실 MySQL/PostgreSQL e2e 통과)
-  - [ ] CDC 레코드에 단조 position 부착
-  - [ ] workflow 병렬 기동(bulk+CDC)
+  - [x] CDC 레코드에 단조 position(`_pos`) 부착 — mysql binlog(파일<<32|pos)·postgres LSN, 단위 검증(rotation/passthrough)
+  - [x] workflow 병렬 기동 — 기존 ExecutionModeParallel 로 bulk+CDC 동시 실행(별도 구현 불요)
 - [x] **R4a** Kafka at-least-once ack 커밋
   - [x] 소스 ack 로직 + 실 Kafka e2e (`15b8973`)
   - [x] executor flush→Ack 배선(realtime) + 파이프라인 레벨 실 Kafka e2e(GroupExecutor: 1차 5건 커밋 → 재시작 새 5건만, 유실 0)
@@ -43,7 +43,7 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 
 ---
 
-## [~] R1. 초기 적재 + CDC **동시 실행** → position 버전 가드로 수렴 — 규모: 중, 우선순위: **최상**
+## [x] R1. 초기 적재 + CDC **동시 실행** → position 버전 가드로 수렴 — 규모: 중, 우선순위: **최상**
 
 **핵심(순차 아님)**: 초기적재와 CDC 를 **동시에 시작**한다. CDC upsert 는 수렴적이라, 초기적재가 끝날 때까지 CDC 를 미루지 않아도 CDC 가 offset 을 다 따라가면 최신 상태에 도달한다. 총 동기화 완료 시간 = **max(초기적재, CDC 따라잡기)** 이지 합이 아니다 → 초기적재 대기 시간만큼 단축. (순차로 "bulk 완료 후 그 position 부터 CDC" 하던 이전 설계는 폐기.)
 

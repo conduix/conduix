@@ -106,6 +106,10 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 	if cpClient != nil {
 		opts = append(opts, executor.WithCheckpointClient(cpClient))
 	}
+	// 파티션 분산: batch sub-execution 이면 배정된 파티션만 실행(비면 전체 — 현행).
+	if len(r.cfg.AssignedPartitions) > 0 {
+		opts = append(opts, executor.WithAssignedPartitions(r.cfg.AssignedPartitions))
+	}
 
 	groupExec := executor.NewGroupExecutor(r.cfg.Workflow, opts...)
 

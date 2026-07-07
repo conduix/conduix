@@ -689,10 +689,11 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	}
 
 	job, err := jm.CreateBatchJob(a.ctx, &k8s.JobSpec{
-		ExecutionID:     cmd.ExecutionID,
-		WorkflowID:      cmd.WorkflowID,
-		PipelinesConfig: string(pipelinesJSON),
-		JobConfig:       jobConfig,
+		ExecutionID:        cmd.ExecutionID,
+		WorkflowID:         cmd.WorkflowID,
+		PipelinesConfig:    string(pipelinesJSON),
+		JobConfig:          jobConfig,
+		AssignedPartitions: cmd.AssignedPartitions, // 파티션 분산: sub-execution 이면 배정 파티션만
 	})
 	if err != nil {
 		completedAt := time.Now()

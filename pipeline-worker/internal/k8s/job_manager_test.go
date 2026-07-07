@@ -74,6 +74,36 @@ func TestCreateBatchJob(t *testing.T) {
 	if container.Image != "conduix/runner:latest" {
 		t.Errorf("expected image conduix/runner:latest, got %s", container.Image)
 	}
+	// 파티션 미지정 → ASSIGNED_PARTITIONS env 없음(전체 실행).
+	if _, ok := envMap["ASSIGNED_PARTITIONS"]; ok {
+		t.Errorf("파티션 미지정인데 ASSIGNED_PARTITIONS env 존재: %v", envMap["ASSIGNED_PARTITIONS"])
+	}
+}
+
+// 파티션 분산: AssignedPartitions 지정 시 Job env 로 콤마 결합돼 전달된다.
+func TestCreateBatchJob_AssignedPartitions(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	spec := &JobSpec{
+		ExecutionID:        "exec-sub-1",
+		WorkflowID:         "wf-001",
+		PipelinesConfig:    `[{"id":"p1","name":"test"}]`,
+		JobConfig:          types.DefaultJobConfig(),
+		AssignedPartitions: []string{"p-a", "p-b"},
+	}
+	if _, err := jm.CreateBatchJob(ctx, spec); err != nil {
+		t.Fatalf("CreateBatchJob failed: %v", err)
+	}
+
+	jobs, _ := fakeClient.BatchV1().Jobs("conduix").List(ctx, metav1.ListOptions{})
+	if len(jobs.Items) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs.Items))
+	}
+	envMap := envToMap(jobs.Items[0].Spec.Template.Spec.Containers[0].Env)
+	if envMap["ASSIGNED_PARTITIONS"] != "p-a,p-b" {
+		t.Errorf("ASSIGNED_PARTITIONS = %q, want \"p-a,p-b\"", envMap["ASSIGNED_PARTITIONS"])
+	}
 }
 
 func TestCreateBatchJobWithCustomImage(t *testing.T) {

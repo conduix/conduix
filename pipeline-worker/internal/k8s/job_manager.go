@@ -40,10 +40,11 @@ func NewJobManager(client *Client, controlPlaneURL, runnerImage string) *JobMana
 
 // JobSpec 배치 Job 생성용 파라미터
 type JobSpec struct {
-	ExecutionID     string
-	WorkflowID      string
-	PipelinesConfig string // JSON
-	JobConfig       types.JobConfig
+	ExecutionID        string
+	WorkflowID         string
+	PipelinesConfig    string // JSON
+	JobConfig          types.JobConfig
+	AssignedPartitions []string // 파티션 분산: 이 Job 이 처리할 파티션 ID 부분집합(비면 전체)
 }
 
 // CreateBatchJob 배치 파이프라인용 K8s Job 생성
@@ -97,6 +98,10 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 		{Name: "CONTROL_PLANE_URL", Value: m.controlPlaneURL},
 		{Name: "CALLBACK_URL", Value: callbackURL},
 		{Name: "TIMEOUT_SECONDS", Value: fmt.Sprintf("%d", timeoutSeconds)},
+	}
+	// 파티션 분산: 배정된 파티션이 있으면 Job 에 전달(batch-job 이 WithAssignedPartitions 로 사용).
+	if len(spec.AssignedPartitions) > 0 {
+		envVars = append(envVars, corev1.EnvVar{Name: "ASSIGNED_PARTITIONS", Value: strings.Join(spec.AssignedPartitions, ",")})
 	}
 
 	// 리소스 설정

@@ -9,9 +9,10 @@
 - [x] 1단계: 타입 필드(ParentExecutionID/AssignedPartitions) 추가 + 상위호환 no-op
 - [x] 2단계: executor 파티션 필터(WithAssignedPartitions) + 분할기(control-plane) + **worker→executor 배선(realtime: cmd.AssignedPartitions → WithAssignedPartitions)** — 단위검증
 - [x] 3단계: 취합기(aggregateSubExecutionResult, == 완료판정) + DB 스키마(ParentExecutionID/Total·CompletedSubExecutions, AutoMigrate)
-- [ ] 4단계: Batch(K8s Job) 분산 — batch sub-execution 은 Job env(ASSIGNED_PARTITIONS)로 파티션 전달 필요(미구현)
+- [x] 4단계: Batch(K8s Job) 분산 — JobSpec.AssignedPartitions → Job env ASSIGNED_PARTITIONS →
+  batch-job loader → runner WithAssignedPartitions → executor 필터. 단위검증(env 전달/splitAndTrim).
 - [ ] 5단계: 부하 균형·재개·고아 감지
-- [ ] 6단계: 실 다중 agent/Job 분산 + 취합 e2e (현재 단위/로직 검증까지)
+- [ ] 6단계: 실 다중 agent/Job 분산 + 취합 e2e (현재 전 계층 배선+단위 검증까지)
 
 ## 1. 문제 (현재 진단, 코드 확인)
 

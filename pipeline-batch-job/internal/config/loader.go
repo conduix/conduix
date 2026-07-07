@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/conduix/conduix/shared/types"
 )
@@ -43,6 +44,9 @@ type RunnerConfig struct {
 
 	// 헬스체크 포트
 	HealthPort int `json:"health_port,omitempty"`
+
+	// 파티션 분산: 이 batch sub-execution 이 처리할 파티션 ID 부분집합(비면 전체 — 현행).
+	AssignedPartitions []string `json:"assigned_partitions,omitempty"`
 }
 
 // LoadFromEnv 환경변수에서 설정 로드
@@ -80,6 +84,7 @@ func LoadFromEnv() (*RunnerConfig, error) {
 		CheckpointEndpoint: os.Getenv("CHECKPOINT_ENDPOINT"),
 		TimeoutSeconds:     getEnvInt64("TIMEOUT_SECONDS", 3600),
 		HealthPort:         int(getEnvInt64("HEALTH_PORT", 8082)),
+		AssignedPartitions: splitAndTrim(os.Getenv("ASSIGNED_PARTITIONS")),
 	}
 
 	// batch 모드는 EXECUTION_ID 필수
@@ -129,6 +134,20 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// splitAndTrim 은 콤마 구분 문자열을 트림된 비어있지 않은 항목 슬라이스로 나눈다(빈 입력 → nil).
+func splitAndTrim(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func getEnvInt64(key string, defaultVal int64) int64 {

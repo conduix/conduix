@@ -730,6 +730,12 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 	// 입력 스키마 검증기 생성 (JSONSchema가 있는 경우)
 	var sourceValidator *validator.SchemaValidator
 	input := pipeline.GetInput()
+
+	// DDL 방어: CDC 스키마 변경(_cdc_type=ddl) 감지 시 기본 정지(정합성 우선).
+	// on_ddl=allow 면 무시하고 계속(JSON-only 등 스키마 무관 파이프라인 전용).
+	onDDL, _ := input.Config["on_ddl"].(string)
+	ddlStopEnabled := onDDL != "allow"
+
 	if input.JSONSchema != "" {
 		sourceValidator, err = validator.NewSchemaValidator(input.JSONSchema)
 		if err != nil {
@@ -805,6 +811,26 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 
 			// 수집량 카운트
 			statsCollector.RecordCollected()
+
+			// DDL 방어: 스키마 변경 감지 시 파이프라인을 "설정 동작 불가" 사유로 정지한다.
+			// 스키마 변경은 전후 데이터 정합성을 깨므로, 자동으로 계속 흘리지 않는다(사람이 판단).
+			if ddlStopEnabled {
+				if t, ok := record.Data["_cdc_type"].(string); ok && t == string(source.CDCEventDDL) {
+					ddlSQL, _ := record.Data["ddl"].(string)
+					flushAndAck()     // DDL 이전까지 적재된 것은 ack(유실 방지)
+					saveCheckpoints() // DDL 이전 위치까지 커밋
+					result.Status = "schema_changed" // 스키마 변경으로 설정 동작 불가 → 정지(재개 전 validation 필요)
+					result.ErrorMessage = fmt.Sprintf("schema change (DDL) detected — pipeline stopped for validation: %s", ddlSQL)
+					stats := statsCollector.GetStatistics()
+					result.RecordsRead = stats.RecordsCollected
+					result.RecordsWritten = stats.RecordsProcessed
+					result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
+					result.Statistics = stats
+					slog.Warn("CDC schema change → pipeline stopped (validation required)",
+						"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "ddl", ddlSQL)
+					return result, nil
+				}
+			}
 
 			// 소스 스키마 검증 (검증기가 있는 경우)
 			if sourceValidator != nil {

@@ -7,11 +7,11 @@
 
 - [x] 설계(진단 + 계층별 변경 지점 + 구현 순서)
 - [x] 1단계: 타입 필드(ParentExecutionID/AssignedPartitions) 추가 + 상위호환 no-op
-- [~] 2단계: executor 파티션 필터(WithAssignedPartitions) 완료·단위검증 / 분할기(control-plane) 남음
-- [ ] 3단계: 취합기 + DB 스키마(부모/자식 상태)
-- [ ] 4단계: Batch(K8s Job) 분산
+- [x] 2단계: executor 파티션 필터(WithAssignedPartitions) + 분할기(control-plane planPartitionGroups/publishSubExecutions) — 단위검증
+- [x] 3단계: 취합기(aggregateSubExecutionResult, == 완료판정) + DB 스키마(ParentExecutionID/Total·CompletedSubExecutions, AutoMigrate)
+- [ ] 4단계: Batch(K8s Job) 분산 — 현재 realtime/agent 발행 경로만(sub-execution 이 batch 면 각자 Job 위임되나 미검증)
 - [ ] 5단계: 부하 균형·재개·고아 감지
-- [ ] 6단계: e2e(여러 agent/Job 분산 + 취합 + 부분 실패 재개)
+- [ ] 6단계: 실 다중 agent/Job 분산 + 취합 e2e (현재 단위/로직 검증까지)
 
 ## 1. 문제 (현재 진단, 코드 확인)
 

@@ -343,6 +343,12 @@ type WorkflowExecution struct {
 	Metadata          string     `gorm:"type:text" json:"metadata,omitempty"` // JSON
 	CreatedAt         time.Time  `json:"created_at"`
 
+	// 파티션 분산 실행(partition-distributed-execution).
+	// 단일 실행이면 셋 다 기본값(부모 없음) → 현행과 동일.
+	ParentExecutionID      string `gorm:"size:36;index" json:"parent_execution_id,omitempty"`  // sub-execution 이면 부모 execution id
+	TotalSubExecutions     int    `gorm:"default:0" json:"total_sub_executions,omitempty"`     // 부모: 예상 sub-execution 수
+	CompletedSubExecutions int    `gorm:"default:0" json:"completed_sub_executions,omitempty"` // 부모: 완료된 sub-execution 수
+
 	// Relations
 	Workflow Workflow `gorm:"foreignKey:WorkflowID" json:"workflow"`
 }

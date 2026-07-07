@@ -441,6 +441,23 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	// 실행 주체는 그 cluster의 worker다 — realtime은 in-process 상주 실행, batch는
 	// worker가 자기 cluster에 K8s Job을 생성(위임). control-plane은 K8s Job을 직접 만들지 않는다(D1/D2).
 	// batch의 리소스 스펙(CPU/mem/namespace 등)은 workflow.JobConfig에 있으면 worker가 적용한다(D3).
+	workflowConfig := &types.Workflow{
+		ID:            workflow.ID,
+		ProjectID:     workflow.ProjectID,
+		Name:          workflow.Name,
+		Type:          types.PipelineGroupType(workflow.Type),
+		ExecutionMode: types.ExecutionMode(workflow.ExecutionMode),
+		Pipelines:     pipelines,
+	}
+
+	// 파티션 분산 실행: partitioned source 가 있으면 파티션을 sub-execution 그룹으로 나눠
+	// 여러 개 발행한다. 없으면 단일 실행(현행). partition-distributed-execution 참고.
+	partitionGroups := planPartitionGroups(pipelines)
+	if len(partitionGroups) > 1 {
+		h.publishSubExecutions(c, workflowID, userIDStr, execution, workflow.JobConfig, workflowConfig, partitionGroups)
+		return
+	}
+
 	cmd := &types.WorkflowExecutionCommand{
 		ID:              uuid.New().String(),
 		WorkflowID:      workflowID,
@@ -449,15 +466,8 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		TriggeredBy:     "user",
 		UserID:          userIDStr,
 		JobConfig:       workflow.JobConfig, // batch 위임 시 worker가 Job 리소스 스펙으로 사용(선택)
-		WorkflowConfig: &types.Workflow{
-			ID:            workflow.ID,
-			ProjectID:     workflow.ProjectID,
-			Name:          workflow.Name,
-			Type:          types.PipelineGroupType(workflow.Type),
-			ExecutionMode: types.ExecutionMode(workflow.ExecutionMode),
-			Pipelines:     pipelines,
-		},
-		Timestamp: time.Now(),
+		WorkflowConfig:  workflowConfig,
+		Timestamp:       time.Now(),
 	}
 
 	if err := h.redisService.PublishWorkflowExecution(cmd); err != nil {
@@ -1038,6 +1048,11 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 	h.logger.Info("Received execution result",
 		"workflow_id", workflowID, "execution_id", executionID, "status", result.Status, "records", result.TotalRecords)
 
+	// 파티션 분산: 이 execution 이 sub-execution 이면 워크플로우 상태 전이는 취합기가 담당한다
+	// (sub 하나 완료로 워크플로우를 idle 로 바꾸면 안 됨 — 나머지가 아직 실행 중).
+	parentID := h.subExecutionParent(executionID)
+	isSubExecution := parentID != ""
+
 	// 워크플로우 상태 업데이트
 	var newStatus string
 	switch result.Status {
@@ -1051,10 +1066,8 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 		newStatus = "idle"
 	}
 
-	// DB에서 워크플로우 업데이트 (status만)
-	if err := h.db.Model(&models.Workflow{}).
-		Where("id = ?", workflowID).
-		Update("status", newStatus).Error; err != nil {
+	// DB에서 워크플로우 업데이트 (status만). sub-execution 이면 스킵(취합기가 최종 전이).
+	if err := h.updateWorkflowStatusUnlessSub(workflowID, newStatus, isSubExecution); err != nil {
 		h.logger.Error("Failed to update workflow status", "workflow_id", workflowID, "execution_id", executionID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success":    false,
@@ -1087,6 +1100,11 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 		Where("id = ?", executionID).
 		Updates(updates).Error; err != nil {
 		h.logger.Error("Failed to update execution", "workflow_id", workflowID, "execution_id", executionID, "error", err)
+	}
+
+	// 파티션 분산 실행: sub-execution 이면 부모에 결과를 취합한다(부모 완료·워크플로우 전이는 취합기가 확정).
+	if isSubExecution {
+		h.aggregateSubExecutionResult(parentID, &result)
 	}
 
 	h.logger.Info("Workflow status updated", "workflow_id", workflowID, "status", newStatus)

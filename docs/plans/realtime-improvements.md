@@ -23,23 +23,23 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
   - [x] 소스 ack 로직 + 실 Kafka e2e (`15b8973`)
   - [x] executor flush→Ack 배선(realtime) + 파이프라인 레벨 실 Kafka e2e(GroupExecutor: 1차 5건 커밋 → 재시작 새 5건만, 유실 0)
 - [x] **CDC 소스 ack 기반 커밋 전환** (seq 부착 + Ack 시 committed 전진, 유실 창 제거. 단위+race 검증, CDC e2e 회귀 통과)
-- [ ] **R2** 다중 컨슈머 fan-out
+- [x] **R2** 다중 컨슈머 fan-out — **폐기**(사용법으로 커버: realtime 파이프라인 여러 개 등록). 코드 작업 아님.
 - [x] **R3** DDL 방어(안전 정지 + 샘플 validation)
   - [x] A: DDL 감지 시 "schema_changed" 정지 (실 MySQL e2e)
   - [x] B: 샘플 dry-run validation(ValidatePipelines) — 재개 게이트 (단위 검증)
-- [ ] **R3b** JSON-only DDL 허용 (후순위)
-- [ ] **R4** exactly-once/상태 복구 (Kafka at-most-once 제거는 R4a 로 일부, 상태 자동복구 남음)
+- [ ] **R3b** JSON-only DDL 허용 (후순위, on_ddl=allow 옵션 — 실제 코드)
+- [ ] **R4** 상태 자동복구 (윈도우/조인 stage Open 시 Redis 자동 로드 — 실제 코드. Kafka at-most-once 는 R4a 로 이미 해소)
 
 ## 남은 gap (이 계획의 대상)
 
-BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
+BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 항목(R2 는 사용법으로 커버되어 폐기 — 실제 코드 gap 은 R1/R3/R4):
 
 | # | gap | 현재 상태(코드) | 대체 목표 |
 |---|-----|-----------------|-----------|
 | R1 | **초기 적재+CDC 동시 실행 수렴** | 동시 실행 시 snapshot old 값이 CDC 최신값을 덮는 race 를 막을 sink 버전 가드 없음 | 초기적재·CDC **동시 시작** + position 단조 가드로 순서 무관 수렴(초기적재 대기 제거) |
-| R2 | **다중 컨슈머 fan-out** | 부분 — fanout stage/pipeline link 존재하나, 한 소스 스트림을 "각자 offset 으로 독립 재생" 하는 소비자 다중화는 아님 | Kafka consumer group 별 독립 offset 대체 |
+| ~~R2~~ | **다중 컨슈머 fan-out** | **gap 아님** — realtime 파이프라인 여러 개 등록으로 커버(사용법) | 폐기 |
 | R3 | **DDL 방어(안전 정지+validation)** | DDL 이벤트 발행(`_cdc_type=ddl`)만 있고, 정지·검증 게이트 없음 | 스키마 변경 시 자동 흡수 대신 **정합성 우선 정지 + 재개 게이트** |
-| R4 | **effectively-once / 상태 복구** | at-least-once + upsert 수렴. Kafka 소스 자동커밋(at-most-once 위험), 윈도우/조인 상태 자동복구 없음 | 멱등+처리성공 커밋으로 재처리 안전, 상태 자동복구 |
+| R4 | **상태 자동복구** | 윈도우/조인 상태 Redis 저장은 있으나 재시작 시 자동 로드 아님(수동) | Open 시 Redis 자동 로드 배선 |
 
 ---
 
@@ -72,22 +72,13 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 
 > 단조 position 비교가 성립하려면 CDC pos/gtid/lsn 을 **정렬 가능한 단일 값**으로 정규화해야 한다(GTID set 은 단순 비교 불가 → binlog pos 또는 LSN 우선). 이 정규화 규칙을 sink 가 이해하도록 정의.
 
-## [ ] R2. 다중 컨슈머 fan-out — 규모: 중
+## ~~R2. 다중 컨슈머 fan-out~~ — 폐기(사용법으로 커버됨, 코드 작업 아님)
 
-**현재**: fanout stage(한 파이프라인 내 브랜치 복제)와 pipeline link(부모→Kafka→자식)가 있으나, **한 CDC/소스 스트림을 여러 독립 소비자가 각자 진도(offset)로** 소비하는 모델은 아니다. 소스는 파이프라인당 1 리더.
-
-**설계**:
-- 목표: Kafka 없이도 "한 번 캡처한 변경 스트림 → 여러 다운스트림(각기 다른 변환/싱크/속도)" 을 안전하게.
-- 접근: **내부 브로드캐스트 버퍼(fan-out hub)** — CDC 소스 1개가 읽은 이벤트를 N개 구독 채널로 복제. 각 구독자는 자기 커서(committed position)를 독립 관리.
-  - 느린 구독자가 빠른 구독자를 막지 않도록 **per-subscriber bounded ring buffer** + 정책(block / drop-oldest / spill). 기본 block(유실 없음, 가장 느린 구독자에 backpressure) — 단 이건 소스까지 backpressure 전파되므로, "독립 속도" 를 원하면 bounded + 명시적 정책 선택.
-  - 각 구독자 offset 을 체크포인트에 별도 키로 저장(`PipelineID:subscriber:<id>`) → 구독자별 독립 재개.
-- **경고**: 완전한 Kafka 대체(무한 보존·임의 시점 재생)는 비목표. 이건 "실시간 다중 소비" 이지 로그 보존이 아니다. 장기 보존·임의 재생이 필요하면 Kafka 싱크로 내보내는 게 맞다(문서에 명시).
-
-**완료 기준(DoD)**:
-- 한 CDC 소스 → 2개 이상 구독자가 각자 변환·싱크로 동시 소비.
-- 한 구독자가 느려도 다른 구독자 진도 독립(정책에 따라).
-- 구독자별 offset 재개.
-- 테스트: 2 구독자, 서로 다른 처리 속도, 각자 정확히 소비 확인.
+**판정**: "한 소스를 여러 독립 소비자가 각자 처리"는 **realtime 파이프라인을 여러 개 등록**하면 된다.
+각 파이프라인이 CDC 소스를 자기 execution 으로 읽고(claim·checkpoint 가 execution 단위라 독립),
+서로 다른 stage·sink 를 붙인다. 별도 "fan-out hub" 신기능은 불필요 — 이건 Conduix 사용법이지 gap 이 아니다.
+(주의: 이건 "같은 스트림을 여러 소비자" 케이스다. "한 배치 데이터셋을 여러 노드로 샤딩" 은 별개이며 그건
+bulk partition 분산 — partition-distributed-execution.md 에서 다룬다.)
 
 ## [x] R3. DDL 방어 (스키마 변경 시 안전 정지 + validation) — 규모: 중
 
@@ -115,19 +106,21 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 - 그런 파이프라인에 한해 `on_ddl: allow`(스키마 무관 처리) 를 옵션으로 허용. **기본은 여전히 정지(R3).**
 - 필수 아님 — R3 방어 기능 이후 필요 시.
 
-## [ ] R4. exactly-once / 상태 복구 — 규모: 대, 우선순위: 낮음(정직히 Flink 영역)
+## [ ] R4. 윈도우/조인 상태 자동복구 — 규모: 중
 
-**현재**: at-least-once + upsert 수렴. 윈도우/조인 상태 Redis 저장은 있으나 재시작 자동복구 없음(`windowed_aggregate_stage.go` LoadFromRedis 수동).
+**현재**: 윈도우 집계 상태는 Redis 저장 코드(`windowed_aggregate_stage.go` LoadFromRedis)가 있으나 **Open 시 자동 호출이 아니라 수동**. stream_join 은 Redis 저장 자체가 없음. → 재시작 시 상태 유실(집계가 처음부터).
 
-**설계(현실적 범위)**:
-- **상태 자동 복구**: 윈도우/조인 stage 가 Open 시 Redis 에서 상태 자동 로드(현재 수동 호출을 자동화). stream_join 도 Redis 저장 추가.
-- **effectively-once(실효적 정확히-한번)**: 진짜 2PC EOS 는 비목표(Flink 영역). 대신 **멱등 싱크 + 처리성공 기반 offset 커밋** 조합으로 "재처리해도 결과 동일" 을 보장(CDC full-row upsert 는 이미 이 속성). 이 경계를 문서에 명확히.
-- Kafka 소스의 처리성공 기반 커밋(현재 자동커밋=at-most-once 위험)을 **FetchMessage + 처리 후 CommitMessages** 로 전환 → CDC 와 동일한 at-least-once 보장.
+**실제 코드 작업**:
+- 윈도우/조인 stage 가 Open 시 Redis 에서 상태를 **자동 로드**(현재 수동 호출을 자동 배선).
+- stream_join 에 Redis 상태 저장/복구 추가.
+
+**비목표(하지 않음, 사유)**:
+- **exactly-once 2PC**: Flink 영역. Conduix 는 at-least-once + 멱등(upsert) 수렴으로 충분(이미 확보). 이건 원칙상 다른 도구가 맞음(BULK_VS_REALTIME_COMPARISON 참고).
+- Kafka at-most-once 는 R4a(ack 커밋)로 **이미 해소**됨.
 
 **완료 기준(DoD)**:
-- Kafka 소스가 처리 성공 후 offset 커밋(at-most-once 위험 제거).
-- 윈도우/조인 상태가 재시작 후 자동 복구.
-- 테스트: 처리 중 재시작 → 상태·offset 복구, 유실/중복 최소.
+- 윈도우/조인 상태가 재시작 후 자동 복구(수동 호출 없이).
+- 테스트: 상태 저장 후 새 stage 인스턴스가 Open 에서 복구.
 
 ---
 

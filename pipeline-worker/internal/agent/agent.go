@@ -866,8 +866,14 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 	// Link Client 생성
 	linkClient := link.NewClient(a.controlPlaneURL)
 
-	// GroupExecutor를 사용하여 파이프라인 그룹 실행
-	groupExecutor := executor.NewGroupExecutor(workflow, executor.WithLinkClient(linkClient))
+	// GroupExecutor를 사용하여 파이프라인 그룹 실행.
+	// 파티션 분산: cmd.AssignedPartitions 가 있으면 이 sub-execution 은 배정된 파티션만 실행한다
+	// (없으면 전체 — 현행 단일 실행). control-plane 분할기가 sub 별로 배정한다.
+	opts := []executor.GroupExecutorOption{executor.WithLinkClient(linkClient)}
+	if len(cmd.AssignedPartitions) > 0 {
+		opts = append(opts, executor.WithAssignedPartitions(cmd.AssignedPartitions))
+	}
+	groupExecutor := executor.NewGroupExecutor(workflow, opts...)
 
 	// 실행 추적 시작 (GroupExecutor 포함)
 	a.execMu.Lock()

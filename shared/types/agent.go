@@ -101,6 +101,11 @@ type WorkflowExecutionCommand struct {
 	JobConfig       string         `json:"job_config,omitempty"` // batch 위임 시 worker가 K8s Job 리소스 스펙으로 사용(선택)
 	Timestamp       time.Time      `json:"timestamp"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
+
+	// 파티션 분산 실행(partition-distributed-execution): partitioned source 를 여러 agent/Job 에
+	// 나눠 실행할 때 쓴다. 둘 다 비면 현행(단일 실행)과 100% 동일 동작(상위호환).
+	ParentExecutionID  string   `json:"parent_execution_id,omitempty"` // sub-execution 이면 부모 execution id
+	AssignedPartitions []string `json:"assigned_partitions,omitempty"` // 이 sub-execution 이 처리할 파티션 ID 부분집합
 }
 
 // WorkflowExecutionResult 워크플로우 실행 결과

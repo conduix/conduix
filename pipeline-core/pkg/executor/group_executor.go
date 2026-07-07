@@ -47,6 +47,9 @@ type GroupExecutor struct {
 	activeInputs     map[string]source.Source // pipelineID -> input source
 	inputsMu         sync.RWMutex
 
+	// 파티션 분산 실행: 이 executor 가 처리할 파티션 ID 집합(nil 이면 전체 — 현행).
+	assignedPartitions map[string]bool
+
 	// Monitoring 관련
 	sampleBuffers   map[string]*SampleBuffer   // pipelineID -> SampleBuffer
 	statsCollectors map[string]*StatsCollector // pipelineID -> StatsCollector
@@ -81,6 +84,20 @@ func WithCheckpointClient(client *checkpoint.Client) GroupExecutorOption {
 func WithLinkClient(client *link.Client) GroupExecutorOption {
 	return func(e *GroupExecutor) {
 		e.linkClient = client
+	}
+}
+
+// WithAssignedPartitions 파티션 분산 실행 시, 이 executor 가 처리할 파티션 ID 부분집합을 지정한다.
+// 비면(nil/빈) 전체 파티션 실행(현행). partition-distributed-execution 의 sub-execution 용.
+func WithAssignedPartitions(ids []string) GroupExecutorOption {
+	return func(e *GroupExecutor) {
+		if len(ids) == 0 {
+			return
+		}
+		e.assignedPartitions = make(map[string]bool, len(ids))
+		for _, id := range ids {
+			e.assignedPartitions[id] = true
+		}
 	}
 }
 
@@ -817,8 +834,8 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			if ddlStopEnabled {
 				if t, ok := record.Data["_cdc_type"].(string); ok && t == string(source.CDCEventDDL) {
 					ddlSQL, _ := record.Data["ddl"].(string)
-					flushAndAck()     // DDL 이전까지 적재된 것은 ack(유실 방지)
-					saveCheckpoints() // DDL 이전 위치까지 커밋
+					flushAndAck()                    // DDL 이전까지 적재된 것은 ack(유실 방지)
+					saveCheckpoints()                // DDL 이전 위치까지 커밋
 					result.Status = "schema_changed" // 스키마 변경으로 설정 동작 불가 → 정지(재개 전 validation 필요)
 					result.ErrorMessage = fmt.Sprintf("schema change (DDL) detected — pipeline stopped for validation: %s", ddlSQL)
 					stats := statsCollector.GetStatistics()
@@ -1019,10 +1036,17 @@ func (e *GroupExecutor) runMultiPartitionSource(ctx context.Context, gs types.Gr
 	errs := make(chan error, len(gs.Partitions))
 
 	var wg sync.WaitGroup
+	assignedCount := 0
 	for _, partition := range gs.Partitions {
 		if !partition.Enabled {
 			continue
 		}
+		// 파티션 분산 실행: 이 executor 에 배정된 파티션만 실행(나머지는 다른 sub-execution 이 담당).
+		// assignedPartitions 가 nil 이면 전체 실행(현행 단일 실행).
+		if e.assignedPartitions != nil && !e.assignedPartitions[partition.ID] {
+			continue
+		}
+		assignedCount++
 
 		wg.Add(1)
 		go func(p types.PartitionConfig) {
@@ -1073,6 +1097,11 @@ func (e *GroupExecutor) runMultiPartitionSource(ctx context.Context, gs types.Gr
 				}
 			}
 		}(partition)
+	}
+
+	if e.assignedPartitions != nil {
+		slog.Info("running assigned partition subset",
+			"workflow_id", e.group.ID, "assigned", assignedCount, "total", len(gs.Partitions))
 	}
 
 	// 모든 파티션 완료 시 채널 닫기

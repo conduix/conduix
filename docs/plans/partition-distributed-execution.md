@@ -6,8 +6,8 @@
 ## 진행 상태 (이번 goal)
 
 - [x] 설계(진단 + 계층별 변경 지점 + 구현 순서)
-- [ ] 1단계: 타입 필드 추가 + 상위호환 no-op
-- [ ] 2단계: 분할기(realtime) + executor 파티션 필터
+- [x] 1단계: 타입 필드(ParentExecutionID/AssignedPartitions) 추가 + 상위호환 no-op
+- [~] 2단계: executor 파티션 필터(WithAssignedPartitions) 완료·단위검증 / 분할기(control-plane) 남음
 - [ ] 3단계: 취합기 + DB 스키마(부모/자식 상태)
 - [ ] 4단계: Batch(K8s Job) 분산
 - [ ] 5단계: 부하 균형·재개·고아 감지

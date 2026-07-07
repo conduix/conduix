@@ -23,6 +23,10 @@ type Metadata struct {
 	Origin    string // 원본 위치 (파일 경로, URL 등)
 	Offset    string // 오프셋 (Kafka 등)
 	Timestamp int64  // 수신 시간
+
+	// PartitionKey: 이 레코드가 속한 소스 파티션 식별자(ack 워터마크 단위).
+	// 예: kafka "topic-partition", cdc "database". 비면 소스가 ack 를 지원하지 않는다는 의미.
+	PartitionKey string
 }
 
 // Source 데이터 소스 인터페이스
@@ -61,6 +65,21 @@ type CheckpointableSource interface {
 
 	// SourceType 소스 타입 반환 (kubernetes, kafka, cdc, sql_event)
 	SourceType() string
+}
+
+// RecordOffset 은 한 레코드의 소스 내 위치(ack 대상).
+type RecordOffset struct {
+	PartitionKey string // Metadata.PartitionKey 와 동일
+	Offset       string // 소스가 해석하는 offset(kafka 숫자 / cdc binlog pos·gtid·lsn)
+}
+
+// AckableSource 는 다운스트림이 "sink 적재까지 성공" 을 소스에 알릴 수 있는 소스다.
+// 소스는 ack 된 offset 의 파티션별 연속 최댓값(워터마크)까지만 committed 를 전진시켜,
+// 채널 전송 시점이 아니라 실제 적재 시점 기준으로 offset 을 커밋한다(진짜 at-least-once).
+// 배치 단위 호출을 전제로 한다(per-record 왕복 없음).
+type AckableSource interface {
+	CheckpointableSource
+	Ack(offsets []RecordOffset)
 }
 
 // NewSource 소스 설정으로 Source 생성

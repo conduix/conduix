@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,14 @@ type KafkaSource struct {
 	// 체크포인트 (partition -> offset)
 	checkpoints  map[string]int64
 	checkpointMu sync.RWMutex
+
+	// ack 기반 커밋용. 채널 전송 시점이 아니라 Ack(sink flush 성공) 시점에 커밋한다.
+	// pending: partitionKey("topic-partition") -> (offset -> 미ack 메시지). CommitMessages 에 원본 msg 필요.
+	// reader: partitionKey -> 해당 파티션을 읽는 reader(커밋 대상).
+	ackMu          sync.Mutex
+	pending        map[string]map[int64]kafka.Message
+	readerByPartn  map[string]*kafka.Reader
+	committedByKey map[string]int64 // 파티션별 커밋 완료 offset(워터마크)
 }
 
 // NewKafkaSource Kafka 소스 생성
@@ -98,6 +107,9 @@ func NewKafkaSource(cfg config.SourceV2) (*KafkaSource, error) {
 		commitInterval: commitInterval,
 		onParseError:   onParseError,
 		checkpoints:    make(map[string]int64),
+		pending:        make(map[string]map[int64]kafka.Message),
+		readerByPartn:  make(map[string]*kafka.Reader),
+		committedByKey: make(map[string]int64),
 	}
 
 	// SASL 인증 설정
@@ -229,18 +241,21 @@ func (s *KafkaSource) Open(ctx context.Context) error {
 	// 각 토픽에 대해 reader 생성
 	for _, topic := range s.topics {
 		readerCfg := kafka.ReaderConfig{
-			Brokers:        s.brokers,
-			Topic:          topic,
-			MinBytes:       s.minBytes,
-			MaxBytes:       s.maxBytes,
-			MaxWait:        s.maxWait,
-			StartOffset:    s.startOffset,
-			CommitInterval: s.commitInterval,
+			Brokers:     s.brokers,
+			Topic:       topic,
+			MinBytes:    s.minBytes,
+			MaxBytes:    s.maxBytes,
+			MaxWait:     s.maxWait,
+			StartOffset: s.startOffset,
 		}
 
-		// GroupID가 있으면 consumer group 모드
+		// GroupID가 있으면 consumer group 모드.
+		// CommitInterval(주기 자동커밋)은 처리 성공과 무관하게 offset 을 진행시켜
+		// 처리 실패 시 유실(at-most-once)을 만든다. 그래서 자동커밋을 끄고(=0),
+		// readFromReader 가 레코드를 다운스트림에 넘긴 뒤 명시적으로 커밋한다(at-least-once).
 		if s.groupID != "" {
 			readerCfg.GroupID = s.groupID
+			readerCfg.CommitInterval = 0
 		}
 
 		// SASL/TLS가 설정된 경우 Dialer 사용
@@ -305,20 +320,19 @@ func (s *KafkaSource) readFromReader(ctx context.Context, reader *kafka.Reader, 
 		default:
 		}
 
-		msg, err := reader.ReadMessage(ctx)
+		// FetchMessage 는 offset 을 커밋하지 않는다(ReadMessage 는 자동커밋). 처리 성공(레코드
+		// 다운스트림 전달) 후에 CommitMessages 로 명시 커밋 → at-least-once.
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return
 			}
 			select {
-			case errs <- fmt.Errorf("read message: %w", err):
+			case errs <- fmt.Errorf("fetch message: %w", err):
 			default:
 			}
 			return
 		}
-
-		// 체크포인트 업데이트
-		s.updateCheckpoint(msg.Topic, msg.Partition, msg.Offset)
 
 		// 데이터 파싱
 		var data map[string]any
@@ -358,14 +372,22 @@ func (s *KafkaSource) readFromReader(ctx context.Context, reader *kafka.Reader, 
 			data["_key"] = string(msg.Key)
 		}
 
+		partnKey := fmt.Sprintf("%s-%d", msg.Topic, msg.Partition)
 		record := Record{
 			Data: data,
 			Metadata: Metadata{
-				Source:    "kafka",
-				Origin:    msg.Topic,
-				Offset:    fmt.Sprintf("%d:%d", msg.Partition, msg.Offset),
-				Timestamp: msg.Time.UnixMilli(),
+				Source:       "kafka",
+				Origin:       msg.Topic,
+				Offset:       strconv.FormatInt(msg.Offset, 10),
+				PartitionKey: partnKey,
+				Timestamp:    msg.Time.UnixMilli(),
 			},
+		}
+
+		// 커밋은 채널 전송 시점이 아니라 Ack(sink flush 성공) 시점에 한다(진짜 at-least-once).
+		// 여기서는 미ack 메시지로만 기록해두고, Ack 가 워터마크까지 CommitMessages 를 호출한다.
+		if s.groupID != "" {
+			s.trackPending(partnKey, reader, msg)
 		}
 
 		select {
@@ -381,6 +403,79 @@ func (s *KafkaSource) updateCheckpoint(topic string, partition int, offset int64
 	defer s.checkpointMu.Unlock()
 	key := fmt.Sprintf("%s-%d", topic, partition)
 	s.checkpoints[key] = offset
+}
+
+// trackPending 은 아직 ack 안 된 메시지를 파티션별로 보관한다(Ack 시 CommitMessages 에 원본 필요).
+func (s *KafkaSource) trackPending(partnKey string, reader *kafka.Reader, msg kafka.Message) {
+	s.ackMu.Lock()
+	defer s.ackMu.Unlock()
+	if s.pending[partnKey] == nil {
+		s.pending[partnKey] = make(map[int64]kafka.Message)
+	}
+	s.pending[partnKey][msg.Offset] = msg
+	s.readerByPartn[partnKey] = reader
+}
+
+// Ack 는 다운스트림이 sink 적재까지 성공한 레코드 offset 을 받아, 파티션별로 커밋을 전진시킨다.
+// 커밋은 파티션별 ack 최댓값의 메시지 하나만 CommitMessages 로 반영한다(kafka offset 은 누적 커밋이라
+// 최댓값 커밋 = 그 이하 전부 커밋). 미ack(gap 이후)은 남겨 재처리(유실 없음).
+func (s *KafkaSource) Ack(offsets []RecordOffset) {
+	if s.groupID == "" {
+		return
+	}
+	// 파티션별 ack 최댓값 계산.
+	maxByKey := make(map[string]int64)
+	for _, o := range offsets {
+		off, err := strconv.ParseInt(o.Offset, 10, 64)
+		if err != nil {
+			continue
+		}
+		if cur, ok := maxByKey[o.PartitionKey]; !ok || off > cur {
+			maxByKey[o.PartitionKey] = off
+		}
+	}
+
+	for partnKey, maxOff := range maxByKey {
+		s.ackMu.Lock()
+		// 이미 그 이상 커밋했으면 스킵(중복 ack).
+		if committed, ok := s.committedByKey[partnKey]; ok && committed >= maxOff {
+			s.ackMu.Unlock()
+			continue
+		}
+		msg, ok := s.pending[partnKey][maxOff]
+		reader := s.readerByPartn[partnKey]
+		s.ackMu.Unlock()
+		if !ok || reader == nil {
+			continue
+		}
+
+		// 커밋은 소비자 ctx 와 독립. 파이프라인 정지 순간에도 이미 적재된 지점은 커밋되어야
+		// 재시작 시 불필요한 재처리를 막는다.
+		commitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := reader.CommitMessages(commitCtx, msg)
+		cancel()
+		if err != nil {
+			slog.Warn("kafka: commit failed, will reprocess on restart",
+				"partition_key", partnKey, "offset", maxOff, "error", err)
+			continue
+		}
+
+		// 커밋 성공 → 워터마크 갱신 + 그 이하 pending 정리 + 체크포인트 갱신.
+		s.ackMu.Lock()
+		s.committedByKey[partnKey] = maxOff
+		if p := s.pending[partnKey]; p != nil {
+			for off := range p {
+				if off <= maxOff {
+					delete(p, off)
+				}
+			}
+		}
+		s.ackMu.Unlock()
+
+		s.checkpointMu.Lock()
+		s.checkpoints[partnKey] = maxOff
+		s.checkpointMu.Unlock()
+	}
 }
 
 // GetCheckpoints 현재 체크포인트 반환

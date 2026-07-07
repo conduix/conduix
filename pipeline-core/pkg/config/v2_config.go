@@ -626,6 +626,10 @@ type OutputConfig struct {
 	OnConflict      string            `yaml:"on_conflict,omitempty"`      // ignore, update, error (default: error)
 	ConflictColumns []string          `yaml:"conflict_columns,omitempty"` // columns to check for conflict (upsert key)
 	CreateTable     string            `yaml:"create_table,omitempty"`     // CREATE TABLE SQL to execute on open
+	// VersionColumn: 버전 가드 upsert 용 단조증가 컬럼(예: "_pos"). 지정 시 upsert 는
+	// incoming.version > existing.version 일 때만 덮어쓴다. 초기적재+CDC 동시 실행에서
+	// snapshot old 값이 CDC 최신값을 뒤늦게 덮는 race 를 막아 순서 무관 수렴을 보장한다.
+	VersionColumn string `yaml:"version_column,omitempty"`
 
 	// Kafka Sink
 	Brokers []string `yaml:"brokers,omitempty"` // Kafka broker addresses

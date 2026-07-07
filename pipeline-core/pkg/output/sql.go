@@ -29,7 +29,8 @@ type SQLOutput struct {
 	onConflict      string
 	conflictColumns []string
 	createTable     string
-	cdcDelete       bool // CDC delete 이벤트(_cdc_type=delete)를 타깃 DELETE 로 반영할지(기본 true)
+	cdcDelete       bool   // CDC delete 이벤트(_cdc_type=delete)를 타깃 DELETE 로 반영할지(기본 true)
+	versionColumn   string // 버전 가드 upsert 용 단조 컬럼(빈 값이면 미사용). incoming>existing 일 때만 덮음.
 
 	db     *sql.DB
 	buffer []source.Record
@@ -76,6 +77,7 @@ func NewSQLOutput(cfg config.OutputConfig) (*SQLOutput, error) {
 		conflictColumns: cfg.ConflictColumns,
 		createTable:     cfg.CreateTable,
 		cdcDelete:       cdcDelete,
+		versionColumn:   cfg.VersionColumn,
 		buffer:          make([]source.Record, 0, batchSize),
 	}, nil
 }
@@ -311,13 +313,20 @@ func (o *SQLOutput) batchInsert(ctx context.Context, records []source.Record, co
 		}
 	case "update":
 		// MySQL: ON DUPLICATE KEY UPDATE / PostgreSQL: ON CONFLICT (cols) DO UPDATE
-		if o.driver == "mysql" {
+		switch o.driver {
+		case "mysql":
+			vcol := o.quoteIdentifier(o.versionColumn)
 			updates := make([]string, len(columns))
 			for i, col := range quotedCols {
-				updates[i] = fmt.Sprintf("%s=VALUES(%s)", col, col)
+				if o.versionColumn != "" {
+					// 버전 가드: 들어온 버전이 더 클 때만 값 갱신. 그 외엔 기존값 유지(=수렴, 순서 무관).
+					updates[i] = fmt.Sprintf("%s=IF(VALUES(%s)>%s, VALUES(%s), %s)", col, vcol, vcol, col, col)
+				} else {
+					updates[i] = fmt.Sprintf("%s=VALUES(%s)", col, col)
+				}
 			}
 			suffix = " ON DUPLICATE KEY UPDATE " + strings.Join(updates, ", ")
-		} else if o.driver == "postgres" {
+		case "postgres":
 			// PostgreSQL 은 충돌 대상 컬럼(unique/PK)을 명시해야 한다. conflict_columns 미지정 시
 			// 어느 제약으로 수렴할지 알 수 없어 plain INSERT 로 두면 중복키 에러가 난다 → 명시 요구.
 			if len(o.conflictColumns) == 0 {
@@ -333,6 +342,11 @@ func (o *SQLOutput) batchInsert(ctx context.Context, records []source.Record, co
 			}
 			suffix = fmt.Sprintf(" ON CONFLICT (%s) DO UPDATE SET %s",
 				strings.Join(conflictCols, ", "), strings.Join(updates, ", "))
+			if o.versionColumn != "" {
+				// 버전 가드: 들어온 버전이 기존보다 클 때만 UPDATE(작거나 같으면 무시 → snapshot race 방지).
+				vcol := o.quoteIdentifier(o.versionColumn)
+				suffix += fmt.Sprintf(" WHERE %s.%s < EXCLUDED.%s", o.quoteIdentifier(o.table), vcol, vcol)
+			}
 		}
 	}
 

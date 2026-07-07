@@ -19,30 +19,41 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 
 | # | gap | 현재 상태(코드) | 대체 목표 |
 |---|-----|-----------------|-----------|
-| R1 | **초기 적재→CDC 무결절 전환** | bulk·CDC 파이프라인은 분리돼 있으나 workflow 가 "bulk 완료 시점 position 을 CDC 에 넘겨 이어받게" 하는 오케스트레이션 없음 | Debezium snapshot→streaming 을 **workflow 오케스트레이션**으로(관심사 분리) |
+| R1 | **초기 적재+CDC 동시 실행 수렴** | 동시 실행 시 snapshot old 값이 CDC 최신값을 덮는 race 를 막을 sink 버전 가드 없음 | 초기적재·CDC **동시 시작** + position 단조 가드로 순서 무관 수렴(초기적재 대기 제거) |
 | R2 | **다중 컨슈머 fan-out** | 부분 — fanout stage/pipeline link 존재하나, 한 소스 스트림을 "각자 offset 으로 독립 재생" 하는 소비자 다중화는 아님 | Kafka consumer group 별 독립 offset 대체 |
 | R3 | **DDL 방어(안전 정지+validation)** | DDL 이벤트 발행(`_cdc_type=ddl`)만 있고, 정지·검증 게이트 없음 | 스키마 변경 시 자동 흡수 대신 **정합성 우선 정지 + 재개 게이트** |
 | R4 | **effectively-once / 상태 복구** | at-least-once + upsert 수렴. Kafka 소스 자동커밋(at-most-once 위험), 윈도우/조인 상태 자동복구 없음 | 멱등+처리성공 커밋으로 재처리 안전, 상태 자동복구 |
 
 ---
 
-## R1. 초기 적재 → CDC 무결절 전환 (workflow 오케스트레이션) — 규모: 중, 우선순위: **최상**
+## R1. 초기 적재 + CDC **동시 실행** → position 버전 가드로 수렴 — 규모: 중, 우선순위: **최상**
 
-**관심사 경계(중요)**: "초기 스냅샷" 을 **CDC 소스 안에 SELECT 로 넣지 않는다.** CDC 소스의 관심사는 *변경분 캡처* 뿐이고, 전량 적재는 **bulk 파이프라인**, 이 둘을 잇는 것은 **workflow 레이어**의 책임이다. Debezium 이 한 컴포넌트에 snapshot+streaming 을 뭉쳐 넣은 것과 달리, Conduix 는 이미 bulk/realtime 파이프라인이 분리돼 있으므로 **workflow 가 순서와 경계를 오케스트레이션**하면 된다.
+**핵심(순차 아님)**: 초기적재와 CDC 를 **동시에 시작**한다. CDC upsert 는 수렴적이라, 초기적재가 끝날 때까지 CDC 를 미루지 않아도 CDC 가 offset 을 다 따라가면 최신 상태에 도달한다. 총 동기화 완료 시간 = **max(초기적재, CDC 따라잡기)** 이지 합이 아니다 → 초기적재 대기 시간만큼 단축. (순차로 "bulk 완료 후 그 position 부터 CDC" 하던 이전 설계는 폐기.)
 
-**설계**(CDC 소스 내부 불변 — workflow/executor 레이어만):
-- 한 workflow 에 `[bulk 파이프라인: 전량 적재] → [realtime 파이프라인: CDC]` 를 순차 의존으로 구성.
-- **경계 전달**: bulk 파이프라인 시작 직전(또는 실행 중) 소스 DB 의 현재 binlog position/GTID(MySQL)·LSN(PostgreSQL)를 확보해두고, 그 값을 후속 CDC 파이프라인의 `start_position`/`start_gtid`/`start_lsn` config 로 **동적 주입**. CDC 소스는 이미 이 config 를 받는다(`cdc.go` 확인됨) — 소스 변경 불필요.
-- bulk 가 그 position 이전 상태를 적재하고, CDC 가 그 position 부터 이어받으므로 경계 중복은 upsert 싱크가 흡수(수렴).
-- 필요한 것: (a) workflow 파이프라인 간 순차 의존 실행(있는지 확인 필요 — group_executor ExecutionMode), (b) bulk 완료 시점 position 을 CDC config 로 넘기는 동적 주입 훅. **이 두 가지가 R1 의 실제 구현 대상**이며, CDC/스냅샷 로직이 아니다.
+**관심사 경계**: CDC 소스 = 변경분 캡처, bulk 파이프라인 = 전량 적재, sink = 수렴 규칙(버전 가드), workflow = 둘을 동시 기동. 한 레이어가 다른 레이어 일을 안 떠안는다.
+
+**정합성 문제와 이론적 최선의 해법 — position 버전 가드**:
+동시 실행의 유일한 위험은 **초기적재(snapshot)의 old 값이 CDC 의 최신 변경을 뒤늦게 덮는 race**(도착 순서 비결정적). 이를 도착 순서·타이밍과 **완전히 무관하게** 푸는 이론적으로 옳은 방법은 **단조증가 position 기반 "최신이 항상 이긴다" 불변식**이다:
+- 모든 레코드에 소스 position 을 싣는다: CDC 는 이벤트의 binlog pos/GTID/LSN(단조증가), 초기적재 행은 **스냅샷을 캡처한 시점의 position**(그 이전 상태이므로 모든 CDC 이벤트보다 작거나 같음).
+- sink upsert 는 **`incoming.position > existing.position` 일 때만 덮어쓴다**(조건부 upsert). position 컬럼을 타깃에 유지.
+  - PostgreSQL: `ON CONFLICT (pk) DO UPDATE SET ... WHERE existing._pos < EXCLUDED._pos`
+  - MySQL: `ON DUPLICATE KEY UPDATE col = IF(VALUES(_pos) > _pos, VALUES(col), col), _pos = GREATEST(_pos, VALUES(_pos))`
+- 결과: snapshot 이 CDC 뒤에 도착해도 position 이 낮아 무시됨 → **순서 무관 수렴**. 삭제도 delete 이벤트의 position 이 이후 snapshot insert 보다 크면 유지(insert-if-absent 방식의 삭제 race 구멍 없음).
+
+**왜 이게 최선인가**: insert-if-absent(snapshot 은 없을 때만 삽입)는 간단하지만 "snapshot 중 삭제된 행을 snapshot 이 뒤늦게 되살리는" race 에 취약하다. position 가드는 삭제 포함 모든 시나리오에서 단일 불변식으로 정합 → 일반적이고 견고.
+
+**구현 대상**:
+1. **sink 버전 가드 upsert**: SQL sink 에 `version_column`(예: `_pos`) 옵션 + 조건부 upsert(위 SQL). 타깃 테이블에 position 컬럼 필요.
+2. **레코드에 position 부착**: CDC 이벤트는 pos/gtid/lsn → 정렬 가능한 단조 값으로 변환해 레코드 필드로. 초기적재(bulk SQL 소스)는 스냅샷 시점 position 을 상수로 부여.
+3. **workflow 동시 기동**: 한 workflow 에 bulk + CDC 파이프라인을 **병렬**로. (순차 의존 불필요.)
 
 **완료 기준(DoD)**:
-- workflow 로 bulk→CDC 를 순차 구성 시, bulk 가 전량 적재하고 CDC 가 bulk 시작 시점 position 부터 이어받아 갭 없음.
-- 경계 구간 중복은 upsert 로 수렴(최종 일관).
-- CDC 소스 코드는 변경 없음(config 주입만).
-- e2e: 초기 N행 + 전환 중 M행 변경 → 타깃 = 소스 최종 상태.
+- 초기적재와 CDC 를 동시 시작 → 타깃이 소스 최신 상태로 수렴(순서 무관).
+- snapshot old 값이 CDC 최신값을 덮지 않음(position 가드).
+- 초기적재 중 발생한 update/delete 가 정확히 반영.
+- e2e: 초기 N행 + 동시에 M행 변경(update/delete 포함) → 타깃 = 소스 최종 상태, snapshot 지연 주입해도 동일.
 
-> 선행 확인 필요: workflow 레이어가 (a)파이프라인 순차 의존, (b)런타임 config 동적 주입을 지원하는지. 미지원이면 그 훅 추가가 R1 범위. CDC 소스는 건드리지 않는다.
+> 단조 position 비교가 성립하려면 CDC pos/gtid/lsn 을 **정렬 가능한 단일 값**으로 정규화해야 한다(GTID set 은 단순 비교 불가 → binlog pos 또는 LSN 우선). 이 정규화 규칙을 sink 가 이해하도록 정의.
 
 ## R2. 다중 컨슈머 fan-out — 규모: 중
 

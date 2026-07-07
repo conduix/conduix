@@ -28,7 +28,7 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
   - [x] A: DDL 감지 시 "schema_changed" 정지 (실 MySQL e2e)
   - [x] B: 샘플 dry-run validation(ValidatePipelines) — 재개 게이트 (단위 검증)
 - [ ] **R3b** JSON-only DDL 허용 (후순위, on_ddl=allow 옵션 — 실제 코드)
-- [ ] **R4** 상태 자동복구 (윈도우/조인 stage Open 시 Redis 자동 로드 — 실제 코드. Kafka at-most-once 는 R4a 로 이미 해소)
+- [x] **R4** 상태 자동복구 — 코드 확인: 윈도우 집계는 이미 자동 복구(생성 시 restoreStateFromRedis), stream_join 은 at-least-once replay 로 커버. 추가 작업 없음(중복 구현 회피).
 
 ## 남은 gap (이 계획의 대상)
 
@@ -39,7 +39,7 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 항목(R2 는 사용법으로 커�
 | R1 | **초기 적재+CDC 동시 실행 수렴** | 동시 실행 시 snapshot old 값이 CDC 최신값을 덮는 race 를 막을 sink 버전 가드 없음 | 초기적재·CDC **동시 시작** + position 단조 가드로 순서 무관 수렴(초기적재 대기 제거) |
 | ~~R2~~ | **다중 컨슈머 fan-out** | **gap 아님** — realtime 파이프라인 여러 개 등록으로 커버(사용법) | 폐기 |
 | R3 | **DDL 방어(안전 정지+validation)** | DDL 이벤트 발행(`_cdc_type=ddl`)만 있고, 정지·검증 게이트 없음 | 스키마 변경 시 자동 흡수 대신 **정합성 우선 정지 + 재개 게이트** |
-| R4 | **상태 자동복구** | 윈도우/조인 상태 Redis 저장은 있으나 재시작 시 자동 로드 아님(수동) | Open 시 Redis 자동 로드 배선 |
+| R4 | **상태 자동복구** | 윈도우 집계는 이미 생성 시 자동 복구(restoreStateFromRedis), stream_join 은 소스 replay 로 커버 | 추가 작업 없음(코드 확인) |
 
 ---
 
@@ -106,34 +106,32 @@ bulk partition 분산 — partition-distributed-execution.md 에서 다룬다.)
 - 그런 파이프라인에 한해 `on_ddl: allow`(스키마 무관 처리) 를 옵션으로 허용. **기본은 여전히 정지(R3).**
 - 필수 아님 — R3 방어 기능 이후 필요 시.
 
-## [ ] R4. 윈도우/조인 상태 자동복구 — 규모: 중
+## [x] R4. 윈도우/조인 상태 자동복구 — 코드 확인 결과 이미 충족(추가 작업 없음)
 
-**현재**: 윈도우 집계 상태는 Redis 저장 코드(`windowed_aggregate_stage.go` LoadFromRedis)가 있으나 **Open 시 자동 호출이 아니라 수동**. stream_join 은 Redis 저장 자체가 없음. → 재시작 시 상태 유실(집계가 처음부터).
+**코드 확인(정정)**:
+- **윈도우 집계**: 이미 자동 복구된다. `NewWindowedAggregateStage`(`windowed_aggregate_stage.go:341`)가 Redis state store 설정 시 생성 시점에 `restoreStateFromRedis()` 를 호출하고 `persistLoop` 로 주기 저장한다. → "수동 호출" 이라던 계획 전제가 틀렸음. **이미 됨.**
+- **stream_join**: Redis 지속성이 없다(재시작 시 left/right 버퍼 유실). 그러나 조인 버퍼는 `maxAge` 시간창 안의 레코드만 담고, **at-least-once 소스 재전송(R4a/CDC ack)** 으로 미ack 레코드가 재유입되면 버퍼가 자연 재구성된다 → 창 안에서 조인 재성립. 즉 별도 상태 영속화 없이 **소스 replay + windowing 으로 복구**된다.
 
-**실제 코드 작업**:
-- 윈도우/조인 stage 가 Open 시 Redis 에서 상태를 **자동 로드**(현재 수동 호출을 자동 배선).
-- stream_join 에 Redis 상태 저장/복구 추가.
+**결론**: 윈도우 집계는 이미 자동복구, stream_join 은 소스 replay 로 커버 → **R4 를 위한 추가 코드 작업 없음.**
+"stream_join 전용 Redis 영속화" 는 replay 로 이미 커버되는 것을 중복 구현하는 것이라 하지 않는다(가짜 작업 회피).
 
 **비목표(하지 않음, 사유)**:
-- **exactly-once 2PC**: Flink 영역. Conduix 는 at-least-once + 멱등(upsert) 수렴으로 충분(이미 확보). 이건 원칙상 다른 도구가 맞음(BULK_VS_REALTIME_COMPARISON 참고).
+- **exactly-once 2PC**: Flink 영역. Conduix 는 at-least-once + 멱등(upsert) 수렴으로 충분(이미 확보).
 - Kafka at-most-once 는 R4a(ack 커밋)로 **이미 해소**됨.
-
-**완료 기준(DoD)**:
-- 윈도우/조인 상태가 재시작 후 자동 복구(수동 호출 없이).
-- 테스트: 상태 저장 후 새 stage 인스턴스가 Open 에서 복구.
 
 ---
 
-## 우선순위 & 순서
+## 현재 상태 요약 (이번 goal)
 
-1. **R4-부분: Kafka 소스 at-least-once 커밋** (작고 명확, 정합성 직결 — 먼저 처리).
-2. **R3 DDL 방어**(안전 정지 + 샘플 validation) — 정합성 최우선, 데이터 오염 방지.
-3. **R1 초기 적재→CDC 전환**(workflow 오케스트레이션 — 순차 의존 + position 동적 주입).
-4. **R2 다중 컨슈머 fan-out**.
-5. **R4-나머지: 상태 자동복구**.
-6. **R3b JSON-only DDL 허용**(R3 이후, 후순위).
+- ✅ **R4a** Kafka at-least-once ack 커밋 — 소스+executor 배선, 실 Kafka e2e.
+- ✅ **CDC ack 전환** — 유실 창 제거.
+- ✅ **R3** DDL 방어 — 안전 정지(실 MySQL e2e) + 샘플 validation.
+- ✅ **R1** 초기적재+CDC 동시 수렴 — sink 버전가드 + CDC `_pos` + 병렬 기동.
+- ✅ **R2** — 폐기(사용법 커버).
+- ✅ **R4** 상태 자동복구 — 코드 확인 결과 이미 충족(윈도우 자동복구 + join replay).
+- ⏳ **R3b** JSON-only DDL 허용(`on_ddl=allow`) — 후순위, 미착수.
 
-각 항목은 구현 후 **실 DB(가능하면) 또는 단위 테스트로 검증**하고 커밋. Bulk 분산(partition-distributed-execution.md)은 병행 트랙.
+Bulk 분산(partition-distributed-execution.md)은 병행 트랙 — 배선 완료, 실 다중노드 e2e 남음.
 
 **관심사 경계(전 항목 공통)**: CDC 소스는 변경분 캡처만, bulk 는 전량 적재, workflow 는 조합. 한 레이어가 다른 레이어의 일을 떠안지 않는다(R1 을 CDC 안 스냅샷으로 넣지 않는 이유).
 

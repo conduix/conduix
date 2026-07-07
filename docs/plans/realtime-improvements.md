@@ -13,6 +13,21 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
 - PostgreSQL 논리복제 CDC(pglogrepl), CDC 소스 중복 실행 방지(claim 갱신/상실 정지)
 - 실 MySQL/PostgreSQL e2e 검증(`test-cdc-integration` CI job)
 
+## 진행 상태 (이번 goal)
+
+- [~] **R1** 초기적재+CDC 동시실행 수렴
+  - [x] sink position 버전 가드 upsert (`08fc757`, 실 MySQL/PostgreSQL e2e 통과)
+  - [ ] CDC 레코드에 단조 position 부착
+  - [ ] workflow 병렬 기동(bulk+CDC)
+- [~] **R4a** Kafka at-least-once ack 커밋
+  - [x] 소스 ack 로직 + 실 Kafka e2e (`15b8973`)
+  - [ ] executor flush→Ack 배선 (현재 테스트가 대신 호출 → 실 파이프라인 미동작)
+- [ ] **CDC 소스 ack 기반 커밋 전환** (Kafka 와 동일, 유실 창 제거)
+- [ ] **R2** 다중 컨슈머 fan-out
+- [ ] **R3** DDL 방어(안전 정지 + 샘플 validation)
+- [ ] **R3b** JSON-only DDL 허용 (후순위)
+- [ ] **R4** exactly-once/상태 복구 (Kafka at-most-once 제거는 R4a 로 일부, 상태 자동복구 남음)
+
 ## 남은 gap (이 계획의 대상)
 
 BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
@@ -26,7 +41,7 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 
 ---
 
-## R1. 초기 적재 + CDC **동시 실행** → position 버전 가드로 수렴 — 규모: 중, 우선순위: **최상**
+## [~] R1. 초기 적재 + CDC **동시 실행** → position 버전 가드로 수렴 — 규모: 중, 우선순위: **최상**
 
 **핵심(순차 아님)**: 초기적재와 CDC 를 **동시에 시작**한다. CDC upsert 는 수렴적이라, 초기적재가 끝날 때까지 CDC 를 미루지 않아도 CDC 가 offset 을 다 따라가면 최신 상태에 도달한다. 총 동기화 완료 시간 = **max(초기적재, CDC 따라잡기)** 이지 합이 아니다 → 초기적재 대기 시간만큼 단축. (순차로 "bulk 완료 후 그 position 부터 CDC" 하던 이전 설계는 폐기.)
 
@@ -55,7 +70,7 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 
 > 단조 position 비교가 성립하려면 CDC pos/gtid/lsn 을 **정렬 가능한 단일 값**으로 정규화해야 한다(GTID set 은 단순 비교 불가 → binlog pos 또는 LSN 우선). 이 정규화 규칙을 sink 가 이해하도록 정의.
 
-## R2. 다중 컨슈머 fan-out — 규모: 중
+## [ ] R2. 다중 컨슈머 fan-out — 규모: 중
 
 **현재**: fanout stage(한 파이프라인 내 브랜치 복제)와 pipeline link(부모→Kafka→자식)가 있으나, **한 CDC/소스 스트림을 여러 독립 소비자가 각자 진도(offset)로** 소비하는 모델은 아니다. 소스는 파이프라인당 1 리더.
 
@@ -72,7 +87,7 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 - 구독자별 offset 재개.
 - 테스트: 2 구독자, 서로 다른 처리 속도, 각자 정확히 소비 확인.
 
-## R3. DDL 방어 (스키마 변경 시 안전 정지 + validation) — 규모: 중
+## [ ] R3. DDL 방어 (스키마 변경 시 안전 정지 + validation) — 규모: 중
 
 **설계 원칙(중요)**: 데이터 파이프라인은 도중에 소스 스키마가 바뀌면 **그 전후 데이터의 정합성·유효성이 깨진다.** 컬럼 타입 변경은 기존 적재 값의 의미를 바꾸고, 컬럼 삭제는 downstream 계약을 무너뜨린다. 따라서 **스키마 진화를 "자동 흡수"하는 것은 금물** — 스키마 레지스트리/자동 마이그레이션은 **만들지 않는다**(정합성 위험 + 관심사 초과). 올바른 기본 동작은 **DDL 감지 시 안전 정지 → 사람이 판단**이다.
 
@@ -91,14 +106,14 @@ BULK_VS_REALTIME_COMPARISON §2.4 의 잔여 4항목:
 - validation 통과 전에는 재개 불가(게이트).
 - 테스트: ALTER TABLE → 정지 + 사유 표시 / 잘못된 매핑으로 validation fail / 수정 후 pass.
 
-## R3b. (후순위) JSON-only 파이프라인의 DDL 허용 — 규모: 소, 우선순위: 낮음
+## [ ] R3b. (후순위) JSON-only 파이프라인의 DDL 허용 — 규모: 소, 우선순위: 낮음
 
 **전제**: R3(DDL 방어)가 완성된 **이후에만** 고려.
 - 스키마 검사 없이 JSON 으로만 처리하고 `id` 정도만 유지하는 특정 파이프라인은, 스키마가 자유로우므로 DDL 변경을 허용해도 정합성 문제가 없다.
 - 그런 파이프라인에 한해 `on_ddl: allow`(스키마 무관 처리) 를 옵션으로 허용. **기본은 여전히 정지(R3).**
 - 필수 아님 — R3 방어 기능 이후 필요 시.
 
-## R4. exactly-once / 상태 복구 — 규모: 대, 우선순위: 낮음(정직히 Flink 영역)
+## [ ] R4. exactly-once / 상태 복구 — 규모: 대, 우선순위: 낮음(정직히 Flink 영역)
 
 **현재**: at-least-once + upsert 수렴. 윈도우/조인 상태 Redis 저장은 있으나 재시작 자동복구 없음(`windowed_aggregate_stage.go` LoadFromRedis 수동).
 

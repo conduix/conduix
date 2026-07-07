@@ -57,8 +57,10 @@ Airflow처럼 Python DAG를 짜지 않고, Flink 클러스터를 따로 운영�
 ### 언제 다른 도구가 나은가 (정직하게)
 - **복잡한 상태 기반 스트림 연산**(대규모 이벤트타임 윈도우, exactly-once 상태 저장) → **Flink**가 성숙
 - **범용 DAG 오케스트레이션**(데이터 외 임의 태스크, 방대한 provider 생태계) → **Airflow**
-- **PostgreSQL CDC**가 반드시 필요 → Conduix 미지원(§7), Debezium+Kafka Connect 경유
+- **초기 스냅샷 + 여러 컨슈머 fan-out + 스키마 레지스트리**가 핵심인 CDC 허브 → Debezium+Kafka (§7, [bulk/realtime 비교](BULK_VS_REALTIME_COMPARISON.md))
 - **이미 방대한 Kafka Connect 커넥터**에 의존 중이고 그 생태계가 핵심이면 → 전환 비용 고려
+
+> bulk(vs Spark/Flink)·realtime(vs Debezium/Spark Streaming/Flink)의 축별 심층 비교는 **[BULK_VS_REALTIME_COMPARISON.md](BULK_VS_REALTIME_COMPARISON.md)**.
 
 ---
 
@@ -131,14 +133,18 @@ Input → [공통 Stage] → [Output별 PreStages] → Output(들)
 
 | 항목 | 상태 | 우회/대안 |
 |---|---|---|
-| **PostgreSQL CDC** | 미지원(생성 시 거부) | MySQL CDC, 또는 Debezium→Kafka 경유 |
+| **CDC 초기 스냅샷** | 미지원(CDC는 변경분만) | bulk 파이프라인으로 초기 적재 후 `start_position`/`start_lsn`으로 CDC 이어받기 |
 | **단일 파이프라인 수평 샤딩** | 미지원(서버-local 설계) | Kafka 파티션 병렬, 워크플로우를 여러 cluster에 분산 |
+| **분산 셔플/spill-to-disk** | 없음(단일 노드 인메모리) | 대용량 GROUP BY/JOIN은 Spark/Flink |
 | **고아 실행 자동 재개** | 미구현(failed 전이만) | checkpoint 중복 위험으로 보류 — 수동 재실행 |
+| **스트림 상태 자동 복구** | Redis 저장은 있으나 재시작 시 자동 로드 아님 | window/join 상태는 재시작 후 재구축 |
 | **SQL 싱크 시간기반 flush** | 미구현 | batch_size 도달 또는 종료 시 flush |
 | **일부 고급 stage(enrich/join/window 등)** | 구현됐으나 GUI 미노출 | YAML/API로는 사용 가능(등록 여부 확인 필요) |
-| **exactly-once 상태 스트림** | Flink 수준 아님 | 정확히-한번 상태연산이 핵심이면 Flink |
+| **exactly-once 상태 스트림** | at-least-once + upsert 수렴(Flink 수준 아님) | 정확히-한번 상태연산이 핵심이면 Flink |
 | **처리량 공식 벤치마크** | 없음 | 워크로드별 실측 필요 |
 | **Bento 커넥터 직접 노출** | adapter 계층만 존재, 현재는 자체 커넥터 사용 | 자체 16 source/9 sink로 커버 |
+
+> **PostgreSQL CDC는 이제 지원**(§CDC, 실 DB e2e 검증 완료). 위 표에서 CDC 관련 잔여 한계는 "초기 스냅샷"과 "분산 처리량"이다.
 
 ---
 
@@ -153,8 +159,11 @@ Input → [공통 Stage] → [Output별 PreStages] → Output(들)
 
 **다른 도구를 유지하는 경우:**
 - 대규모 **상태 기반 exactly-once 스트림 연산**이 핵심 → Flink.
+- **메모리 초과 대용량 배치**(분산 셔플/spill-to-disk가 필요한 GROUP BY·JOIN) → Spark/Flink.
 - 데이터 외 **범용 태스크 오케스트레이션**과 방대한 provider 생태계 → Airflow.
-- **PostgreSQL CDC**가 필수 → Debezium 경유(Conduix로 그 스트림을 이어받는 것은 가능).
+- **CDC 초기 스냅샷 + 다중 컨슈머 fan-out + 스키마 레지스트리**가 핵심 → Debezium+Kafka.
+
+> MySQL·PostgreSQL CDC 자체는 Conduix 단독으로 Debezium 없이 처리 가능(변경분 캡처·offset/GTID/LSN·재연결·delete 반영·HA 모두 코드+e2e 검증). 자세한 축별 비교: **[BULK_VS_REALTIME_COMPARISON.md](BULK_VS_REALTIME_COMPARISON.md)**.
 
 ---
 

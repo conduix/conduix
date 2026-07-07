@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,20 @@ type CDCSource struct {
 	// 종료 신호. OnRow의 eventCh 블로킹 전송이 Stop 시 빠져나가는 데 쓴다.
 	// (채널이 가득 차도 이벤트를 drop 하지 않고 backpressure 를 걸되, 종료는 가능하게.)
 	stopCh chan struct{}
+
+	// at-least-once ack: 채널 전송 시점이 아니라 Ack(sink flush 성공) 시점에 committed 를 전진시킨다.
+	// CDC 는 단일 순서 스트림이라 seq(단조 증가) 로 이벤트를 식별하고, Ack 된 최대 seq 의 위치까지 커밋.
+	// pending: seq → 이벤트의 위치(pos/gtid/lsn). Metadata.Offset 에 seq 를 실어 executor 가 Ack 로 돌려준다.
+	ackMu    sync.Mutex
+	ackSeq   uint64                  // 다음 부여할 seq
+	pendingP map[uint64]cdcAckOffset // seq → 위치
+}
+
+// cdcAckOffset 은 한 CDC 이벤트의 커밋 위치(ack 시 committed 로 반영).
+type cdcAckOffset struct {
+	pos  mysql.Position
+	gtid string
+	lsn  pglogrepl.LSN
 }
 
 // CDCEvent CDC 이벤트
@@ -136,6 +151,7 @@ func NewCDCSource(cfg config.SourceV2) (*CDCSource, error) {
 		eventCh:     make(chan *CDCEvent, 1000),
 		errorCh:     make(chan error, 10),
 		stopCh:      make(chan struct{}),
+		pendingP:    make(map[uint64]cdcAckOffset),
 	}
 
 	// 시작 지점 지정(checkpoint 없을 때 시작점). bulk↔CDC 경계 맞춤용.
@@ -319,23 +335,19 @@ func (s *CDCSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 				}
 
 				record := s.convertEventToRecord(event)
+				// at-least-once: 채널 전송 시점이 아니라 Ack 시점에 committed 를 전진시킨다.
+				// 이벤트마다 seq 를 부여해 pending 에 위치를 보관하고, Metadata 로 seq 를 실어 보낸다.
+				s.ackMu.Lock()
+				s.ackSeq++
+				seq := s.ackSeq
+				s.pendingP[seq] = cdcAckOffset{pos: event.pos, gtid: event.gtid, lsn: event.lsn}
+				s.ackMu.Unlock()
+				record.Metadata.Source = "cdc"
+				record.Metadata.PartitionKey = s.database
+				record.Metadata.Offset = strconv.FormatUint(seq, 10)
+
 				select {
 				case records <- record:
-					// 파이프라인이 실제로 소비함 → 이 위치까지 커밋 가능.
-					s.mu.Lock()
-					s.committedPos = event.pos
-					if event.gtid != "" {
-						s.committedGTID = event.gtid
-					}
-					if event.lsn != 0 {
-						s.committedLSN = event.lsn
-						if s.pg != nil {
-							s.pg.mu.Lock()
-							s.pg.committedLSN = event.lsn
-							s.pg.mu.Unlock()
-						}
-					}
-					s.mu.Unlock()
 				case <-ctx.Done():
 					return
 				}
@@ -546,6 +558,56 @@ func (s *CDCSource) SetCheckpoint(checkpoint map[string]any) error {
 // SourceType 소스 타입 반환 (CheckpointableSource 구현)
 func (s *CDCSource) SourceType() string {
 	return "cdc"
+}
+
+// Ack 는 다운스트림이 sink 적재까지 성공한 레코드(seq)를 받아, committed 를 전진시킨다(AckableSource).
+// CDC 는 단일 순서 스트림이라 ack 된 최대 seq 의 위치까지 커밋하면 된다(그 이하는 모두 적재 완료).
+// 채널 전송 시점이 아니라 이 시점에 커밋하므로, 크래시 시 미적재분은 committed 이전이라 재처리(유실 없음).
+func (s *CDCSource) Ack(offsets []RecordOffset) {
+	var maxSeq uint64
+	for _, o := range offsets {
+		seq, err := strconv.ParseUint(o.Offset, 10, 64)
+		if err != nil {
+			continue
+		}
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+	}
+	if maxSeq == 0 {
+		return
+	}
+
+	s.ackMu.Lock()
+	// ack 된 최대 seq 의 위치를 찾고, 그 이하 pending 정리.
+	off, ok := s.pendingP[maxSeq]
+	for seq := range s.pendingP {
+		if seq <= maxSeq {
+			delete(s.pendingP, seq)
+		}
+	}
+	s.ackMu.Unlock()
+	if !ok {
+		return
+	}
+
+	// committed 전진(재시작 시작점). GetSourceCheckpoints 가 이 값을 저장한다.
+	s.mu.Lock()
+	if off.pos.Name != "" {
+		s.committedPos = off.pos
+	}
+	if off.gtid != "" {
+		s.committedGTID = off.gtid
+	}
+	if off.lsn != 0 {
+		s.committedLSN = off.lsn
+		if s.pg != nil {
+			s.pg.mu.Lock()
+			s.pg.committedLSN = off.lsn
+			s.pg.mu.Unlock()
+		}
+	}
+	s.mu.Unlock()
 }
 
 // GetSourceCheckpoints 현재 모든 체크포인트 반환 (CheckpointableSource 구현)

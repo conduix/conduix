@@ -22,7 +22,7 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
 - [x] **R4a** Kafka at-least-once ack 커밋
   - [x] 소스 ack 로직 + 실 Kafka e2e (`15b8973`)
   - [x] executor flush→Ack 배선(realtime) + 파이프라인 레벨 실 Kafka e2e(GroupExecutor: 1차 5건 커밋 → 재시작 새 5건만, 유실 0)
-- [ ] **CDC 소스 ack 기반 커밋 전환** (Kafka 와 동일, 유실 창 제거)
+- [x] **CDC 소스 ack 기반 커밋 전환** (seq 부착 + Ack 시 committed 전진, 유실 창 제거. 단위+race 검증, CDC e2e 회귀 통과)
 - [ ] **R2** 다중 컨슈머 fan-out
 - [ ] **R3** DDL 방어(안전 정지 + 샘플 validation)
 - [ ] **R3b** JSON-only DDL 허용 (후순위)

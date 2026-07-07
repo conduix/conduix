@@ -697,6 +697,36 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		}
 	}
 
+	// at-least-once ack: 소스가 AckableSource 면, "sink flush 성공" 후에만 offset 을 커밋한다.
+	// 채널 전송 시점이 아니라 실제 적재 시점 기준 → 크래시 시 미적재분 재처리(유실 없음).
+	ackable, _ := src.(source.AckableSource)
+	var pendingOffsets []source.RecordOffset // 아직 flush·ack 안 된 레코드 offset
+
+	// flushAndAck: 모든 sink 를 flush 하고, 전부 성공하면 그동안 쌓인 offset 을 소스에 ack.
+	// 하나라도 flush 실패면 ack 하지 않음(그 레코드들은 재처리 → 유실 없음).
+	flushAndAck := func() {
+		if ackable == nil || len(pendingOffsets) == 0 {
+			return
+		}
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		allOK := true
+		for name, s := range outputSinks {
+			if err := s.Flush(flushCtx); err != nil {
+				allOK = false
+				slog.Warn("flush before ack failed, will reprocess",
+					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", name, "error", err)
+			}
+		}
+		if allOK {
+			ackable.Ack(pendingOffsets)
+			pendingOffsets = pendingOffsets[:0]
+			saveCheckpoints()
+		}
+	}
+	// realtime 스트림에서 flush·ack 주기(레코드 수 기준). 너무 크면 미ack 구간(재처리 후보)이 커진다.
+	const ackEveryN = 100
+
 	// 입력 스키마 검증기 생성 (JSONSchema가 있는 경우)
 	var sourceValidator *validator.SchemaValidator
 	input := pipeline.GetInput()
@@ -736,6 +766,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			result.RecordsWritten = stats.RecordsProcessed
 			result.ErrorCount = stats.CollectionErrors + stats.ProcessingErrors
 			result.Statistics = stats
+			flushAndAck()     // 취소 시에도 적재 성공분은 ack(WithoutCancel flush)
 			saveCheckpoints() // 취소 시에도 체크포인트 저장
 			return result, ctx.Err()
 
@@ -765,6 +796,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "pipeline", pipeline.Name,
 					"records_read", result.RecordsRead, "records_written", result.RecordsWritten,
 					"errors", result.ErrorCount)
+				flushAndAck()     // 남은 pending offset flush 후 ack(at-least-once)
 				saveCheckpoints() // 완료 시 체크포인트 저장
 				return result, nil
 			}
@@ -821,6 +853,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			}
 
 			// 2. 각 Output에 대해 PreStages 적용 후 전송
+			recordSinkOK := true // 이 레코드가 모든 Output 에 성공 전달됐는지(ack 판단)
 			for _, ows := range outputsWithSinks {
 				outputData := data // 각 Output은 공통 Stage 결과를 복사하여 시작
 
@@ -853,6 +886,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 
 				// Output으로 전송
 				if err := e.sendToSink(ctx, outputData, ows.Sink); err != nil {
+					recordSinkOK = false
 					statsCollector.RecordProcessingError()
 					errMsg := fmt.Sprintf("[%s] %v", ows.Output.Name, err)
 					addSinkError(errMsg)
@@ -874,6 +908,18 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 					guard.recordSuccess()
 				}
 				sampleBuffer.AddSample(ows.Output.Name, outputData)
+			}
+
+			// 모든 Output 에 성공 전달된 레코드만 ack 대상(offset 은 소스가 부여).
+			// flush 성공 후 실제 커밋되므로, 여기선 pending 에만 쌓고 주기적으로 flushAndAck.
+			if ackable != nil && recordSinkOK && record.Metadata.PartitionKey != "" {
+				pendingOffsets = append(pendingOffsets, source.RecordOffset{
+					PartitionKey: record.Metadata.PartitionKey,
+					Offset:       record.Metadata.Offset,
+				})
+				if len(pendingOffsets) >= ackEveryN {
+					flushAndAck()
+				}
 			}
 
 		case err := <-errs:

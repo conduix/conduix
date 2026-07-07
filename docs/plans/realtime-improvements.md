@@ -19,9 +19,9 @@ CDC 안전성/정합성 기반은 이미 확보됨 — Debezium 경유가 필요
   - [x] sink position 버전 가드 upsert (`08fc757`, 실 MySQL/PostgreSQL e2e 통과)
   - [ ] CDC 레코드에 단조 position 부착
   - [ ] workflow 병렬 기동(bulk+CDC)
-- [~] **R4a** Kafka at-least-once ack 커밋
+- [x] **R4a** Kafka at-least-once ack 커밋
   - [x] 소스 ack 로직 + 실 Kafka e2e (`15b8973`)
-  - [ ] executor flush→Ack 배선 (현재 테스트가 대신 호출 → 실 파이프라인 미동작)
+  - [x] executor flush→Ack 배선(realtime) + 파이프라인 레벨 실 Kafka e2e(GroupExecutor: 1차 5건 커밋 → 재시작 새 5건만, 유실 0)
 - [ ] **CDC 소스 ack 기반 커밋 전환** (Kafka 와 동일, 유실 창 제거)
 - [ ] **R2** 다중 컨슈머 fan-out
 - [ ] **R3** DDL 방어(안전 정지 + 샘플 validation)

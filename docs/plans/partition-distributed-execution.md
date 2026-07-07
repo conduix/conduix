@@ -11,8 +11,12 @@
 - [x] 3단계: 취합기(aggregateSubExecutionResult, == 완료판정) + DB 스키마(ParentExecutionID/Total·CompletedSubExecutions, AutoMigrate)
 - [x] 4단계: Batch(K8s Job) 분산 — JobSpec.AssignedPartitions → Job env ASSIGNED_PARTITIONS →
   batch-job loader → runner WithAssignedPartitions → executor 필터. 단위검증(env 전달/splitAndTrim).
-- [ ] 5단계: 부하 균형·재개·고아 감지
-- [ ] 6단계: 실 다중 agent/Job 분산 + 취합 e2e (현재 전 계층 배선+단위 검증까지)
+- [x] 5단계: 재개·고아 감지 — 재개는 이미 커버(체크포인트가 PipelineID:PartitionKey 단위 +
+  sub 별 고유 ExecutionID claim → 파티션별 독립 재개). 고아 감지: detectStaleExecutions 가
+  sub-execution(status=running)을 이미 조회하나, sub orphan 시 부모 취합을 진행하도록 보강
+  (advanceParentOnStaleSub — 부모 카운트 증분·완료판정, 워크플로우 조기 idle/부모 미완료 갇힘 방지).
+  부하 균형: 파티션당 sub 1개 + SETNX 경쟁으로 여러 agent 분산(편중 최적화는 후순위, 분산 자체는 됨).
+- [ ] 6단계: 실 다중 agent/Job 분산 + 취합 e2e (현재 전 계층 배선+단위/로직 검증까지)
 
 ## 1. 문제 (현재 진단, 코드 확인)
 

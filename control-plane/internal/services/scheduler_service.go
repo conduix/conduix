@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	"gorm.io/gorm"
 
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -147,7 +148,17 @@ func (s *SchedulerService) detectStaleExecutions() {
 			slog.Error("stale-check: failed to mark execution failed", "execution_id", exec.ID, "workflow_id", exec.WorkflowID, "error", err)
 			continue
 		}
-		// execution이 죽었으면 워크플로우도 running 에서 풀어준다.
+
+		// 파티션 분산: orphan 된 것이 sub-execution 이면, 워크플로우를 직접 풀지 않고
+		// 부모 취합을 진행한다(그 sub 를 실패로 카운트). 안 그러면 부모 CompletedSubExecutions 가
+		// 영원히 모자라 부모가 미완료로 갇히고, 형제 sub 가 아직 실행 중인데 워크플로우가 조기 idle 된다.
+		if exec.ParentExecutionID != "" {
+			s.advanceParentOnStaleSub(exec.ParentExecutionID)
+			slog.Warn("marked orphaned sub-execution as failed", "execution_id", exec.ID, "parent_execution_id", exec.ParentExecutionID)
+			continue
+		}
+
+		// 단일 execution: 죽었으면 워크플로우도 running 에서 풀어준다.
 		// 안 풀면 workflow.status="running"에 갇혀 재트리거가 영구히 막힌다.
 		if err := s.db.Model(&models.Workflow{}).
 			Where("id = ? AND status = ?", exec.WorkflowID, string(types.PipelineGroupStatusRunning)).
@@ -163,6 +174,42 @@ func (s *SchedulerService) detectStaleExecutions() {
 func isStaleExecution(executionID string, liveExecs map[string]struct{}) bool {
 	_, live := liveExecs[executionID]
 	return !live
+}
+
+// advanceParentOnStaleSub은 stale(orphan)로 실패 처리된 sub-execution 의 부모 취합을 진행한다.
+// 부모 CompletedSubExecutions 를 원자 증분하고 실패 표시하며, 모든 sub 가 끝났으면 부모·워크플로우를 확정한다.
+// (handler 의 aggregateSubExecutionResult 와 동일 정합성 규칙 — scheduler 경로용 최소 구현.)
+func (s *SchedulerService) advanceParentOnStaleSub(parentID string) {
+	now := time.Now()
+	// 원자 증분 + 실패 표시(부분 실패).
+	if err := s.db.Model(&models.WorkflowExecution{}).Where("id = ?", parentID).
+		Updates(map[string]any{
+			"completed_sub_executions": gorm.Expr("completed_sub_executions + ?", 1),
+			"error_message":            "one or more sub-executions orphaned (agent crash)",
+		}).Error; err != nil {
+		slog.Error("stale-check: failed to advance parent", "parent_execution_id", parentID, "error", err)
+		return
+	}
+
+	var parent models.WorkflowExecution
+	if err := s.db.First(&parent, "id = ?", parentID).Error; err != nil {
+		return
+	}
+	// == 로 완료 판정(DB 직렬화 증분 → 정확히 하나가 total 에 도달). 아직이면 대기.
+	if parent.CompletedSubExecutions != parent.TotalSubExecutions {
+		return
+	}
+	// 모든 sub 완료 → 부모·워크플로우 확정(하나라도 실패면 error).
+	finalStatus := string(types.PipelineGroupStatusCompleted)
+	wfStatus := string(types.PipelineGroupStatusIdle)
+	if parent.ErrorMessage != "" {
+		finalStatus = string(types.PipelineGroupStatusError)
+		wfStatus = string(types.PipelineGroupStatusError)
+	}
+	s.db.Model(&models.WorkflowExecution{}).Where("id = ?", parentID).
+		Updates(map[string]any{"status": finalStatus, "completed_at": now})
+	s.db.Model(&models.Workflow{}).Where("id = ?", parent.WorkflowID).Update("status", wfStatus)
+	slog.Warn("parent execution finalized after stale sub", "parent_execution_id", parentID, "status", finalStatus)
 }
 
 // Stop 스케줄러 중지

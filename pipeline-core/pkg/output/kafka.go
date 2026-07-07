@@ -16,10 +16,12 @@ import (
 
 // KafkaOutput Kafka 출력
 type KafkaOutput struct {
-	brokers     []string
-	topic       string
-	name        string
-	batchConfig BatchConfig
+	brokers      []string
+	topic        string
+	name         string
+	batchConfig  BatchConfig
+	keyPartition bool   // true 면 메시지 key 해시로 파티션 결정(같은 key=같은 파티션, 셔플용)
+	keyField     string // key 로 쓸 필드(비면 _key/id 폴백)
 
 	writer *kafka.Writer
 	stats  OutputStats
@@ -44,10 +46,12 @@ func NewKafkaOutput(cfg config.OutputConfig) (*KafkaOutput, error) {
 	}
 
 	return &KafkaOutput{
-		brokers:     cfg.Brokers,
-		topic:       cfg.Topic,
-		name:        "kafka",
-		batchConfig: batchConfig,
+		brokers:      cfg.Brokers,
+		topic:        cfg.Topic,
+		name:         "kafka",
+		batchConfig:  batchConfig,
+		keyPartition: cfg.Partitioning == "key",
+		keyField:     cfg.KeyField,
 	}, nil
 }
 
@@ -64,10 +68,16 @@ func (o *KafkaOutput) Open(ctx context.Context) error {
 		batchTimeout = 50 * time.Millisecond // 배치 모드에서는 더 길게 대기
 	}
 
+	// Balancer: 기본은 크기 기반 로드밸런싱(LeastBytes). partitioning=key 면 Hash 로 바꿔
+	// "같은 메시지 key = 같은 파티션" 을 보장한다 → Kafka 를 셔플 매체로 쓰는 분산 GROUP BY/JOIN 성립.
+	var balancer kafka.Balancer = &kafka.LeastBytes{}
+	if o.keyPartition {
+		balancer = &kafka.Hash{}
+	}
 	o.writer = &kafka.Writer{
 		Addr:         kafka.TCP(o.brokers...),
 		Topic:        o.topic,
-		Balancer:     &kafka.LeastBytes{},
+		Balancer:     balancer,
 		BatchSize:    batchSize,
 		BatchTimeout: batchTimeout,
 		Async:        false, // 동기 모드로 에러 추적
@@ -89,7 +99,7 @@ func (o *KafkaOutput) Write(ctx context.Context, record source.Record) error {
 	}
 
 	// 레코드 키 추출 (Data에서 "id" 또는 "_key" 필드 사용)
-	key := extractRecordKey(record.Data)
+	key := o.recordKey(record.Data)
 
 	msg := kafka.Message{
 		Key:   key,
@@ -106,7 +116,18 @@ func (o *KafkaOutput) Write(ctx context.Context, record source.Record) error {
 	return nil
 }
 
-// extractRecordKey Data에서 Kafka 메시지 키 추출
+// recordKey 는 sink 설정(keyField)을 반영해 메시지 key 를 뽑는다. keyField 가 지정되면 그 필드를,
+// 아니면 _key/id 순으로 폴백. key 파티셔닝(shuffle) 시 이 key 가 파티션을 결정한다.
+func (o *KafkaOutput) recordKey(data map[string]any) []byte {
+	if o.keyField != "" {
+		if v, ok := data[o.keyField]; ok {
+			return []byte(fmt.Sprintf("%v", v))
+		}
+	}
+	return extractRecordKey(data)
+}
+
+// extractRecordKey Data에서 Kafka 메시지 키 추출(_key/id 폴백)
 func extractRecordKey(data map[string]any) []byte {
 	// _key 필드가 있으면 우선 사용
 	if key, ok := data["_key"]; ok {
@@ -165,7 +186,7 @@ func (o *KafkaOutput) WriteBatch(ctx context.Context, records []source.Record) e
 		}
 
 		// Data에서 키 추출
-		key := extractRecordKey(record.Data)
+		key := o.recordKey(record.Data)
 
 		messages = append(messages, kafka.Message{
 			Key:   key,

@@ -637,6 +637,11 @@ type OutputConfig struct {
 	// Kafka Sink
 	Brokers []string `yaml:"brokers,omitempty"` // Kafka broker addresses
 	Topic   string   `yaml:"topic,omitempty"`   // Kafka topic name
+	// Partitioning: balanced(기본, 크기 기반 로드밸런싱) / key(메시지 key 해시 → 같은 key 는 같은 파티션).
+	// key 모드는 "key 로 셔플" 을 워크플로우로 구성할 때 쓴다: 파이프라인1(key 파티셔닝 Kafka sink)
+	// → Kafka → 파이프라인2(consumer group 병렬 소비 + 파티션-로컬 집계) = 분산 GROUP BY/JOIN.
+	Partitioning string `yaml:"partitioning,omitempty"`
+	KeyField     string `yaml:"key_field,omitempty"` // key 모드에서 메시지 key 로 쓸 필드(비면 _key/id 순 폴백)
 
 	// REST API Sink
 	URL            string            `yaml:"url,omitempty"`             // Target URL

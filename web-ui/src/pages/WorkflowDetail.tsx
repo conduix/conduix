@@ -129,6 +129,12 @@ interface WorkflowExecution {
   error_message?: string
   triggered_by?: string
   created_at: string
+  // 파티션 분산: sub-execution 은 agent_id(실행 노드) + parent_execution_id 를 갖고,
+  // 부모 execution 은 total/completed_sub_executions 로 분산 진행률을 나타낸다.
+  agent_id?: string
+  parent_execution_id?: string
+  total_sub_executions?: number
+  completed_sub_executions?: number
 }
 
 interface PipelineExecutionResult {
@@ -1168,6 +1174,8 @@ export default function WorkflowDetailPage() {
                     <TableHead>
                       <TableRow>
                         <TableCell sx={{ width: 120 }}>{t('common.status')}</TableCell>
+                        <TableCell>{t('workflow.agentNode')}</TableCell>
+                        <TableCell>{t('workflow.subExecutions')}</TableCell>
                         <TableCell>{t('workflow.startedAt')}</TableCell>
                         <TableCell>{t('workflow.completedAt')}</TableCell>
                         <TableCell>{t('workflow.duration')}</TableCell>
@@ -1206,6 +1214,26 @@ export default function WorkflowDetailPage() {
                                 color={execConfig.color}
                                 size="small"
                               />
+                              {exec.parent_execution_id ? (
+                                <Chip
+                                  label={t('workflow.subExecution')}
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{ ml: 0.5 }}
+                                />
+                              ) : null}
+                            </TableCell>
+                            <TableCell>
+                              {exec.agent_id ? (
+                                <Typography variant="body2" noWrap title={exec.agent_id} sx={{ maxWidth: 140 }}>
+                                  {exec.agent_id}
+                                </Typography>
+                              ) : '-'}
+                            </TableCell>
+                            <TableCell>
+                              {exec.total_sub_executions && exec.total_sub_executions > 0
+                                ? `${exec.completed_sub_executions ?? 0} / ${exec.total_sub_executions}`
+                                : '-'}
                             </TableCell>
                             <TableCell>{exec.started_at ? new Date(exec.started_at).toLocaleString() : '-'}</TableCell>
                             <TableCell>{exec.completed_at ? new Date(exec.completed_at).toLocaleString() : '-'}</TableCell>

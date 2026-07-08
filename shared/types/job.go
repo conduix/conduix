@@ -46,6 +46,7 @@ func DefaultJobConfig() JobConfig {
 type JobExecutionResult struct {
 	ExecutionID string `json:"execution_id"`
 	WorkflowID  string `json:"workflow_id"`
+	AgentID     string `json:"agent_id,omitempty"` // 이 Job 을 위임 생성한 agent(노드) — 분산 현황 모니터링용
 	JobName     string `json:"job_name"`
 	PodName     string `json:"pod_name,omitempty"`
 

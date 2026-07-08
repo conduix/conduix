@@ -113,6 +113,7 @@ type WorkflowExecutionCommand struct {
 type WorkflowExecutionResult struct {
 	ExecutionID     string                    `json:"execution_id"`
 	WorkflowID      string                    `json:"workflow_id"`
+	AgentID         string                    `json:"agent_id,omitempty"` // 이 execution 을 실행한 agent(노드) — 분산 현황 모니터링용
 	Status          WorkflowStatus            `json:"status"`
 	PipelineResults []PipelineExecutionResult `json:"pipeline_results,omitempty"`
 	TotalRecords    int64                     `json:"total_records"`

@@ -28,6 +28,7 @@ type RunnerConfig struct {
 	// 워크플로우/실행 식별
 	WorkflowID  string `json:"workflow_id"`
 	ExecutionID string `json:"execution_id,omitempty"` // batch only
+	AgentID     string `json:"agent_id,omitempty"`     // 이 Job 을 위임 생성한 agent(노드) — 결과 콜백에 담아 분산 현황 노출
 
 	// 파이프라인 설정
 	Workflow *types.Workflow `json:"workflow,omitempty"`
@@ -79,6 +80,7 @@ func LoadFromEnv() (*RunnerConfig, error) {
 		Mode:               mode,
 		WorkflowID:         workflowID,
 		ExecutionID:        os.Getenv("EXECUTION_ID"),
+		AgentID:            os.Getenv("AGENT_ID"),
 		ControlPlaneURL:    controlPlaneURL,
 		CallbackURL:        callbackURL,
 		CheckpointEndpoint: os.Getenv("CHECKPOINT_ENDPOINT"),

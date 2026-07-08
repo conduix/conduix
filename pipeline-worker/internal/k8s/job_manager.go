@@ -42,6 +42,7 @@ func NewJobManager(client *Client, controlPlaneURL, runnerImage string) *JobMana
 type JobSpec struct {
 	ExecutionID        string
 	WorkflowID         string
+	AgentID            string // 이 Job 을 위임 생성한 agent(노드) — batch-job 이 결과 콜백에 담아 분산 현황 모니터링에 사용
 	PipelinesConfig    string // JSON
 	JobConfig          types.JobConfig
 	AssignedPartitions []string // 파티션 분산: 이 Job 이 처리할 파티션 ID 부분집합(비면 전체)
@@ -98,6 +99,10 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 		{Name: "CONTROL_PLANE_URL", Value: m.controlPlaneURL},
 		{Name: "CALLBACK_URL", Value: callbackURL},
 		{Name: "TIMEOUT_SECONDS", Value: fmt.Sprintf("%d", timeoutSeconds)},
+	}
+	// 위임 agent 식별: batch-job 이 결과 콜백에 담아 "어느 노드가 이 Job 을 만들었는지" 노출.
+	if spec.AgentID != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENT_ID", Value: spec.AgentID})
 	}
 	// 파티션 분산: 배정된 파티션이 있으면 Job 에 전달(batch-job 이 WithAssignedPartitions 로 사용).
 	if len(spec.AssignedPartitions) > 0 {

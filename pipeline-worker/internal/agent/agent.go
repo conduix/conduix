@@ -691,6 +691,7 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	job, err := jm.CreateBatchJob(a.ctx, &k8s.JobSpec{
 		ExecutionID:        cmd.ExecutionID,
 		WorkflowID:         cmd.WorkflowID,
+		AgentID:            a.ID, // 위임 agent 기록 — batch-job 이 결과 콜백에 담아 분산 현황 노출
 		PipelinesConfig:    string(pipelinesJSON),
 		JobConfig:          jobConfig,
 		AssignedPartitions: cmd.AssignedPartitions, // 파티션 분산: sub-execution 이면 배정 파티션만
@@ -999,6 +1000,10 @@ func (a *Agent) executeGroup(cmd *types.GroupExecutionCommand) {
 
 // reportGroupExecutionResult 그룹 실행 결과 보고
 func (a *Agent) reportGroupExecutionResult(result *types.GroupExecutionResult) error {
+	// 실행한 노드 식별: 분산 현황(어느 agent 가 어떤 sub-execution 을 처리했는지) 모니터링용.
+	// 결과 생성 지점(정상 완료/panic 복구)마다 채우지 않고 보고 진입부에서 일괄 설정한다.
+	result.AgentID = a.ID
+
 	slog.Info("reporting group execution result",
 		"workflow_id", result.WorkflowID, "execution_id", result.ExecutionID, "status", result.Status)
 

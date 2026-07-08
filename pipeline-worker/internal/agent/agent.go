@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -627,6 +628,18 @@ func (a *Agent) handleGroupExecution(message string) {
 		return
 	}
 
+	// 부하 분산 배정: control-plane 이 이 sub 를 특정 agent 에 "선호" 지정했으면(PreferredAgentID),
+	// 지정 agent 가 아닌 나는 claim 을 짧게 지연해 지정 agent 에게 우선권을 준다.
+	// 지정 agent 가 죽었으면 이 지연 후 내가 claim 하게 되어 실행이 진행된다(SETNX 안전망 유지).
+	// PreferredAgentID 가 비면(broadcast 기본) 지연 0 → 현행 즉시 경쟁과 동일.
+	if cmd.PreferredAgentID != "" && cmd.PreferredAgentID != a.ID {
+		select {
+		case <-time.After(preferredClaimBackoff()):
+		case <-a.ctx.Done():
+			return
+		}
+	}
+
 	// 실행 소유권 claim: 한 클러스터의 여러 에이전트가 같은 명령을 수신하므로,
 	// Redis SETNX로 한 execution을 정확히 한 에이전트만 실행하도록 보장한다(중복 실행 방지).
 	if !a.claimExecution(cmd.ExecutionID) {
@@ -737,6 +750,22 @@ const (
 	claimTTL           = 30 * time.Second
 	claimRenewInterval = claimTTL / 3
 )
+
+// preferredClaimBackoffDefault 는 부하 분산 배정 시, 선호 agent 가 아닌 노드가 claim 을 미루는
+// 기본 시간이다. 짧으면 선호 agent 의 지터/pub-sub 전달 지연으로 배정이 퇴화(broadcast 화)하고,
+// 길면 선호 agent 사망 시 그만큼 실행이 지연된다. claim TTL(30s)과 무관 — 배정 편향과 사망 회복
+// 지연의 하한. 환경별 pub/sub 전달 지연에 맞춰 AGENT_PREFERRED_BACKOFF_MS 로 조정한다.
+const preferredClaimBackoffDefault = 300 * time.Millisecond
+
+// preferredClaimBackoff 는 env(AGENT_PREFERRED_BACKOFF_MS)로 조정 가능한 백오프 값을 반환한다.
+func preferredClaimBackoff() time.Duration {
+	if v := os.Getenv("AGENT_PREFERRED_BACKOFF_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return preferredClaimBackoffDefault
+}
 
 func executionClaimKey(executionID string) string {
 	return fmt.Sprintf("execution:claim:%s", executionID)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/services"
+	"github.com/conduix/conduix/control-plane/internal/services/assignment"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -22,20 +24,25 @@ import (
 
 // WorkflowHandler 워크플로우 API 핸들러
 type WorkflowHandler struct {
-	db           *database.DB
-	redisService *services.RedisService
-	kafkaService *services.KafkaService
-	logger       *slog.Logger
+	db             *database.DB
+	redisService   *services.RedisService
+	kafkaService   *services.KafkaService
+	logger         *slog.Logger
+	assignStrategy assignment.Strategy // partition sub-execution 배정 전략(ASSIGNMENT_STRATEGY, 기본 broadcast)
 }
 
 // NewWorkflowHandler 핸들러 생성
 func NewWorkflowHandler(db *database.DB, redisService *services.RedisService) *WorkflowHandler {
 	logger := slog.Default()
+	// 배정 전략: env 로 선택하되 미지정·오타면 broadcast(현행) 폴백 — 잘못된 값이 실행을 막지 않게.
+	strategy := assignment.Get(os.Getenv("ASSIGNMENT_STRATEGY"))
+	logger.Info("partition assignment strategy", "strategy", strategy.Name(), "available", assignment.Names())
 	return &WorkflowHandler{
-		db:           db,
-		redisService: redisService,
-		kafkaService: services.NewKafkaService(&services.KafkaServiceConfig{Logger: logger}),
-		logger:       logger,
+		db:             db,
+		redisService:   redisService,
+		kafkaService:   services.NewKafkaService(&services.KafkaServiceConfig{Logger: logger}),
+		logger:         logger,
+		assignStrategy: strategy,
 	}
 }
 

@@ -7,9 +7,63 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/conduix/conduix/control-plane/internal/services/assignment"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
 )
+
+// agentHeartbeatFreshness 는 배정 후보로 인정할 heartbeat 최대 나이다.
+// heartbeat 주기 10초·TTL 30초라 최근 신호만 신뢰(죽은 지 얼마 안 된 agent 를 선호 지정해
+// claim 지연을 낭비하지 않도록). 이보다 오래된 agent 는 배정 후보에서 제외한다.
+const agentHeartbeatFreshness = 20 * time.Second
+
+// applyAgentAssignments 는 배정 전략에 따라 각 cmd 의 PreferredAgentID 를 채운다.
+// broadcast(기본) 전략은 heartbeat 조회 없이 즉시 반환 → 현행 동작 불변(상위호환).
+func (h *WorkflowHandler) applyAgentAssignments(cmds []*types.WorkflowExecutionCommand, clusterID string) {
+	if h.assignStrategy == nil || h.assignStrategy.Name() == "broadcast" {
+		return
+	}
+
+	live := h.liveAgentsForCluster(clusterID)
+	if len(live) == 0 {
+		return // 후보 없음 → 선호 지정 없이 broadcast 경쟁(안전 폴백)
+	}
+
+	subs := make([]assignment.Sub, len(cmds))
+	for i, c := range cmds {
+		subs[i] = assignment.Sub{ExecutionID: c.ExecutionID, AssignedPartitions: c.AssignedPartitions}
+	}
+	byID := make(map[string]string, len(subs))
+	for _, a := range h.assignStrategy.Assign(subs, live) {
+		byID[a.ExecutionID] = a.PreferredAgentID
+	}
+	for _, c := range cmds {
+		c.PreferredAgentID = byID[c.ExecutionID]
+	}
+	h.logger.Info("applied agent assignments",
+		"strategy", h.assignStrategy.Name(), "cluster_id", clusterID, "live_agents", len(live), "subs", len(subs))
+}
+
+// liveAgentsForCluster 는 해당 cluster 의 신선한 agent 를 배정 후보로 반환한다.
+func (h *WorkflowHandler) liveAgentsForCluster(clusterID string) []assignment.Agent {
+	heartbeats, err := h.redisService.GetAllAgentHeartbeats()
+	if err != nil {
+		h.logger.Warn("assignment: failed to get heartbeats, falling back to broadcast", "error", err)
+		return nil
+	}
+	now := time.Now()
+	var out []assignment.Agent
+	for _, hb := range heartbeats {
+		if clusterID != "" && hb.ClusterID != clusterID {
+			continue
+		}
+		if now.Sub(hb.Timestamp) > agentHeartbeatFreshness {
+			continue // stale heartbeat — 죽었을 수 있으므로 후보 제외
+		}
+		out = append(out, assignment.Agent{AgentID: hb.AgentID, RunningExecs: len(hb.RunningExecs)})
+	}
+	return out
+}
 
 // planPartitionGroups 는 partitioned source 를 sub-execution 으로 나눌 파티션 그룹을 계산한다.
 // 현재는 파티션 1개당 sub-execution 1개(그룹 크기 1) — 가장 단순·정확한 fan-out.
@@ -54,6 +108,8 @@ func (h *WorkflowHandler) publishSubExecutions(
 	h.db.Model(&models.WorkflowExecution{}).Where("id = ?", parent.ID).
 		Update("total_sub_executions", len(groups))
 
+	// sub-execution 레코드 먼저 생성(부하 분산 배정은 sub 목록 전체를 보고 계산해야 하므로 발행과 분리).
+	cmds := make([]*types.WorkflowExecutionCommand, 0, len(groups))
 	subIDs := make([]string, 0, len(groups))
 	for _, partitionIDs := range groups {
 		sub := &models.WorkflowExecution{
@@ -73,8 +129,7 @@ func (h *WorkflowHandler) publishSubExecutions(
 			continue
 		}
 		subIDs = append(subIDs, sub.ID)
-
-		cmd := &types.WorkflowExecutionCommand{
+		cmds = append(cmds, &types.WorkflowExecutionCommand{
 			ID:                 uuid.New().String(),
 			WorkflowID:         workflowID,
 			ExecutionID:        sub.ID,
@@ -86,9 +141,16 @@ func (h *WorkflowHandler) publishSubExecutions(
 			JobConfig:          jobConfig,
 			WorkflowConfig:     workflowConfig,
 			Timestamp:          time.Now(),
-		}
+		})
+	}
+
+	// 부하 분산 배정: 전략이 broadcast 가 아니면 살아있는 agent 를 조회해 선호 agent 를 지정한다.
+	// broadcast(기본)는 조회 없이 PreferredAgentID 를 비운 채 발행 → 현행과 100% 동일.
+	h.applyAgentAssignments(cmds, parent.ClusterID)
+
+	for _, cmd := range cmds {
 		if err := h.redisService.PublishWorkflowExecution(cmd); err != nil {
-			h.logger.Error("Failed to publish sub-execution", "execution_id", sub.ID, "cluster_id", parent.ClusterID, "error", err)
+			h.logger.Error("Failed to publish sub-execution", "execution_id", cmd.ExecutionID, "cluster_id", parent.ClusterID, "error", err)
 		}
 	}
 

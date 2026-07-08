@@ -29,6 +29,10 @@ data:
   # Application Settings
   AUTO_MIGRATE: "{{ .Values.env.AUTO_MIGRATE }}"
   MAX_DATATYPE_DEPTH: "{{ .Values.env.MAX_DATATYPE_DEPTH }}"
+  {{- if .Values.env.ASSIGNMENT_STRATEGY }}
+  # partition sub-execution 배정 전략: broadcast(기본) | round_robin | load_aware
+  ASSIGNMENT_STRATEGY: "{{ .Values.env.ASSIGNMENT_STRATEGY }}"
+  {{- end }}
   {{- if .Values.env.USERS_CONFIG_PATH }}
   USERS_CONFIG_PATH: "{{ .Values.env.USERS_CONFIG_PATH }}"
   {{- end }}

@@ -52,6 +52,11 @@ spec:
             - name: RUNNER_IMAGE
               value: {{ .Values.agent.runnerImage | quote }}
             {{- end }}
+            {{- if .Values.agent.preferredBackoffMs }}
+            # 부하 분산 배정 시 선호 agent 우선권 백오프(ms). 환경 pub/sub 전달 지연보다 커야 편중 방지.
+            - name: AGENT_PREFERRED_BACKOFF_MS
+              value: {{ .Values.agent.preferredBackoffMs | quote }}
+            {{- end }}
           envFrom:
             # ConfigMap에서 환경변수 주입
             - configMapRef:

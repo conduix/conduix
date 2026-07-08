@@ -106,6 +106,12 @@ type WorkflowExecutionCommand struct {
 	// 나눠 실행할 때 쓴다. 둘 다 비면 현행(단일 실행)과 100% 동일 동작(상위호환).
 	ParentExecutionID  string   `json:"parent_execution_id,omitempty"` // sub-execution 이면 부모 execution id
 	AssignedPartitions []string `json:"assigned_partitions,omitempty"` // 이 sub-execution 이 처리할 파티션 ID 부분집합
+
+	// 부하 분산 배정(load-balancing): control-plane 배정 전략이 이 sub 를 특정 agent 에 "선호" 배정한다.
+	// broadcast(기본) 전략은 비운다 → 비면 현행 SETNX 경쟁과 100% 동일(상위호환).
+	// preferred 가 아닌 agent 는 claim 을 짧게 지연해 지정 agent 우선권을 준다. 지정 agent 사망 시
+	// 지연 후 타 agent 가 claim(SETNX 안전망 유지 → 중복/고아 방지 불변).
+	PreferredAgentID string `json:"preferred_agent_id,omitempty"`
 }
 
 // WorkflowExecutionResult 워크플로우 실행 결과

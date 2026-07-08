@@ -125,11 +125,17 @@ func (s *SchedulerService) detectStaleExecutions() {
 		}
 	}
 
-	// DB에서 running 실행 조회 (유예시간 지난 것만)
+	// DB에서 running 실행 조회 (유예시간 지난 것만).
+	// batch 워크플로우는 제외한다: bulk 는 agent 가 K8s Job 을 위임 생성만 하고(fire-and-forget)
+	// Job 은 agent heartbeat 의 running_execs 에 등록되지 않는다(delegateBatchJob 은 runningExecs 미등록).
+	// 따라서 agent heartbeat 기반 stale 판정은 bulk 에 카테고리 오류 — 정상 실행 중인 Job(부모·sub)을
+	// 2분 후 stale 로 오판해 error 확정하게 된다. bulk Job 의 생명주기는 K8s 가 관리하고 완료는 콜백으로 반영된다.
 	cutoff := time.Now().Add(-s.staleGrace)
 	var execs []models.WorkflowExecution
-	if err := s.db.Where("status = ? AND started_at < ?",
-		string(types.PipelineGroupStatusRunning), cutoff).Find(&execs).Error; err != nil {
+	if err := s.db.Where("status = ? AND started_at < ? AND workflow_id NOT IN (?)",
+		string(types.PipelineGroupStatusRunning), cutoff,
+		s.db.Model(&models.Workflow{}).Select("id").Where("type = ?", string(types.WorkflowTypeBatch)),
+	).Find(&execs).Error; err != nil {
 		slog.Error("stale-check: query failed", "error", err)
 		return
 	}

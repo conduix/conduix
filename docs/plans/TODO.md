@@ -19,11 +19,18 @@
 
 **참고 코드**: control-plane `handlers/workflow_partition.go`(분할기/취합기), `services/scheduler_service.go`(고아 감지 `advanceParentOnStaleSub`), pipeline-core `executor/group_executor.go`(`WithAssignedPartitions`), pipeline-worker `k8s/job_manager.go`(ASSIGNED_PARTITIONS env), pipeline-batch-job `runner/runner.go`(executeWorkflow 파티션 필터).
 
-## 2. (후순위) Bulk 분산 부하 균형
+## 2. Bulk 분산 부하 균형 ✅ 완료(2026-07-08)
 
-**상태**: 현재 sub-execution 을 SETNX 경쟁으로 여러 agent 가 나눠 claim — 분산은 되나 편중 가능.
+**결과**: 배정 전략을 옵션화(전략 패턴 — `broadcast`(기본)/`round_robin`/`load_aware`). control-plane 이
+전략으로 고른 선호 agent 를 `PreferredAgentID` 로 실어 broadcast, 비-선호 agent 는 claim 백오프로
+우선권 양보(SETNX 안전망 유지). `ASSIGNMENT_STRATEGY` env 로 선택, 백오프는 `AGENT_PREFERRED_BACKOFF_MS`.
+e2e(agent 2, load_aware, 백오프 1s) 검증: 두 sub 가 서로 다른 agent 로 배정·실행됨(편중 0).
 
-**할 일**: 라운드로빈 또는 부하 인지(heartbeat 기반) 배정. **필수 아님** — 1 검증 후 편중이 실제 문제일 때만.
+**참고 코드**: control-plane `services/assignment/`(전략), `handlers/workflow_partition.go`(applyAgentAssignments),
+pipeline-worker `agent.go`(preferred 백오프). broadcast 기본이라 미설정 시 현행 SETNX 경쟁과 100% 동일.
+
+**남은 갭(비목표)**: 호출 간(동시 실행) herd — heartbeat ~10s stale 로 방금 배정분 미반영. load_aware 는
+호출 내 균형만 보장. batch Job 완전 크래시 감지는 K8s Job watch 로 별도 처리 필요.
 
 ---
 

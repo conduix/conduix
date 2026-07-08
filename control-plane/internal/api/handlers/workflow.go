@@ -494,6 +494,11 @@ func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 	h.logger.Info("Received job result",
 		"workflow_id", result.WorkflowID, "execution_id", result.ExecutionID, "status", result.Status)
 
+	// 파티션 분산: 이 Job execution 이 sub-execution 이면 워크플로우 상태 전이는 취합기가 확정한다
+	// (sub 하나 완료로 워크플로우를 idle 로 바꾸면 형제 sub 가 아직 도는데 조기 idle 됨 — realtime 경로와 동일 원칙).
+	parentID := h.subExecutionParent(result.ExecutionID)
+	isSubExecution := parentID != ""
+
 	// 워크플로우 상태 업데이트
 	var newStatus string
 	switch result.Status {
@@ -505,9 +510,11 @@ func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 		newStatus = string(types.PipelineGroupStatusIdle)
 	}
 
-	h.db.Model(&models.Workflow{}).
-		Where("id = ?", result.WorkflowID).
-		Update("status", newStatus)
+	if !isSubExecution {
+		h.db.Model(&models.Workflow{}).
+			Where("id = ?", result.WorkflowID).
+			Update("status", newStatus)
+	}
 
 	// 파이프라인 결과 JSON 직렬화
 	var pipelineResultsJSON string
@@ -528,12 +535,42 @@ func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 	if pipelineResultsJSON != "" {
 		updates["pipeline_results"] = pipelineResultsJSON
 	}
+	// 실행 노드 기록: 어느 agent 가 이 Job 을 위임 생성했는지(분산 현황 모니터링).
+	// 비어있을 때는 덮어쓰지 않음 — 구 batch-job 이미지 상위호환.
+	if result.AgentID != "" {
+		updates["agent_id"] = result.AgentID
+	}
 
 	h.db.Model(&models.WorkflowExecution{}).
 		Where("id = ?", result.ExecutionID).
 		Updates(updates)
 
+	// 파티션 분산: sub-execution 이면 부모에 결과를 취합한다(부모 완료·워크플로우 전이는 취합기가 확정).
+	// realtime 경로(ReceiveExecutionResult)와 동일 취합기를 재사용해 정합성을 일원화한다.
+	if isSubExecution {
+		h.aggregateSubExecutionResult(parentID, &types.GroupExecutionResult{
+			ExecutionID:   result.ExecutionID,
+			WorkflowID:    result.WorkflowID,
+			Status:        jobStatusToGroupStatus(result.Status),
+			TotalRecords:  result.TotalRecords,
+			FailedRecords: result.FailedRecords,
+		})
+	}
+
 	h.logger.Info("Updated workflow status", "workflow_id", result.WorkflowID, "status", newStatus)
+}
+
+// jobStatusToGroupStatus 는 batch Job 상태(completed/failed/timeout)를 워크플로우 그룹 상태로 매핑한다.
+// 취합기(aggregateSubExecutionResult)가 error/stopped 를 부분 실패로 판정하므로 매핑을 일치시킨다.
+func jobStatusToGroupStatus(jobStatus string) types.WorkflowStatus {
+	switch jobStatus {
+	case types.JobStatusCompleted:
+		return types.PipelineGroupStatusCompleted
+	case types.JobStatusFailed, types.JobStatusTimeout:
+		return types.PipelineGroupStatusError
+	default:
+		return types.PipelineGroupStatusCompleted
+	}
 }
 
 // HandleJobResultCallback POST /api/v1/internal/job-result
@@ -1094,6 +1131,11 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 	}
 	if pipelineResultsJSON != "" {
 		updates["pipeline_results"] = pipelineResultsJSON
+	}
+	// 실행 노드 기록: 어느 agent 가 이 execution 을 처리했는지(분산 현황 모니터링).
+	// 비어있을 때는 덮어쓰지 않음 — 구 agent/단일 실행 경로 상위호환.
+	if result.AgentID != "" {
+		updates["agent_id"] = result.AgentID
 	}
 
 	if err := h.db.Model(&models.WorkflowExecution{}).

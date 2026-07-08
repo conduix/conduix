@@ -151,6 +151,11 @@ func (r *Runner) executeWorkflow(ctx context.Context) (*types.PipelineGroupExecu
 	if r.cfg.ControlPlaneURL != "" {
 		opts = append(opts, executor.WithLinkClient(link.NewClient(r.cfg.ControlPlaneURL)))
 	}
+	// 파티션 분산: batch sub-execution 이면 배정된 파티션만 실행(비면 전체 — 현행).
+	// 누락 시 각 sub 가 전체 파티션을 실행해 분산이 무효화되고 데이터가 중복 적재된다(runStreaming 과 동일 배선).
+	if len(r.cfg.AssignedPartitions) > 0 {
+		opts = append(opts, executor.WithAssignedPartitions(r.cfg.AssignedPartitions))
+	}
 
 	groupExec := executor.NewGroupExecutor(r.cfg.Workflow, opts...)
 
@@ -190,6 +195,7 @@ func (r *Runner) sendBatchResult(startTime time.Time, podName string, exec *type
 	result := &types.JobExecutionResult{
 		ExecutionID: r.cfg.ExecutionID,
 		WorkflowID:  r.cfg.WorkflowID,
+		AgentID:     r.cfg.AgentID, // 위임 agent(노드) — 분산 현황 모니터링용
 		JobName:     fmt.Sprintf("runner-%s", r.cfg.ExecutionID[:min(8, len(r.cfg.ExecutionID))]),
 		PodName:     podName,
 		StartedAt:   startTime,

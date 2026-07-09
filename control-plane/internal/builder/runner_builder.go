@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -399,6 +400,11 @@ func (rb *RunnerBuilder) updateDeployedHashes(plugins []models.Plugin, buildTime
 // HOME 은 dir(tmp)로 격리한다. control-plane 이 비-root(HOME=/)일 때 go 가 /.cache 에
 // 쓰려다 permission denied 로 실패하는 걸 CacheDir/HOME 지정으로 우회한다.
 // (동시 빌드는 상위 락으로 1개만 허용되므로 캐시 경합 없음.)
+//
+// 프로세스 그룹 kill: `go build` 는 compile/link 자식을 여럿 fork 하는데, 기본
+// exec.CommandContext 의 취소는 직접 자식(go)만 SIGKILL 하고 손자(compile)는 고아로
+// 남아 계속 돈다 → CacheDir 오염 + 상위 buildMu 점유로 새 빌드 무한 거부. Setpgid 로
+// 새 프로세스 그룹을 만들고 Cancel 을 그룹 전체(-pgid) kill 로 재정의해 전 자손을 함께 종료한다.
 func (rb *RunnerBuilder) runCommand(ctx context.Context, dir string, extraEnv []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
@@ -412,8 +418,20 @@ func (rb *RunnerBuilder) runCommand(ctx context.Context, dir string, extraEnv []
 	if len(extraEnv) > 0 {
 		cmd.Env = append(cmd.Env, extraEnv...)
 	}
-	output, err := cmd.CombinedOutput()
-	return string(output), err
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		// 음수 pid = 프로세스 그룹 전체에 시그널(go + 모든 compile/link 자손).
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	// SIGKILL 후에도 파이프가 안 닫히면 최대 2초 뒤 Wait 강제 종료(고아 잔류 방지).
+	cmd.WaitDelay = 2 * time.Second
+
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	return buf.String(), err
 }
 
 // persistBinary 는 gzip 바이너리(수십MB longblob)만 별도 UPDATE 로 저장한다.

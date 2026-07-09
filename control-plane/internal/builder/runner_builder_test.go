@@ -1,10 +1,62 @@
 package builder
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/conduix/conduix/control-plane/pkg/models"
 )
+
+// TestRunCommand_KillsProcessGroup 는 context 취소 시 runCommand 가 자식뿐 아니라
+// 손자 프로세스(go build 의 compile/link 에 해당)까지 프로세스 그룹으로 함께 죽이는지 검증한다.
+// 버그 1(고아 go build 프로세스) 회귀 방지: 기본 exec.CommandContext 는 직접 자식만 죽여
+// 손자가 고아로 남는다. Setpgid + Cancel(그룹 kill) 로 이를 막는다.
+func TestRunCommand_KillsProcessGroup(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	tmp := t.TempDir()
+	pidFile := filepath.Join(tmp, "grandchild.pid")
+
+	// 부모(sh)가 손자(background sh)를 fork 하고 그 PID 를 파일에 기록한 뒤 대기.
+	// 손자는 오래 sleep — 그룹 kill 이 안 되면 부모가 죽어도 손자는 살아 고아가 된다.
+	script := "sh -c 'echo $$ > " + pidFile + "; sleep 30' & sleep 30"
+
+	rb := &RunnerBuilder{config: &RunnerBuilderConfig{CacheDir: tmp, GoProxy: "off"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, _ = rb.runCommand(ctx, tmp, nil, "sh", "-c", script)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("runCommand did not return promptly after cancel: %v", elapsed)
+	}
+
+	// 손자 PID 확인 — 파일이 써졌으면 그 프로세스가 살아있는지 검사.
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Skipf("grandchild pid not recorded (timing): %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("bad pid: %q", data)
+	}
+
+	// 취소 직후 잠깐 여유 후 손자 생존 확인. signal 0 = 존재 여부만 검사.
+	time.Sleep(300 * time.Millisecond)
+	if err := syscall.Kill(pid, 0); err == nil {
+		// 살아있음 = 고아 = 버그. 정리 후 실패.
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatalf("grandchild process %d survived context cancel (orphan) — process group kill failed", pid)
+	}
+}
 
 func TestCombinedSourceHash_Deterministic(t *testing.T) {
 	hashes := map[string]string{

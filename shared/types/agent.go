@@ -112,6 +112,11 @@ type WorkflowExecutionCommand struct {
 	// preferred 가 아닌 agent 는 claim 을 짧게 지연해 지정 agent 우선권을 준다. 지정 agent 사망 시
 	// 지연 후 타 agent 가 claim(SETNX 안전망 유지 → 중복/고아 방지 불변).
 	PreferredAgentID string `json:"preferred_agent_id,omitempty"`
+
+	// native stage compile-in 실행: 값이 있으면 batch Job 이 이 RunnerVersion 의 바이너리를
+	// control-plane 에서 받아(레지스트리 push 없이) initContainer 로 주입해 실행한다.
+	// 비면 기존 이미지 실행(상위호환) — native plugin 없는 워크플로우는 항상 빈 값.
+	RunnerVersionID string `json:"runner_version_id,omitempty"`
 }
 
 // WorkflowExecutionResult 워크플로우 실행 결과

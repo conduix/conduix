@@ -3,6 +3,8 @@
 package builder
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,18 +32,38 @@ type RunnerBuilderConfig struct {
 	ImagePrefix  string        // Docker 이미지 prefix (예: ghcr.io/conduix/pipeline-batch-job)
 	Platform     string        // 빌드 플랫폼 (default: linux/arm64)
 	DockerPush   bool          // Docker push 수행 여부
+	SourceRoot   string        // 로컬 모듈(pipeline-core/shared/plugin-sdk) 소스 루트. go.mod replace 대상.
+	CacheDir     string        // GOCACHE/GOPATH 영속 경로. tmpDir 밖에 두어 재빌드 간 컴파일·모듈 캐시 재사용.
 }
 
-// DefaultRunnerBuilderConfig 기본 설정
+// DefaultRunnerBuilderConfig 기본 설정.
+// SourceRoot 는 CONDUIX_SOURCE_ROOT env(런타임 이미지의 /app)에서 읽는다 — 빌드 시 replace 가
+// 가리킬 pipeline-core/shared/plugin-sdk 소스 위치. env 없으면 로컬 개발(리포 루트 기준) 폴백.
 func DefaultRunnerBuilderConfig() *RunnerBuilderConfig {
+	sourceRoot := os.Getenv("CONDUIX_SOURCE_ROOT")
+	if sourceRoot == "" {
+		sourceRoot = ".." // 로컬 개발 폴백(control-plane 디렉토리 기준 리포 루트)
+	}
+	cacheDir := os.Getenv("CONDUIX_BUILD_CACHE_DIR")
+	if cacheDir == "" {
+		cacheDir = filepath.Join(os.TempDir(), "conduix-runner-cache")
+	}
 	return &RunnerBuilderConfig{
 		BuildTimeout: 5 * time.Minute,
 		GoProxy:      "https://proxy.golang.org,direct",
 		ImagePrefix:  "ghcr.io/conduix/pipeline-batch-job",
 		Platform:     "linux/arm64",
 		DockerPush:   false,
+		SourceRoot:   sourceRoot,
+		CacheDir:     cacheDir,
 	}
 }
+
+// buildMu 는 Build() 를 프로세스 전역으로 직렬화한다.
+// auto-build(plugin update)와 수동 build 가 각각 goroutine 으로 거의 동시에 Build() 를 호출하면,
+// DB building-count 락(체크→레코드생성이 비원자적)을 둘 다 통과해 두 go build 가 같은 CacheDir 을
+// 동시에 써 GOCACHE 교착(hang)이 난다. control-plane 은 단일 프로세스이므로 in-process mutex 로 충분.
+var buildMu sync.Mutex
 
 // RunnerBuilder 모든 native plugin을 포함하는 pipeline-batch-job 이미지를 빌드
 type RunnerBuilder struct {
@@ -73,10 +96,25 @@ type RunnerBuildResult struct {
 
 // Build 모든 native plugin을 포함하는 Runner 이미지를 빌드
 func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBuildResult, error) {
+	// 동시 Build 직렬화(race → GOCACHE 교착 방지). 대기하지 않고 즉시 거부해,
+	// 동시 트리거(auto-build + 수동)의 두 번째 호출이 첫 빌드와 겹치지 않게 한다.
+	if !buildMu.TryLock() {
+		return nil, fmt.Errorf("another build is already in progress")
+	}
+	defer buildMu.Unlock()
+
 	start := time.Now()
 	var logBuf strings.Builder
 
-	// 1. 이미 building 상태인 버전이 있으면 거부
+	// 1. 좀비 building 정리 후, 살아있는 building 이 있으면 거부.
+	// control-plane 이 재시작되면 빌드 프로세스는 죽지만 DB 의 building 레코드는 남아
+	// 영구 락이 된다(another build is already in progress). BuildTimeout 을 크게 넘긴
+	// building 은 좀비로 보고 failed 로 회수한다(부팅 정리를 대체하는 self-heal).
+	staleCutoff := time.Now().Add(-2 * rb.config.BuildTimeout)
+	rb.db.Model(&models.RunnerVersion{}).
+		Where("status = ? AND created_at < ?", "building", staleCutoff).
+		Updates(map[string]any{"status": "failed", "error": "stale build reclaimed (builder restarted or crashed)"})
+
 	var buildingCount int64
 	rb.db.Model(&models.RunnerVersion{}).Where("status = ?", "building").Count(&buildingCount)
 	if buildingCount > 0 {
@@ -146,7 +184,9 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	if buildErr != nil {
 		version.Status = "failed"
 		version.Error = buildErr.Error()
-		rb.db.Save(&version)
+		if err := rb.db.Save(&version).Error; err != nil {
+			rb.logger.Error("failed to persist build failure", "version_id", version.ID, "error", err)
+		}
 		return &RunnerBuildResult{
 			VersionID: version.ID,
 			Status:    "failed",
@@ -155,8 +195,38 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		}, buildErr
 	}
 
+	// binary(수십MB longblob)를 status/메타데이터와 한 Save 로 쓰면, 큰 쿼리가
+	// max_allowed_packet 초과나 타임아웃으로 통째로 실패하고 status 가 building 에 갇힌다.
+	// binary 를 먼저 저장하고, 실패하면 build 를 failed 로 확정한다(building 좀비 방지).
+	if saveErr := rb.persistBinary(&version); saveErr != nil {
+		version.Binary = nil
+		version.BinarySize = 0
+		version.Status = "failed"
+		version.Error = fmt.Sprintf("build succeeded but binary persist failed: %v", saveErr)
+		if err := rb.db.Save(&version).Error; err != nil {
+			rb.logger.Error("failed to persist binary-save failure", "version_id", version.ID, "error", err)
+		}
+		return &RunnerBuildResult{
+			VersionID: version.ID,
+			Status:    "failed",
+			BuildLog:  logBuf.String(),
+			Duration:  duration,
+		}, fmt.Errorf("persist binary: %w", saveErr)
+	}
+
+	// binary 는 persistBinary 가 이미 썼으므로, 여기선 binary 컬럼을 제외한 메타데이터만
+	// 업데이트한다(Save 는 전 컬럼을 쓰므로 큰 binary 를 매번 재전송해 packet 초과를 재유발).
 	version.Status = "ready"
-	rb.db.Save(&version)
+	if err := rb.db.Model(&version).Omit("binary").Updates(map[string]any{
+		"status":      "ready",
+		"finished_at": version.FinishedAt,
+		"duration_ms": version.DurationMs,
+		"build_log":   version.BuildLog,
+		"image_tag":   version.ImageTag,
+	}).Error; err != nil {
+		rb.logger.Error("failed to persist ready status", "version_id", version.ID, "error", err)
+		return &RunnerBuildResult{VersionID: version.ID, Status: "failed", BuildLog: logBuf.String(), Duration: duration}, fmt.Errorf("persist ready status: %w", err)
+	}
 
 	// 7. 빌드 성공: DeployedHash 갱신 (빌드 중 수정 감지)
 	rb.updateDeployedHashes(plugins, pluginHashes, version.ID)
@@ -172,7 +242,10 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	}, nil
 }
 
-// buildInTempDir 임시 디렉토리에 소스를 배치하고 빌드
+// buildInTempDir 임시 디렉토리에 pipeline-batch-job 모듈을 복사하고, 그 안에
+// 플러그인 소스 + cmd/runner/registry_custom.go 를 주입해 실제 runner(./cmd/runner)를 빌드한다.
+// 스텁 main 이 아니라 실제 배치 실행 로직에 native stage 를 compile-in 하는 것이 핵심이다 —
+// registry_custom.go 의 init() 이 stream 전역 레지스트리에 stage 를 등록하면 executor 가 해석한다.
 func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.RunnerVersion, plugins []models.Plugin, logBuf *strings.Builder) error {
 	tmpDir, err := os.MkdirTemp("", "conduix-runner-build-*")
 	if err != nil {
@@ -180,16 +253,31 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	// 플러그인 소스 배치
+	// 영속 캐시 디렉토리(재빌드 간 컴파일·모듈 캐시 재사용). tmpDir 과 달리 삭제하지 않는다.
+	if err := os.MkdirAll(rb.config.CacheDir, 0o755); err != nil {
+		return fmt.Errorf("create build cache dir: %w", err)
+	}
+
+	// pipeline-batch-job 모듈을 tmpDir 로 복사. replace 가 ../pipeline-core 등 상대경로라
+	// 형제 모듈(pipeline-core/shared/plugin-sdk)도 sourceRoot 에서 함께 복사해야 한다.
+	batchJobDir := filepath.Join(tmpDir, "pipeline-batch-job")
+	for _, mod := range []string{"pipeline-batch-job", "pipeline-core", "shared", "plugin-sdk"} {
+		src := filepath.Join(rb.config.SourceRoot, mod)
+		if err := copyDir(src, filepath.Join(tmpDir, mod)); err != nil {
+			return fmt.Errorf("copy module %s from source root: %w", mod, err)
+		}
+	}
+	logBuf.WriteString("  pipeline-batch-job module + sibling modules copied\n")
+
+	// 플러그인 소스 배치 (batch-job 모듈 하위 plugins/)
 	for _, p := range plugins {
-		pluginDir := filepath.Join(tmpDir, "plugins", sanitizeName(p.Name))
+		pluginDir := filepath.Join(batchJobDir, "plugins", sanitizeName(p.Name))
 		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 			return fmt.Errorf("create plugin dir: %w", err)
 		}
 		if err := os.WriteFile(filepath.Join(pluginDir, "stage.go"), []byte(p.SourceCode), 0o644); err != nil {
 			return fmt.Errorf("write plugin source: %w", err)
 		}
-		// plugin 개별 go.mod
 		goMod := p.GoMod
 		if goMod == "" {
 			goMod = fmt.Sprintf("module github.com/conduix/plugins/%s\n\ngo 1.26\n", sanitizeName(p.Name))
@@ -200,63 +288,71 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 		fmt.Fprintf(logBuf, "  Plugin source placed: %s\n", p.Name)
 	}
 
-	// registry_custom.go 자동 생성
+	// cmd/runner 패키지(package main)에 registry_custom.go 주입 — init() 으로 native stage 등록.
 	registryCode := GenerateRegistryCustom(plugins)
-	if err := os.WriteFile(filepath.Join(tmpDir, "registry_custom.go"), []byte(registryCode), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(batchJobDir, "cmd", "runner", "registry_custom.go"), []byte(registryCode), 0o644); err != nil {
 		return fmt.Errorf("write registry_custom.go: %w", err)
 	}
-	logBuf.WriteString("  registry_custom.go generated\n")
+	logBuf.WriteString("  cmd/runner/registry_custom.go generated\n")
 
-	// main.go (최소 runner entrypoint)
-	mainCode := generateRunnerMain()
-	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainCode), 0o644); err != nil {
-		return fmt.Errorf("write main.go: %w", err)
+	// batch-job go.mod 에 플러그인 require + local replace 추가.
+	if err := rb.appendPluginRequires(batchJobDir, plugins); err != nil {
+		return fmt.Errorf("append plugin requires to go.mod: %w", err)
 	}
+	logBuf.WriteString("  go.mod extended with plugin require/replace\n")
 
-	// go.mod with local replace directives
-	goMod := GenerateRunnerGoMod(plugins)
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0o644); err != nil {
-		return fmt.Errorf("write go.mod: %w", err)
-	}
-	logBuf.WriteString("  go.mod generated with local replace directives\n")
-
-	// go mod tidy
+	// go mod tidy (batch-job 모듈 디렉토리에서)
 	buildCtx, cancel := context.WithTimeout(ctx, rb.config.BuildTimeout)
 	defer cancel()
 
 	logBuf.WriteString("  Running go mod tidy...\n")
-	tidyOut, err := rb.runCommand(buildCtx, tmpDir, nil, "go", "mod", "tidy")
+	tidyOut, err := rb.runCommand(buildCtx, batchJobDir, nil, "go", "mod", "tidy")
 	logBuf.WriteString(tidyOut)
 	if err != nil {
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
-	// go build
+	// go build ./cmd/runner
 	goos, goarch := parsePlatform(rb.config.Platform)
-	logBuf.WriteString("  Running go build...\n")
-	buildOut, err := rb.runCommand(buildCtx, tmpDir, []string{
+	logBuf.WriteString("  Running go build ./cmd/runner...\n")
+	buildOut, err := rb.runCommand(buildCtx, batchJobDir, []string{
 		"GOOS=" + goos,
 		"GOARCH=" + goarch,
-	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", "pipeline-batch-job", ".")
+	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", "pipeline-batch-job", "./cmd/runner")
 	logBuf.WriteString(buildOut)
 	if err != nil {
 		return fmt.Errorf("go build: %w", err)
 	}
 	logBuf.WriteString("  Go build successful\n")
 
+	// 빌드 바이너리를 gzip 압축해 RunnerVersion 에 저장 — 레지스트리 push 없이 Job initContainer 가
+	// 받아 실행하는 경로(선택지 2). tmpDir 은 곧 삭제되므로 여기서 읽어 둔다.
+	binPath := filepath.Join(batchJobDir, "pipeline-batch-job")
+	rawBin, err := os.ReadFile(binPath)
+	if err != nil {
+		return fmt.Errorf("read built binary: %w", err)
+	}
+	gzBin, err := gzipBytes(rawBin)
+	if err != nil {
+		return fmt.Errorf("gzip binary: %w", err)
+	}
+	version.Binary = gzBin
+	version.BinarySize = len(rawBin)
+	fmt.Fprintf(logBuf, "  Binary stored (raw=%d bytes, gz=%d bytes)\n", len(rawBin), len(gzBin))
+
 	// 이미지 태그 설정
 	imageTag := fmt.Sprintf("%s:%s", rb.config.ImagePrefix, version.ID)
 	version.ImageTag = imageTag
 
-	// Docker build (optional)
+	// Docker build (optional). 바이너리가 batchJobDir 에 있으므로 빌드 컨텍스트도 그곳.
 	if rb.config.DockerPush {
 		dockerfile := generateDockerfile()
-		if err := os.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(batchJobDir, "Dockerfile.runner"), []byte(dockerfile), 0o644); err != nil {
 			return fmt.Errorf("write Dockerfile: %w", err)
 		}
 
 		logBuf.WriteString("  Running docker build...\n")
-		dockerOut, err := rb.runCommand(buildCtx, tmpDir, nil, "docker", "build", "-t", imageTag, ".")
+		dockerOut, err := rb.runCommand(buildCtx, batchJobDir, nil, "docker", "build", "-f", "Dockerfile.runner", "-t", imageTag, ".")
 		logBuf.WriteString(dockerOut)
 		if err != nil {
 			return fmt.Errorf("docker build: %w", err)
@@ -297,19 +393,52 @@ func (rb *RunnerBuilder) updateDeployedHashes(plugins []models.Plugin, buildTime
 	}
 }
 
-// runCommand 명령 실행
+// runCommand 명령 실행.
+// GOCACHE/GOPATH 를 tmpDir 밖의 영속 CacheDir 하위로 둔다 — tmpDir 은 매 빌드 삭제돼
+// 여기 두면 컴파일·모듈 캐시가 버려져 121MB 바이너리를 매번 처음부터 빌드하게 된다.
+// HOME 은 dir(tmp)로 격리한다. control-plane 이 비-root(HOME=/)일 때 go 가 /.cache 에
+// 쓰려다 permission denied 로 실패하는 걸 CacheDir/HOME 지정으로 우회한다.
+// (동시 빌드는 상위 락으로 1개만 허용되므로 캐시 경합 없음.)
 func (rb *RunnerBuilder) runCommand(ctx context.Context, dir string, extraEnv []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"CGO_ENABLED=0",
 		"GOPROXY="+rb.config.GoProxy,
+		"GOCACHE="+filepath.Join(rb.config.CacheDir, "gocache"),
+		"GOPATH="+filepath.Join(rb.config.CacheDir, "gopath"),
+		"HOME="+dir,
 	)
 	if len(extraEnv) > 0 {
 		cmd.Env = append(cmd.Env, extraEnv...)
 	}
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+// persistBinary 는 gzip 바이너리(수십MB longblob)만 별도 UPDATE 로 저장한다.
+// status/메타데이터와 분리해, 큰 write 가 실패해도 상위에서 build 를 failed 로 확정할 수 있게 한다.
+func (rb *RunnerBuilder) persistBinary(version *models.RunnerVersion) error {
+	if len(version.Binary) == 0 {
+		return fmt.Errorf("empty binary")
+	}
+	return rb.db.Model(version).Updates(map[string]any{
+		"binary":      version.Binary,
+		"binary_size": version.BinarySize,
+	}).Error
+}
+
+// gzipBytes 는 바이너리를 gzip 압축한다(RunnerVersion.Binary 저장용).
+func gzipBytes(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(data); err != nil {
+		return nil, err
+	}
+	if err := gw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // CombinedSourceHash 모든 native plugin의 SourceHash를 결합하여 단일 해시 생성
@@ -362,67 +491,65 @@ func GenerateRegistryCustom(plugins []models.Plugin) string {
 	return buf.String()
 }
 
-// GenerateRunnerGoMod Runner 빌드용 go.mod 생성
-func GenerateRunnerGoMod(plugins []models.Plugin) string {
+// pluginRequireBlock go.mod 에 추가할 플러그인 require/replace 텍스트를 생성한다.
+// batch-job go.mod 는 이미 pipeline-core/shared/plugin-sdk replace(../..)를 가지므로
+// 여기서는 플러그인 모듈만 다룬다.
+func pluginRequireBlock(plugins []models.Plugin) string {
 	var buf strings.Builder
-	buf.WriteString("module conduix-runner\n\ngo 1.26\n\nrequire (\n")
-	buf.WriteString("\tgithub.com/conduix/conduix/pipeline-core v0.0.0\n")
-	buf.WriteString("\tgithub.com/conduix/conduix/shared v0.0.0\n")
-	buf.WriteString("\tgithub.com/conduix/conduix/plugin-sdk v0.0.0\n")
-
+	buf.WriteString("\nrequire (\n")
 	for _, p := range plugins {
-		modPath := fmt.Sprintf("github.com/conduix/plugins/%s", sanitizeName(p.Name))
-		fmt.Fprintf(&buf, "\t%s v0.0.0\n", modPath)
+		fmt.Fprintf(&buf, "\tgithub.com/conduix/plugins/%s v0.0.0\n", sanitizeName(p.Name))
 	}
 	buf.WriteString(")\n\nreplace (\n")
-	buf.WriteString("\tgithub.com/conduix/conduix/pipeline-core => ../pipeline-core\n")
-	buf.WriteString("\tgithub.com/conduix/conduix/shared => ../shared\n")
-	buf.WriteString("\tgithub.com/conduix/conduix/plugin-sdk => ../plugin-sdk\n")
-
 	for _, p := range plugins {
 		name := sanitizeName(p.Name)
-		modPath := fmt.Sprintf("github.com/conduix/plugins/%s", name)
-		localPath := fmt.Sprintf("./plugins/%s", name)
-		fmt.Fprintf(&buf, "\t%s => %s\n", modPath, localPath)
+		fmt.Fprintf(&buf, "\tgithub.com/conduix/plugins/%s => ./plugins/%s\n", name, name)
 	}
 	buf.WriteString(")\n")
 	return buf.String()
 }
 
-// generateRunnerMain Runner 엔트리포인트 main.go 생성
-func generateRunnerMain() string {
-	return `// Code generated by RunnerBuilder. DO NOT EDIT.
-package main
-
-import (
-	"fmt"
-	"os"
-
-	"github.com/conduix/conduix/pipeline-core/pkg/stream"
-)
-
-func main() {
-	stages := stream.GetRegisteredCustomStages()
-	fmt.Printf("Conduix Pipeline Runner — %d custom stages loaded\n", len(stages))
-	for _, s := range stages {
-		fmt.Printf("  - %s\n", s)
+// appendPluginRequires batch-job go.mod 끝에 플러그인 require/replace 블록을 덧붙인다.
+func (rb *RunnerBuilder) appendPluginRequires(batchJobDir string, plugins []models.Plugin) error {
+	goModPath := filepath.Join(batchJobDir, "go.mod")
+	existing, err := os.ReadFile(goModPath)
+	if err != nil {
+		return fmt.Errorf("read batch-job go.mod: %w", err)
 	}
-
-	// TODO: 실제 runner 실행 로직 (Agent로부터 파이프라인 설정 수신 후 실행)
-	fmt.Println("Runner ready. Waiting for pipeline execution...")
-
-	// 환경변수로 모드 결정
-	if os.Getenv("CONDUIX_RUNNER_MODE") == "list" {
-		os.Exit(0)
-	}
-
-	// 실행 대기 (실제 구현은 Phase 4+)
-	select {}
-}
-`
+	combined := string(existing) + pluginRequireBlock(plugins)
+	return os.WriteFile(goModPath, []byte(combined), 0o644)
 }
 
-// generateDockerfile Runner Docker 이미지용 Dockerfile
+// copyDir src 디렉토리를 dst 로 재귀 복사한다(심볼릭 링크·.git 은 제외).
+// 빌드에 불필요한 대용량 디렉토리(.git, .gocache, .gopath)는 건너뛴다.
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			base := info.Name()
+			if rel != "." && (base == ".git" || base == ".gocache" || base == ".gopath") {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), data, info.Mode().Perm())
+	})
+}
+
+// generateDockerfile Runner Docker 이미지용 Dockerfile(DockerPush 옵션 전용).
 func generateDockerfile() string {
 	return `FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata

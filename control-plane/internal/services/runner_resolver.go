@@ -112,6 +112,52 @@ func (r *RunnerResolver) ResolveRunnerImage(workflow *models.Workflow) (string, 
 	}
 }
 
+// ResolveRunnerVersion 은 실행에 쓸 RunnerVersion 을 결정한다(바이너리 주입 경로용).
+// 반환: versionID(native 이고 ready 바이너리 있을 때만 non-empty), image(base/기본 이미지), usesNative(native plugin 사용 여부), err.
+// - native 없음 → ("", DefaultRunnerImage, false, nil)
+// - native 있고 ready(바이너리 보유) → (v.ID, v.ImageTag, true, nil)
+// - 변경분 있어 빌드 필요 → ("", "", true, *BuildRequiredError)
+// - native 있으나 ready 바이너리 없음 → BuildRequiredError(바이너리 없는 ready 는 실행 불가 — 함정 회피)
+func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string, string, bool, error) {
+	nativePlugins, err := r.findNativePluginsInWorkflow(workflow)
+	if err != nil {
+		return "", "", false, fmt.Errorf("failed to find native plugins: %w", err)
+	}
+	if len(nativePlugins) == 0 {
+		return "", DefaultRunnerImage, false, nil
+	}
+
+	var pendingPlugins []models.Plugin
+	for _, p := range nativePlugins {
+		if p.SourceHash != p.DeployedHash {
+			pendingPlugins = append(pendingPlugins, p)
+		}
+	}
+
+	buildRequired := func() error {
+		return &BuildRequiredError{
+			PendingPlugins:     pendingPlugins,
+			LatestReadyVersion: r.getLatestReadyVersionID(),
+			LatestReadySeq:     r.getLatestReadyVersionSeq(),
+			LatestSeq:          r.getLatestRevisionSeq(),
+		}
+	}
+
+	if len(pendingPlugins) > 0 {
+		return "", "", true, buildRequired()
+	}
+
+	latestReady, err := r.getLatestReadyVersion()
+	if err != nil {
+		return "", "", true, buildRequired() // ready 버전 없음 → 빌드 필요
+	}
+	// ready 지만 바이너리가 없는 버전은 실행 불가 → 빌드 필요로 유도(함정 #3 회피).
+	if len(latestReady.Binary) == 0 {
+		return "", "", true, buildRequired()
+	}
+	return latestReady.ID, latestReady.ImageTag, true, nil
+}
+
 // findNativePluginsInWorkflow 워크플로우의 파이프라인 설정에서 native plugin stage를 찾아 해당 Plugin 모델을 반환
 func (r *RunnerResolver) findNativePluginsInWorkflow(workflow *models.Workflow) ([]models.Plugin, error) {
 	if workflow.PipelinesConfig == "" {

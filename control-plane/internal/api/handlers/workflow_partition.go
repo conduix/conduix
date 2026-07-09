@@ -103,6 +103,7 @@ func (h *WorkflowHandler) publishSubExecutions(
 	jobConfig string,
 	workflowConfig *types.Workflow,
 	groups [][]string,
+	runnerVersionID string,
 ) {
 	// 부모 execution: 직접 실행하지 않고 sub-execution 결과를 취합하는 앵커.
 	h.db.Model(&models.WorkflowExecution{}).Where("id = ?", parent.ID).
@@ -140,6 +141,7 @@ func (h *WorkflowHandler) publishSubExecutions(
 			UserID:             userID,
 			JobConfig:          jobConfig,
 			WorkflowConfig:     workflowConfig,
+			RunnerVersionID:    runnerVersionID, // native stage 면 CP 바이너리를 initContainer 로 주입
 			Timestamp:          time.Now(),
 		})
 	}

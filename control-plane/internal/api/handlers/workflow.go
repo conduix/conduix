@@ -28,7 +28,8 @@ type WorkflowHandler struct {
 	redisService   *services.RedisService
 	kafkaService   *services.KafkaService
 	logger         *slog.Logger
-	assignStrategy assignment.Strategy // partition sub-execution 배정 전략(ASSIGNMENT_STRATEGY, 기본 broadcast)
+	assignStrategy assignment.Strategy      // partition sub-execution 배정 전략(ASSIGNMENT_STRATEGY, 기본 broadcast)
+	runnerResolver *services.RunnerResolver // native stage 실행에 쓸 RunnerVersion 결정
 }
 
 // NewWorkflowHandler 핸들러 생성
@@ -43,6 +44,7 @@ func NewWorkflowHandler(db *database.DB, redisService *services.RedisService) *W
 		kafkaService:   services.NewKafkaService(&services.KafkaServiceConfig{Logger: logger}),
 		logger:         logger,
 		assignStrategy: strategy,
+		runnerResolver: services.NewRunnerResolver(db.DB),
 	}
 }
 
@@ -360,6 +362,9 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	var execution *models.WorkflowExecution
 	// 실행 시점에 확정된 cluster (D4/D5: 지정→default→거부, execution에 스냅샷).
 	resolvedClusterID := ""
+	// native stage compile-in 실행에 쓸 RunnerVersion ID(없으면 기본 이미지 경로).
+	resolvedRunnerVersionID := ""
+	var buildRequiredErr *services.BuildRequiredError
 
 	// 트랜잭션으로 동시성 제어 (SELECT FOR UPDATE)
 	err := h.db.Transaction(func(tx *gorm.DB) error {
@@ -372,6 +377,23 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		if workflow.Status == string(types.PipelineGroupStatusRunning) {
 			return fmt.Errorf("WORKFLOW_RUNNING")
 		}
+
+		// native stage 실행 준비: 이 워크플로우가 native plugin 을 쓰면 실행할 RunnerVersion 을 확정한다.
+		// 빌드 필요(변경분/미빌드/바이너리없음)면 트랜잭션을 롤백해 status 오염 없이 차단한다.
+		// realtime 은 in-process 실행이라 바이너리 주입이 불가 → native 쓰는 realtime 도 차단(별도 지원은 미구현).
+		versionID, _, usesNative, rerr := h.runnerResolver.ResolveRunnerVersion(&workflow)
+		if rerr != nil {
+			var bre *services.BuildRequiredError
+			if errors.As(rerr, &bre) {
+				buildRequiredErr = bre
+				return fmt.Errorf("BUILD_REQUIRED")
+			}
+			return rerr
+		}
+		if usesNative && workflow.Type != string(types.WorkflowTypeBatch) {
+			return fmt.Errorf("REALTIME_NATIVE_UNSUPPORTED")
+		}
+		resolvedRunnerVersionID = versionID
 
 		// 실행 대상 cluster 확정: 워크플로우 지정값 우선, 없으면 default cluster로 폴백.
 		// 그래도 없으면 실행 불가 — 그룹 없이는 실행하지 않는다.
@@ -419,6 +441,15 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowRunning, "Workflow is already running")
 			return
 		}
+		if err.Error() == "BUILD_REQUIRED" {
+			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState, buildRequiredErr.Error())
+			return
+		}
+		if err.Error() == "REALTIME_NATIVE_UNSUPPORTED" {
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidState,
+				"realtime workflow cannot use native(compile-in) stages — native stages run only in batch(K8s Job) via injected binary. Use batch type or js_script stages.")
+			return
+		}
 		if err == gorm.ErrRecordNotFound {
 			middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
 			return
@@ -461,7 +492,7 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	// 여러 개 발행한다. 없으면 단일 실행(현행). partition-distributed-execution 참고.
 	partitionGroups := planPartitionGroups(pipelines)
 	if len(partitionGroups) > 1 {
-		h.publishSubExecutions(c, workflowID, userIDStr, execution, workflow.JobConfig, workflowConfig, partitionGroups)
+		h.publishSubExecutions(c, workflowID, userIDStr, execution, workflow.JobConfig, workflowConfig, partitionGroups, resolvedRunnerVersionID)
 		return
 	}
 
@@ -474,6 +505,7 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		UserID:          userIDStr,
 		JobConfig:       workflow.JobConfig, // batch 위임 시 worker가 Job 리소스 스펙으로 사용(선택)
 		WorkflowConfig:  workflowConfig,
+		RunnerVersionID: resolvedRunnerVersionID, // native stage 면 CP 바이너리를 initContainer 로 주입
 		Timestamp:       time.Now(),
 	}
 

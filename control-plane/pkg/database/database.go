@@ -28,7 +28,10 @@ type DB struct {
 
 // New 새 데이터베이스 연결 생성
 func New(cfg *Config) (*DB, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+	// maxAllowedPacket=0 → 서버의 max_allowed_packet 을 자동 사용(드라이버 기본 64MB 한도 제거).
+	// RunnerVersion.Binary(native runner gzip, 수십MB longblob) write 가 클라이언트 측
+	// 기본 한도에 걸려 조용히 실패하는 것을 막는다.
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=0",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.DBName)
 
 	logLevel := logger.Silent

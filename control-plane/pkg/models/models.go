@@ -662,6 +662,8 @@ type RunnerVersion struct {
 	Status       string     `gorm:"size:20;not null;default:pending" json:"status"` // pending → building → ready | failed
 	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-batch-job:rv-42"
 	ImageDigest  string     `gorm:"size:100" json:"image_digest,omitempty"`         // sha256:... (이미지 무결성 검증)
+	Binary       []byte     `gorm:"type:longblob" json:"-"`                         // gzip 압축된 pipeline-batch-job 바이너리. Job initContainer 가 받아 실행(레지스트리 push 없이). json:"-" 로 목록 응답 제외.
+	BinarySize   int        `json:"binary_size,omitempty"`                          // 압축 전 바이너리 크기(참고용)
 	SourceHash   string     `gorm:"size:64;not null" json:"source_hash"`            // 모든 native stage 소스의 결합 해시
 	PluginIDs    string     `gorm:"type:text" json:"plugin_ids,omitempty"`          // JSON: 포함된 native stage ID 목록
 	PluginHashes string     `gorm:"type:text" json:"plugin_hashes,omitempty"`       // JSON: plugin_id → source_hash 스냅샷

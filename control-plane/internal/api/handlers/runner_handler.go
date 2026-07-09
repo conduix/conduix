@@ -253,3 +253,19 @@ func (h *RunnerHandler) RebuildVersion(c *gin.Context) {
 		"parent_id": parentID,
 	})
 }
+
+// DownloadBinary GET /api/v1/runner/versions/:id/binary — gzip 압축된 runner 바이너리 스트리밍.
+// batch Job initContainer 가 인증 없이 받아 압축 해제 후 실행한다(레지스트리 push 없는 native stage 전달).
+func (h *RunnerHandler) DownloadBinary(c *gin.Context) {
+	id := c.Param("id")
+	var v models.RunnerVersion
+	if err := h.db.Select("id", "status", "binary").First(&v, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "runner version not found"})
+		return
+	}
+	if v.Status != "ready" || len(v.Binary) == 0 {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": fmt.Sprintf("runner version %s not ready or has no binary (status=%s)", id, v.Status)})
+		return
+	}
+	c.Data(http.StatusOK, "application/gzip", v.Binary)
+}

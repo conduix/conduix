@@ -72,30 +72,24 @@ func TestGenerateRegistryCustom(t *testing.T) {
 	}
 }
 
-func TestGenerateRunnerGoMod(t *testing.T) {
+func TestPluginRequireBlock(t *testing.T) {
 	plugins := []models.Plugin{
 		{Name: "crm-enrichment"},
 		{Name: "score-classifier"},
 	}
 
-	goMod := GenerateRunnerGoMod(plugins)
+	block := pluginRequireBlock(plugins)
 
-	if !contains(goMod, "module conduix-runner") {
-		t.Error("expected module name")
+	if !contains(block, "github.com/conduix/plugins/crm_enrichment v0.0.0") {
+		t.Error("expected crm_enrichment require")
 	}
-	if !contains(goMod, "go 1.26") {
-		t.Error("expected go version")
+	if !contains(block, "github.com/conduix/plugins/score_classifier v0.0.0") {
+		t.Error("expected score_classifier require")
 	}
-	if !contains(goMod, "github.com/conduix/conduix/pipeline-core") {
-		t.Error("expected pipeline-core dependency")
-	}
-	if !contains(goMod, "github.com/conduix/plugins/crm_enrichment") {
-		t.Error("expected plugin dependency")
-	}
-	if !contains(goMod, "=> ./plugins/crm_enrichment") {
+	if !contains(block, "github.com/conduix/plugins/crm_enrichment => ./plugins/crm_enrichment") {
 		t.Error("expected local replace for crm_enrichment")
 	}
-	if !contains(goMod, "=> ./plugins/score_classifier") {
+	if !contains(block, "github.com/conduix/plugins/score_classifier => ./plugins/score_classifier") {
 		t.Error("expected local replace for score_classifier")
 	}
 }

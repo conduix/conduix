@@ -8,10 +8,13 @@ WORKDIR /app
 # 의존성 설치
 RUN apk add --no-cache git
 
-# gopls 설치 (LSP 자동완성 서버)
+# gopls 설치 (LSP 자동완성 서버). 버전 고정 — @latest 는 재현성이 없고 버전이 바뀔 때마다
+# 이 레이어 캐시가 무효화돼 매 빌드에 gopls(무거운 툴)를 재컴파일한다(약 20분). 고정하면
+# 소스가 바뀌어도 이 레이어는 캐시 히트로 스킵된다.
+ARG GOPLS_VERSION=v0.22.0
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@latest
+    GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@${GOPLS_VERSION}
 
 # Go 모듈 복사 및 다운로드 (캐시 마운트)
 COPY shared/go.mod shared/go.sum ./shared/
@@ -54,7 +57,21 @@ COPY --from=builder /usr/local/bin/gopls /usr/local/bin/gopls
 # plugin-sdk 소스 (gopls workspace에서 참조)
 COPY plugin-sdk /app/plugin-sdk
 
+# native plugin 런너 빌드(RunnerBuilder)가 참조하는 로컬 모듈 소스.
+# 빌더는 pipeline-batch-job 모듈을 tmpDir 로 복사해 그 안에 플러그인+registry_custom.go 를
+# 주입하고 ./cmd/runner 를 빌드한다 — 실제 배치 실행 로직에 native stage 를 compile-in.
+# runtime 이미지에 이 소스들이 없으면 빌드가 실패한다.
+COPY pipeline-core /app/pipeline-core
+COPY shared /app/shared
+COPY pipeline-batch-job /app/pipeline-batch-job
+
+# control-plane 은 비-root(uid=1000)로 실행되는데, 리포에 0600 권한 소스(.go 포함)가 섞여
+# COPY 로 그대로 딸려온다 → RunnerBuilder 의 소스 복사가 permission denied 로 실패한다.
+# a+rX 로 world-readable(디렉토리는 순회 가능) 보장.
+RUN chmod -R a+rX /app/plugin-sdk /app/pipeline-core /app/shared /app/pipeline-batch-job
+
 ENV CONDUIX_SDK_PATH=/app/plugin-sdk
+ENV CONDUIX_SOURCE_ROOT=/app
 
 EXPOSE 8080
 

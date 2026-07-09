@@ -708,6 +708,7 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 		PipelinesConfig:    string(pipelinesJSON),
 		JobConfig:          jobConfig,
 		AssignedPartitions: cmd.AssignedPartitions, // 파티션 분산: sub-execution 이면 배정 파티션만
+		RunnerVersionID:    cmd.RunnerVersionID,    // native stage 면 CP 바이너리를 initContainer 로 주입
 	})
 	if err != nil {
 		completedAt := time.Now()

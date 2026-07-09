@@ -1285,7 +1285,9 @@ func (e *GroupExecutor) applyStage(data map[string]any, stage types.Stage) (map[
 func (e *GroupExecutor) applyStreamStage(stage types.Stage, data map[string]any) (map[string]any, error) {
 	s, err := e.getOrCreateStreamStage(stage)
 	if err != nil {
-		// 알 수 없는 타입: 통과(레거시 default 동작 보존)
+		// 미등록 타입: 통과(레거시 default 동작 보존). native plugin 이 등록됐어야 하는데
+		// 조용히 통과하면 디버깅이 불가하므로, 실행당 1회 경고를 남긴다.
+		e.warnUnknownStageOnce(stage.Type, err)
 		return data, nil
 	}
 
@@ -1298,6 +1300,22 @@ func (e *GroupExecutor) applyStreamStage(stage types.Stage, data map[string]any)
 		return nil, nil
 	}
 	return result.Data, nil
+}
+
+// warnUnknownStageOnce 는 미등록 stage 타입을 타입당 1회만 경고한다(레코드마다 폭주 방지).
+// native plugin 이 바이너리에 compile-in 안 됐거나 registry 등록 실패 시 이 경고로 드러난다.
+func (e *GroupExecutor) warnUnknownStageOnce(stageType string, cause error) {
+	key := "\x00warn\x00" + stageType
+	e.streamStagesMu.Lock()
+	_, warned := e.streamStages[key]
+	if !warned {
+		e.streamStages[key] = nil // sentinel: 경고 완료 표시(Close 는 nil 체크)
+	}
+	e.streamStagesMu.Unlock()
+	if !warned {
+		slog.Warn("stage type not registered — passing records through unchanged (native plugin missing?)",
+			"workflow_id", e.group.ID, "stage_type", stageType, "cause", cause)
+	}
 }
 
 // getOrCreateStreamStage는 stage에 대한 stream.Stage 인스턴스를 캐시에서 얻거나 생성한다.
@@ -1329,6 +1347,10 @@ func (e *GroupExecutor) closeStreamStages() {
 	e.streamStagesMu.Lock()
 	defer e.streamStagesMu.Unlock()
 	for key, s := range e.streamStages {
+		if s == nil {
+			delete(e.streamStages, key) // warnUnknownStageOnce sentinel
+			continue
+		}
 		if err := s.Close(); err != nil {
 			slog.Error("stream stage close error", "workflow_id", e.group.ID, "stage", key, "error", err)
 		}

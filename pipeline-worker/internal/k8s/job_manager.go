@@ -46,6 +46,7 @@ type JobSpec struct {
 	PipelinesConfig    string // JSON
 	JobConfig          types.JobConfig
 	AssignedPartitions []string // 파티션 분산: 이 Job 이 처리할 파티션 ID 부분집합(비면 전체)
+	RunnerVersionID    string   // 있으면 native stage compile-in 바이너리를 CP 에서 initContainer 로 주입해 실행(레지스트리 push 없이). 비면 이미지 실행(현행).
 }
 
 // CreateBatchJob 배치 파이프라인용 K8s Job 생성
@@ -158,6 +159,32 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 	// ServiceAccount 설정
 	if cfg.ServiceAccount != "" {
 		job.Spec.Template.Spec.ServiceAccountName = cfg.ServiceAccount
+	}
+
+	// native stage compile-in 실행: RunnerVersionID 가 있으면 CP 에서 바이너리를 받아
+	// initContainer 로 emptyDir 에 놓고, main container 는 그 바이너리를 실행한다.
+	// base 이미지(alpine 기반 batch-job)에 wget/gunzip/sh 내장 → 별도 이미지·레지스트리 push 불필요.
+	if spec.RunnerVersionID != "" {
+		const binMount = "/runner"
+		binURL := fmt.Sprintf("%s/api/v1/internal/runner/versions/%s/binary", m.controlPlaneURL, spec.RunnerVersionID)
+		ps := &job.Spec.Template.Spec
+		ps.Volumes = append(ps.Volumes, corev1.Volume{
+			Name:         "runner-bin",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		ps.InitContainers = append(ps.InitContainers, corev1.Container{
+			Name:            "fetch-runner",
+			Image:           image,
+			ImagePullPolicy: pullPolicy,
+			Command: []string{"sh", "-c",
+				fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s/pipeline-batch-job && chmod +x %s/pipeline-batch-job",
+					binURL, binMount, binMount)},
+			VolumeMounts: []corev1.VolumeMount{{Name: "runner-bin", MountPath: binMount}},
+		})
+		ps.Containers[0].Command = []string{binMount + "/pipeline-batch-job"}
+		ps.Containers[0].Args = nil // base 이미지 ENTRYPOINT/CMD 잔여 인자 제거
+		ps.Containers[0].VolumeMounts = append(ps.Containers[0].VolumeMounts,
+			corev1.VolumeMount{Name: "runner-bin", MountPath: binMount})
 	}
 
 	created, err := m.client.Clientset().BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})

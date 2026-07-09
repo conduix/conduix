@@ -302,6 +302,11 @@ E2E_ARCH := $(shell go env GOARCH)
 e2e-images: ## E2E 이미지 빌드 (colima docker 데몬에 직접 로드됨)
 	@echo "==> E2E 이미지 빌드 중 (platform=linux/$(E2E_ARCH), tag=$(E2E_TAG))..."
 	@echo "    (docker context: $$(docker context show))"
+	@# 반복 빌드가 남기는 dangling 이미지를 정리한다. 누적되면 dockerd 가 방대한
+	@# 이미지 메타데이터 관리로 CPU 를 포화시켜, 새 이미지 export/unpacking 이 CPU 를
+	@# 못 받아 수십 분~수시간 멈춘다(관측: dangling 106개→unpacking 1650s, 정리후 0.0s).
+	@echo "==> dangling 이미지 정리 (dockerd 포화 방지)"
+	-docker image prune -f >/dev/null 2>&1
 	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.control-plane -t $(DOCKER_REGISTRY)/control-plane:$(E2E_TAG) .
 	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.agent -t $(DOCKER_REGISTRY)/agent:$(E2E_TAG) .
 	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.web-ui -t $(DOCKER_REGISTRY)/web-ui:$(E2E_TAG) .

@@ -191,6 +191,14 @@ func (s *Server) setupRoutes() {
 			internalPlugins.POST("", s.pluginHandler.CreatePlugin)
 		}
 
+		// Runner 바이너리 다운로드 내부 API (batch Job initContainer 가 인증 없이 받아 실행).
+		// native stage 가 compile-in 된 바이너리를 레지스트리 push 없이 전달하는 경로.
+		// 경로는 job_manager.go 의 binURL(/api/v1/internal/runner/...)과 반드시 일치해야 한다.
+		internalRunner := v1.Group("/internal/runner")
+		{
+			internalRunner.GET("/versions/:id/binary", s.runnerHandler.DownloadBinary)
+		}
+
 		// 인증 필요한 라우트
 		authenticated := v1.Group("")
 		authenticated.Use(middleware.AuthMiddleware(s.jwtSecret))

@@ -44,6 +44,16 @@ controlPlane:
     port: 8080
   autoscaling:
     enabled: false
+  # control-plane 은 native plugin 빌드 시 컨테이너 안에서 go build(pipeline-batch-job
+  # 전체 컴파일)를 수행한다. 기본 500m/512Mi 로는 cgroup CPU throttle 로 빌드가 10분+
+  # 걸리고 메모리도 OOM 위험. VM(2 CPU)에 맞춰 상향.
+  resources:
+    limits:
+      cpu: "2"
+      memory: 2Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
 
 agent:
   replicaCount: 1

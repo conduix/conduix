@@ -261,6 +261,11 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 		plugin.Status = req.Status
 	}
 	if req.SourceCode != "" {
+		// D5: import 검증 — 허용 모듈(+표준+conduix 내부) 밖 외부 import 는 거부.
+		if err := validateStageImports(h.db, req.SourceCode); err != nil {
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+			return
+		}
 		plugin.SourceCode = req.SourceCode
 		plugin.Type = "native"
 		hash := sha256.Sum256([]byte(req.SourceCode))

@@ -627,6 +627,26 @@ func (Plugin) TableName() string {
 	return "plugins"
 }
 
+// AllowedModule 커스텀 stage 가 import 할 수 있는 외부 Go 모듈 레지스트리.
+// 의존성 버전을 플랫폼이 module 당 하나로 고정 → 모든 stage 가 동일 버전을 참조하므로
+// 여러 stage 를 한 빌드에 합쳐도 버전 충돌이 발생하지 않는다(충돌 원천 제거).
+// 사용자가 추가하며, 추가 시점의 최신 버전으로 등록된다(GOPROXY @latest 조회).
+type AllowedModule struct {
+	ModulePath  string         `gorm:"primaryKey;size:255" json:"module_path"`  // 예: github.com/google/uuid
+	Version     string         `gorm:"size:100;not null" json:"version"`        // 예: v1.6.0 (module 당 단일 — 충돌 방지의 물리 근거)
+	Description string         `gorm:"type:text" json:"description,omitempty"`
+	AddedBy     string         `gorm:"size:36" json:"added_by,omitempty"`
+	Status      string         `gorm:"size:50;default:active" json:"status"` // active, deprecated
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// TableName 테이블 이름
+func (AllowedModule) TableName() string {
+	return "allowed_modules"
+}
+
 // PluginBuild 플러그인 빌드 이력
 type PluginBuild struct {
 	ID         string     `gorm:"primaryKey;size:36" json:"id"`

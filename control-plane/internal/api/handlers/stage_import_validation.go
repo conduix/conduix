@@ -1,0 +1,99 @@
+package handlers
+
+import (
+	"fmt"
+	"go/parser"
+	"go/token"
+	"sort"
+	"strings"
+
+	"github.com/conduix/conduix/control-plane/pkg/database"
+	"github.com/conduix/conduix/control-plane/pkg/models"
+)
+
+// conduixInternalModulePrefixes 는 stage 가 자유롭게 import 할 수 있는 내부 모듈(레지스트리 불필요).
+var conduixInternalModulePrefixes = []string{
+	"github.com/conduix/conduix/plugin-sdk",
+	"github.com/conduix/conduix/pipeline-core",
+	"github.com/conduix/conduix/shared",
+}
+
+// validateStageImports 는 native stage 소스가 import 하는 외부 패키지가 전부
+// 허용됐는지(표준 라이브러리 + conduix 내부 모듈 + allowed_modules) 검증한다.
+// 허용 안 된 외부 import 가 있으면 그 목록을 담은 에러를 반환한다(D5).
+func validateStageImports(db *database.DB, sourceCode string) error {
+	imports, err := parseImportPaths(sourceCode)
+	if err != nil {
+		return fmt.Errorf("소스 파싱 실패: %w", err)
+	}
+
+	// 허용 모듈 조회(active 만).
+	var allowed []models.AllowedModule
+	if err := db.Where("status = ?", "active").Find(&allowed).Error; err != nil {
+		return fmt.Errorf("허용 모듈 조회 실패: %w", err)
+	}
+	allowedPaths := make([]string, len(allowed))
+	for i, m := range allowed {
+		allowedPaths[i] = m.ModulePath
+	}
+
+	var disallowed []string
+	for _, imp := range imports {
+		if isStdlibImport(imp) || hasAnyPrefix(imp, conduixInternalModulePrefixes) {
+			continue
+		}
+		if !isCoveredByAllowedModule(imp, allowedPaths) {
+			disallowed = append(disallowed, imp)
+		}
+	}
+	if len(disallowed) > 0 {
+		sort.Strings(disallowed)
+		return fmt.Errorf("허용되지 않은 외부 모듈 import: %s — 먼저 모듈 레지스트리에 추가하세요(POST /api/v1/modules)", strings.Join(disallowed, ", "))
+	}
+	return nil
+}
+
+// parseImportPaths 는 Go 소스의 import 경로 목록을 추출한다.
+func parseImportPaths(sourceCode string) ([]string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "stage.go", sourceCode, parser.ImportsOnly)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(f.Imports))
+	for _, imp := range f.Imports {
+		p := strings.Trim(imp.Path.Value, `"`)
+		paths = append(paths, p)
+	}
+	return paths, nil
+}
+
+// isStdlibImport 는 표준 라이브러리 import 인지 판별한다.
+// 표준 라이브러리 경로는 첫 세그먼트에 점(.)이 없다(도메인이 아님). 예: "fmt", "encoding/json".
+func isStdlibImport(importPath string) bool {
+	first := importPath
+	if i := strings.IndexByte(importPath, '/'); i >= 0 {
+		first = importPath[:i]
+	}
+	return !strings.Contains(first, ".")
+}
+
+// isCoveredByAllowedModule 은 import 경로가 허용 모듈 중 하나에 속하는지(모듈 경로 == import 이거나
+// 그 하위 패키지) 판별한다. 예: allowed "github.com/foo/bar" 는 "github.com/foo/bar/baz" 도 커버.
+func isCoveredByAllowedModule(importPath string, allowedPaths []string) bool {
+	for _, m := range allowedPaths {
+		if importPath == m || strings.HasPrefix(importPath, m+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if s == p || strings.HasPrefix(s, p+"/") {
+			return true
+		}
+	}
+	return false
+}

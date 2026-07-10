@@ -93,6 +93,7 @@ func (db *DB) Migrate() error {
 		&models.Plugin{},
 		&models.PluginBuild{},
 		&models.StageRevision{},
+		&models.AllowedModule{},
 		// 파이프라인 링크
 		&models.PipelineLink{},
 		&models.InputCheckpoint{},

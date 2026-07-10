@@ -270,6 +270,15 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	}
 	logBuf.WriteString("  pipeline-batch-job module + sibling modules copied\n")
 
+	// 허용 모듈 레지스트리 조회 — 의존성 버전의 단일 진실원천.
+	// plugin go.mod 와 batch-job go.mod 양쪽이 이 버전을 쓰므로, 여러 stage 를 합쳐도
+	// 같은 모듈이 항상 같은 버전 → 병합 충돌이 발생하지 않는다.
+	allowedModules, err := rb.activeAllowedModules()
+	if err != nil {
+		return fmt.Errorf("query allowed modules: %w", err)
+	}
+	fmt.Fprintf(logBuf, "  Allowed modules: %d\n", len(allowedModules))
+
 	// 플러그인 소스 배치 (batch-job 모듈 하위 plugins/)
 	for _, p := range plugins {
 		pluginDir := filepath.Join(batchJobDir, "plugins", sanitizeName(p.Name))
@@ -279,10 +288,9 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 		if err := os.WriteFile(filepath.Join(pluginDir, "stage.go"), []byte(p.SourceCode), 0o644); err != nil {
 			return fmt.Errorf("write plugin source: %w", err)
 		}
-		goMod := p.GoMod
-		if goMod == "" {
-			goMod = fmt.Sprintf("module github.com/conduix/plugins/%s\n\ngo 1.26\n", sanitizeName(p.Name))
-		}
+		// plugin go.mod 는 사용자 자유입력(p.GoMod)이 아니라 레지스트리에서 생성한다.
+		// require 에 허용 모듈 전체를 넣어도, 실제 import 안 하는 건 go mod tidy 가 정리한다.
+		goMod := generatePluginGoMod(sanitizeName(p.Name), allowedModules)
 		if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte(goMod), 0o644); err != nil {
 			return fmt.Errorf("write plugin go.mod: %w", err)
 		}
@@ -296,11 +304,13 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	}
 	logBuf.WriteString("  cmd/runner/registry_custom.go generated\n")
 
-	// batch-job go.mod 에 플러그인 require + local replace 추가.
-	if err := rb.appendPluginRequires(batchJobDir, plugins); err != nil {
+	// batch-job go.mod 에 플러그인 require/replace + 허용 모듈 require 추가.
+	// 허용 모듈을 메인 모듈에도 require 해야 plugin(로컬 replace)이 쓰는 외부 의존성을
+	// go mod tidy 가 단일 버전으로 해석한다.
+	if err := rb.appendPluginRequires(batchJobDir, plugins, allowedModules); err != nil {
 		return fmt.Errorf("append plugin requires to go.mod: %w", err)
 	}
-	logBuf.WriteString("  go.mod extended with plugin require/replace\n")
+	logBuf.WriteString("  go.mod extended with plugin + allowed-module require\n")
 
 	// go mod tidy (batch-job 모듈 디렉토리에서)
 	buildCtx, cancel := context.WithTimeout(ctx, rb.config.BuildTimeout)
@@ -509,14 +519,45 @@ func GenerateRegistryCustom(plugins []models.Plugin) string {
 	return buf.String()
 }
 
-// pluginRequireBlock go.mod 에 추가할 플러그인 require/replace 텍스트를 생성한다.
+// activeAllowedModules 는 status=active 인 허용 모듈을 조회한다(의존성 버전 단일 원천).
+func (rb *RunnerBuilder) activeAllowedModules() ([]models.AllowedModule, error) {
+	var mods []models.AllowedModule
+	if err := rb.db.Where("status = ?", "active").Order("module_path asc").Find(&mods).Error; err != nil {
+		return nil, err
+	}
+	return mods, nil
+}
+
+// generatePluginGoMod 는 plugin 개별 go.mod 를 레지스트리 기반으로 생성한다.
+// 허용 모듈 전체를 require 에 넣어도, 실제 import 하지 않는 모듈은 go mod tidy 가 제거한다.
+// 사용자 자유입력(p.GoMod)을 쓰지 않으므로 stage 마다 버전이 갈릴 수 없다.
+func generatePluginGoMod(name string, allowed []models.AllowedModule) string {
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "module github.com/conduix/plugins/%s\n\ngo 1.26\n", name)
+	buf.WriteString("\nrequire github.com/conduix/conduix/plugin-sdk v0.0.0\n")
+	if len(allowed) > 0 {
+		buf.WriteString("\nrequire (\n")
+		for _, m := range allowed {
+			fmt.Fprintf(&buf, "\t%s %s\n", m.ModulePath, m.Version)
+		}
+		buf.WriteString(")\n")
+	}
+	// plugin-sdk 는 로컬 모듈이라 replace 필요(batch-job 의 replace 와 동일 상대경로 기준).
+	buf.WriteString("\nreplace github.com/conduix/conduix/plugin-sdk => ../../../plugin-sdk\n")
+	return buf.String()
+}
+
+// pluginRequireBlock go.mod 에 추가할 플러그인 require/replace + 허용 모듈 require 텍스트.
 // batch-job go.mod 는 이미 pipeline-core/shared/plugin-sdk replace(../..)를 가지므로
-// 여기서는 플러그인 모듈만 다룬다.
-func pluginRequireBlock(plugins []models.Plugin) string {
+// 로컬 모듈 replace 는 플러그인만 다룬다. 허용 모듈은 require 만 추가(외부 모듈).
+func pluginRequireBlock(plugins []models.Plugin, allowed []models.AllowedModule) string {
 	var buf strings.Builder
 	buf.WriteString("\nrequire (\n")
 	for _, p := range plugins {
 		fmt.Fprintf(&buf, "\tgithub.com/conduix/plugins/%s v0.0.0\n", sanitizeName(p.Name))
+	}
+	for _, m := range allowed {
+		fmt.Fprintf(&buf, "\t%s %s\n", m.ModulePath, m.Version)
 	}
 	buf.WriteString(")\n\nreplace (\n")
 	for _, p := range plugins {
@@ -527,14 +568,14 @@ func pluginRequireBlock(plugins []models.Plugin) string {
 	return buf.String()
 }
 
-// appendPluginRequires batch-job go.mod 끝에 플러그인 require/replace 블록을 덧붙인다.
-func (rb *RunnerBuilder) appendPluginRequires(batchJobDir string, plugins []models.Plugin) error {
+// appendPluginRequires batch-job go.mod 끝에 플러그인 + 허용 모듈 require/replace 블록을 덧붙인다.
+func (rb *RunnerBuilder) appendPluginRequires(batchJobDir string, plugins []models.Plugin, allowed []models.AllowedModule) error {
 	goModPath := filepath.Join(batchJobDir, "go.mod")
 	existing, err := os.ReadFile(goModPath)
 	if err != nil {
 		return fmt.Errorf("read batch-job go.mod: %w", err)
 	}
-	combined := string(existing) + pluginRequireBlock(plugins)
+	combined := string(existing) + pluginRequireBlock(plugins, allowed)
 	return os.WriteFile(goModPath, []byte(combined), 0o644)
 }
 

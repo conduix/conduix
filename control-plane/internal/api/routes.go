@@ -42,6 +42,7 @@ type Server struct {
 	stageHandler        *handlers.StageHandler
 	previewHandler      *handlers.PreviewHandler
 	pluginHandler       *handlers.PluginHandler
+	moduleHandler       *handlers.ModuleHandler
 	runnerHandler       *handlers.RunnerHandler
 	lspHandler          *handlers.LSPHandler
 	startTime           time.Time
@@ -86,6 +87,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		stageHandler:        handlers.NewStageHandler(db),
 		previewHandler:      handlers.NewPreviewHandler(),
 		pluginHandler:       handlers.NewPluginHandler(db),
+		moduleHandler:       handlers.NewModuleHandler(db),
 		runnerHandler:       handlers.NewRunnerHandler(db),
 		lspHandler:          handlers.NewLSPHandler(os.Getenv("CONDUIX_SDK_PATH")),
 		startTime:           time.Now(),
@@ -380,6 +382,16 @@ func (s *Server) setupRoutes() {
 				plugins.GET("/:name/revisions", s.pluginHandler.ListRevisions)
 				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
 				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)
+			}
+
+			// 허용 의존성 모듈 레지스트리 (custom stage 가 import 가능한 외부 모듈).
+			// module path 에 슬래시가 있어 *module 와일드카드 사용.
+			modules := authenticated.Group("/modules")
+			{
+				modules.GET("", s.moduleHandler.ListModules)
+				modules.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.CreateModule)
+				modules.PUT("/*module", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.UpdateModule)
+				modules.DELETE("/*module", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.DeleteModule)
 			}
 
 			// Runner (Native Plugin 빌드/버전 관리)

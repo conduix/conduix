@@ -130,7 +130,10 @@ func TestPluginRequireBlock(t *testing.T) {
 		{Name: "score-classifier"},
 	}
 
-	block := pluginRequireBlock(plugins)
+	allowed := []models.AllowedModule{
+		{ModulePath: "github.com/google/uuid", Version: "v1.6.0"},
+	}
+	block := pluginRequireBlock(plugins, allowed)
 
 	if !contains(block, "github.com/conduix/plugins/crm_enrichment v0.0.0") {
 		t.Error("expected crm_enrichment require")
@@ -143,6 +146,26 @@ func TestPluginRequireBlock(t *testing.T) {
 	}
 	if !contains(block, "github.com/conduix/plugins/score_classifier => ./plugins/score_classifier") {
 		t.Error("expected local replace for score_classifier")
+	}
+	// 허용 모듈이 require 에 단일 버전으로 들어가야 함(충돌 방지의 핵심).
+	if !contains(block, "github.com/google/uuid v1.6.0") {
+		t.Error("expected allowed module uuid require with fixed version")
+	}
+}
+
+func TestGeneratePluginGoMod(t *testing.T) {
+	allowed := []models.AllowedModule{
+		{ModulePath: "github.com/google/uuid", Version: "v1.6.0"},
+	}
+	goMod := generatePluginGoMod("uuidtag", allowed)
+	if !contains(goMod, "module github.com/conduix/plugins/uuidtag") {
+		t.Error("expected module path")
+	}
+	if !contains(goMod, "github.com/google/uuid v1.6.0") {
+		t.Error("expected registry-fixed uuid version (not free-form)")
+	}
+	if !contains(goMod, "github.com/conduix/conduix/plugin-sdk") {
+		t.Error("expected plugin-sdk require")
 	}
 }
 

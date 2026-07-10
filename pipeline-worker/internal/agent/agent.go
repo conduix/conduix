@@ -37,7 +37,12 @@ type RunningExecution struct {
 	ExecutionID   string
 	WorkflowID    string
 	StartedAt     time.Time
-	GroupExecutor *executor.GroupExecutor // 모니터링용 GroupExecutor 참조
+	GroupExecutor *executor.GroupExecutor // in-process 실행의 모니터링·제어용 참조. streaming 위임 실행이면 nil.
+
+	// streaming 위임(K8s Deployment)일 때만 설정. GroupExecutor 는 pod 안에서 돌므로
+	// 제어(stop/pause/resume)는 pod REST 로, 정리는 Deployment 삭제로 한다.
+	StreamingDeployment string // Deployment 이름(비면 in-process 실행)
+	StreamingNamespace  string
 }
 
 // Agent 파이프라인 에이전트
@@ -252,51 +257,176 @@ func (a *Agent) Stop() error {
 	return nil
 }
 
-// findGroupExecutor는 executionID 또는 workflowID로 실행 중인 GroupExecutor를 찾는다.
-// executionID가 우선하며, 비어 있으면 workflowID로 매칭한다.
-func (a *Agent) findGroupExecutor(executionID, workflowID string) *executor.GroupExecutor {
+// matchingExecutions 는 제어 명령 대상 실행 목록을 반환한다.
+// executionID 가 있고 이 agent 가 그 실행을 가지면 그것 하나. 없으면(파티션 분산의 부모 execID 등)
+// workflowID 로 매칭되는 모든 로컬 실행 — 파티션 sub-execution 이 이 agent 에 여러 개일 수 있으므로
+// 전부 제어해야 한다(하나만 멈추면 나머지 pod 가 계속 돈다).
+func (a *Agent) matchingExecutions(executionID, workflowID string) []*RunningExecution {
 	a.execMu.RLock()
 	defer a.execMu.RUnlock()
 
 	if executionID != "" {
 		if exec, ok := a.runningExecs[executionID]; ok {
-			return exec.GroupExecutor
+			return []*RunningExecution{exec}
 		}
-		return nil
 	}
+	var matches []*RunningExecution
 	for _, exec := range a.runningExecs {
 		if exec.WorkflowID == workflowID {
-			return exec.GroupExecutor
+			matches = append(matches, exec)
 		}
 	}
-	return nil
+	return matches
+}
+
+// controlExecution 은 단일 실행에 제어 명령을 적용한다(streaming 은 pod REST/삭제, in-process 는 executor).
+func (a *Agent) controlExecution(exec *RunningExecution, command string) error {
+	if exec.StreamingDeployment != "" {
+		if command == "stop" {
+			return a.stopStreamingExecution(exec)
+		}
+		return a.sendStreamingCommand(exec, command)
+	}
+	if exec.GroupExecutor == nil {
+		return fmt.Errorf("execution %s has no controllable executor", exec.ExecutionID)
+	}
+	switch command {
+	case "stop":
+		return exec.GroupExecutor.Stop()
+	case "pause":
+		return exec.GroupExecutor.Pause()
+	case "resume":
+		return exec.GroupExecutor.Resume()
+	default:
+		return fmt.Errorf("unknown control command: %s", command)
+	}
+}
+
+// applyControl 은 매칭되는 모든 실행에 명령을 적용하고 첫 에러를 반환한다(나머지는 계속 시도).
+func (a *Agent) applyControl(executionID, workflowID, command string) error {
+	execs := a.matchingExecutions(executionID, workflowID)
+	if len(execs) == 0 {
+		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
+	}
+	var firstErr error
+	for _, exec := range execs {
+		if err := a.controlExecution(exec, command); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // StopGroupExecution 워크플로우(그룹) 실행을 중지한다.
+// streaming 위임이면 pod 에 REST stop 을 보내 graceful 종료(checkpoint flush)시킨 뒤 Deployment 를 삭제한다.
 func (a *Agent) StopGroupExecution(executionID, workflowID string) error {
-	ge := a.findGroupExecutor(executionID, workflowID)
-	if ge == nil {
-		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
-	}
-	return ge.Stop()
+	return a.applyControl(executionID, workflowID, "stop")
 }
 
 // PauseGroupExecution 워크플로우(그룹) 실행을 일시정지한다.
 func (a *Agent) PauseGroupExecution(executionID, workflowID string) error {
-	ge := a.findGroupExecutor(executionID, workflowID)
-	if ge == nil {
-		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
-	}
-	return ge.Pause()
+	return a.applyControl(executionID, workflowID, "pause")
 }
 
 // ResumeGroupExecution 워크플로우(그룹) 실행을 재개한다.
 func (a *Agent) ResumeGroupExecution(executionID, workflowID string) error {
-	ge := a.findGroupExecutor(executionID, workflowID)
-	if ge == nil {
+	return a.applyControl(executionID, workflowID, "resume")
+}
+
+// RollGroupExecution 은 실행 중 realtime streaming Deployment 를 새 RunnerVersion 바이너리로 rolling 한다(S8).
+// streaming 위임 실행에만 유효 — in-process 실행은 바이너리 주입이 없어 rolling 대상이 아니다(skip).
+func (a *Agent) RollGroupExecution(executionID, workflowID, runnerVersionID string) error {
+	if runnerVersionID == "" {
+		return fmt.Errorf("roll requires runner_version_id")
+	}
+	execs := a.matchingExecutions(executionID, workflowID)
+	if len(execs) == 0 {
 		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
 	}
-	return ge.Resume()
+
+	jm := a.getJobManager()
+	if jm == nil {
+		return fmt.Errorf("no K8s client to roll streaming deployment")
+	}
+
+	var firstErr error
+	rolled := 0
+	for _, exec := range execs {
+		if exec.StreamingDeployment == "" {
+			continue // in-process 실행은 rolling 대상 아님
+		}
+		if err := jm.UpdateStreamingDeployment(a.ctx, exec.StreamingNamespace, exec.StreamingDeployment, runnerVersionID); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		rolled++
+		slog.Info("rolled streaming execution to new runner version",
+			"execution_id", exec.ExecutionID, "deployment", exec.StreamingDeployment, "runner_version_id", runnerVersionID)
+	}
+	if rolled == 0 && firstErr == nil {
+		return fmt.Errorf("no streaming execution to roll for workflow=%s (in-process executions are not rollable)", workflowID)
+	}
+	return firstErr
+}
+
+// stopStreamingExecution 은 streaming pod 를 graceful 종료 후 Deployment 를 삭제하고 추적을 정리한다.
+// pod REST stop 을 먼저 보내 checkpoint flush 를 유도하되, pod 가 이미 사라졌으면(교체/크래시)
+// 명령 실패를 무시하고 Deployment 삭제로 진행한다 — 최종 상태는 "삭제됨"으로 수렴해야 한다.
+func (a *Agent) stopStreamingExecution(exec *RunningExecution) error {
+	if err := a.sendStreamingCommand(exec, "stop"); err != nil {
+		slog.Warn("streaming stop command failed, proceeding to delete deployment",
+			"error", err, "execution_id", exec.ExecutionID, "deployment", exec.StreamingDeployment)
+	}
+
+	jm := a.getJobManager()
+	if jm == nil {
+		return fmt.Errorf("cannot delete streaming deployment %s: no K8s client", exec.StreamingDeployment)
+	}
+	if err := jm.DeleteStreamingDeployment(a.ctx, exec.StreamingNamespace, exec.StreamingDeployment); err != nil {
+		return fmt.Errorf("failed to delete streaming deployment %s: %w", exec.StreamingDeployment, err)
+	}
+
+	a.execMu.Lock()
+	delete(a.runningExecs, exec.ExecutionID)
+	a.execMu.Unlock()
+	a.releaseClaim(exec.ExecutionID)
+
+	slog.Info("stopped streaming execution", "execution_id", exec.ExecutionID, "deployment", exec.StreamingDeployment)
+	return nil
+}
+
+// sendStreamingCommand 는 execution 의 streaming pod 를 찾아 command REST(stop/pause/resume)를 POST 한다.
+func (a *Agent) sendStreamingCommand(exec *RunningExecution, command string) error {
+	jm := a.getJobManager()
+	if jm == nil {
+		return fmt.Errorf("no K8s client to reach streaming pod for execution=%s", exec.ExecutionID)
+	}
+	url, err := jm.StreamingCommandURL(a.ctx, exec.StreamingNamespace, exec.ExecutionID)
+	if err != nil {
+		return err
+	}
+
+	body, _ := json.Marshal(map[string]string{"command": command})
+	reqCtx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to build command request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send %s to streaming pod: %w", command, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("streaming pod returned %d for %s: %s", resp.StatusCode, command, string(b))
+	}
+	return nil
 }
 
 // GetStatus 에이전트 상태 조회
@@ -605,6 +735,10 @@ func (a *Agent) handleCommand(message string) {
 		if err := a.ResumeGroupExecution(cmd.ExecutionID, cmd.WorkflowID); err != nil {
 			slog.Error("failed to resume workflow", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
 		}
+	case types.CommandRollWorkflow:
+		if err := a.RollGroupExecution(cmd.ExecutionID, cmd.WorkflowID, cmd.RunnerVersionID); err != nil {
+			slog.Error("failed to roll workflow", "error", err, "workflow_id", cmd.WorkflowID, "execution_id", cmd.ExecutionID)
+		}
 	default:
 		slog.Warn("unknown command type", "type", cmd.Type, "agent_id", a.ID)
 	}
@@ -648,13 +782,21 @@ func (a *Agent) handleGroupExecution(message string) {
 	}
 
 	// batch 워크플로우는 이 cluster에 K8s Job으로 위임 생성(일회성 격리 실행).
-	// realtime은 worker 프로세스 내에서 직접 상주 실행.
 	if cmd.WorkflowConfig.Type == types.WorkflowTypeBatch {
 		go a.delegateBatchJob(&cmd)
 		return
 	}
 
-	// 그룹 실행 시작 (비동기)
+	// realtime + native stage(RunnerVersionID 有)는 최신 stage 바이너리를 주입한 streaming pod
+	// (K8s Deployment, 상주 실행)로 위임한다. in-process 로는 이미 켜진 agent 에 컴파일된 stage 만
+	// 쓸 수 있어 web-ui 로 새로 만든 native stage 를 반영하지 못하기 때문이다.
+	// RunnerVersionID 가 비면(native 미사용) in-process 상주 실행을 유지한다(비-K8s standalone 포함).
+	if cmd.RunnerVersionID != "" {
+		go a.delegateStreamingDeployment(&cmd)
+		return
+	}
+
+	// realtime(native 아님)은 worker 프로세스 내에서 직접 상주 실행.
 	go a.executeGroup(&cmd)
 }
 
@@ -725,6 +867,89 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 
 	// Job 생성 성공. 이후 상태·결과는 Job Pod가 control-plane에 직접 콜백한다.
 	slog.Info("delegated batch job", "job", job.Name, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
+}
+
+// delegateStreamingDeployment 는 native stage 를 쓰는 realtime 워크플로우를 이 cluster 의 K8s
+// Deployment(streaming pod, 상주 실행)로 위임 생성한다. batch(delegateBatchJob)와 같은 위임 구조지만
+// Job 이 아닌 Deployment(RestartPolicy=Always)로 무한 실행하며, 최신 stage 바이너리를 initContainer 로
+// 주입해 web-ui 로 만든 native stage 를 반영한다. stop/pause/resume 은 pod REST 로 전달한다(W4).
+func (a *Agent) delegateStreamingDeployment(cmd *types.GroupExecutionCommand) {
+	startTime := time.Now()
+	workflow := cmd.WorkflowConfig
+
+	jm := a.getJobManager()
+	if jm == nil {
+		completedAt := time.Now()
+		_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: "realtime native delegation requires a Kubernetes cluster, but no K8s client is available on this worker",
+		})
+		a.releaseClaim(cmd.ExecutionID)
+		return
+	}
+
+	var jobConfig types.JobConfig
+	if cmd.JobConfig != "" {
+		if err := json.Unmarshal([]byte(cmd.JobConfig), &jobConfig); err != nil {
+			slog.Warn("invalid job_config, using defaults", "error", err, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
+		}
+	}
+
+	pipelinesJSON, err := json.Marshal(workflow.Pipelines)
+	if err != nil {
+		completedAt := time.Now()
+		_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: fmt.Sprintf("failed to serialize pipelines: %v", err),
+		})
+		a.releaseClaim(cmd.ExecutionID)
+		return
+	}
+
+	dep, err := jm.CreateStreamingDeployment(a.ctx, &k8s.StreamingSpec{
+		ExecutionID:        cmd.ExecutionID,
+		WorkflowID:         cmd.WorkflowID,
+		AgentID:            a.ID,
+		PipelinesConfig:    string(pipelinesJSON),
+		JobConfig:          jobConfig,
+		AssignedPartitions: cmd.AssignedPartitions,
+		RunnerVersionID:    cmd.RunnerVersionID,
+	})
+	if err != nil {
+		completedAt := time.Now()
+		_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: fmt.Sprintf("failed to create streaming deployment: %v", err),
+		})
+		a.releaseClaim(cmd.ExecutionID)
+		return
+	}
+
+	// 제어(stop/pause/resume)·정리(Deployment 삭제)를 위해 위임 실행을 추적한다.
+	// GroupExecutor 는 pod 안에서 돌므로 nil — 제어는 StreamingDeployment 로 라우팅한다(W4).
+	a.execMu.Lock()
+	a.runningExecs[cmd.ExecutionID] = &RunningExecution{
+		ExecutionID:         cmd.ExecutionID,
+		WorkflowID:          cmd.WorkflowID,
+		StartedAt:           startTime,
+		StreamingDeployment: dep.Name,
+		StreamingNamespace:  dep.Namespace,
+	}
+	a.execMu.Unlock()
+
+	slog.Info("delegated streaming deployment", "deployment", dep.Name, "namespace", dep.Namespace, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
 }
 
 // getJobManager는 batch 위임용 JobManager를 지연 생성한다(in-cluster K8s 클라이언트).

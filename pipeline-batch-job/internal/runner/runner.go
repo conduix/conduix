@@ -113,6 +113,28 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 
 	groupExec := executor.NewGroupExecutor(r.cfg.Workflow, opts...)
 
+	// stop 명령으로 무한 대기를 풀기 위한 취소 컨텍스트.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// REST /commands → GroupExecutor 제어 연결(stop/pause/resume). C1: pod 가 REST 로 명령 수신.
+	r.healthServer.SetCommandHandler(func(cmd string) error {
+		switch cmd {
+		case "stop":
+			slog.Info("stop command received", "workflow_id", r.cfg.WorkflowID)
+			cancel() // 무한 대기 해제 → graceful shutdown 경로로
+			return nil
+		case "pause":
+			slog.Info("pause command received", "workflow_id", r.cfg.WorkflowID)
+			return groupExec.Pause()
+		case "resume":
+			slog.Info("resume command received", "workflow_id", r.cfg.WorkflowID)
+			return groupExec.Resume()
+		default:
+			return fmt.Errorf("unknown command: %s", cmd)
+		}
+	})
+
 	r.healthServer.SetStatus("running")
 
 	_, err := groupExec.Start(ctx, "streaming-runner")
@@ -123,7 +145,7 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 
 	slog.Info("streaming pipeline running, waiting for context cancellation", "workflow_id", r.cfg.WorkflowID)
 
-	// 컨텍스트 종료 대기
+	// 컨텍스트 종료 대기 (SIGTERM 또는 stop 명령)
 	<-ctx.Done()
 
 	slog.Info("shutting down streaming pipeline", "workflow_id", r.cfg.WorkflowID)

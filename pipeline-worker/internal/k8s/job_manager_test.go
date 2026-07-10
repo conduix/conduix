@@ -3,8 +3,10 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -325,6 +327,163 @@ func TestSanitizeLabel(t *testing.T) {
 	result := sanitizeLabel(long)
 	if len(result) > 63 {
 		t.Errorf("sanitizeLabel should truncate to 63 chars, got %d", len(result))
+	}
+}
+
+func TestCreateStreamingDeployment(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	spec := &StreamingSpec{
+		ExecutionID:        "rt-exec-1",
+		WorkflowID:         "wf-rt",
+		PipelinesConfig:    `[{"id":"p1"}]`,
+		JobConfig:          types.DefaultJobConfig(),
+		AssignedPartitions: []string{"0", "1"},
+		RunnerVersionID:    "rv-1",
+	}
+
+	dep, err := jm.CreateStreamingDeployment(ctx, spec)
+	if err != nil {
+		t.Fatalf("CreateStreamingDeployment failed: %v", err)
+	}
+	if dep.Name != "conduix-rt-rt-exec-1" {
+		t.Errorf("deployment name = %q, want conduix-rt-rt-exec-1", dep.Name)
+	}
+	if *dep.Spec.Replicas != 1 {
+		t.Errorf("replicas = %d, want 1", *dep.Spec.Replicas)
+	}
+
+	ps := dep.Spec.Template.Spec
+	if ps.RestartPolicy != corev1.RestartPolicyAlways {
+		t.Errorf("restart policy = %s, want Always", ps.RestartPolicy)
+	}
+	c := ps.Containers[0]
+	envMap := envToMap(c.Env)
+	if envMap["EXECUTION_MODE"] != "streaming" {
+		t.Errorf("EXECUTION_MODE = %q, want streaming", envMap["EXECUTION_MODE"])
+	}
+	if envMap["ASSIGNED_PARTITIONS"] != "0,1" {
+		t.Errorf("ASSIGNED_PARTITIONS = %q, want 0,1", envMap["ASSIGNED_PARTITIONS"])
+	}
+	// native stage 바이너리 주입: RunnerVersionID 지정 시 initContainer 가 붙는다.
+	if len(ps.InitContainers) == 0 {
+		t.Error("expected fetch-runner initContainer when RunnerVersionID set")
+	}
+	if c.LivenessProbe == nil || c.ReadinessProbe == nil {
+		t.Error("streaming container must have liveness/readiness probes")
+	}
+	if len(c.Ports) == 0 || c.Ports[0].ContainerPort != streamingHealthPort {
+		t.Errorf("expected health container port %d", streamingHealthPort)
+	}
+
+	// execution-id 셀렉터로 조회 가능해야 한다(명령 전송 시 pod 발견 경로).
+	if dep.Spec.Selector.MatchLabels["conduix.io/execution-id"] != "rt-exec-1" {
+		t.Errorf("selector execution-id = %q, want rt-exec-1", dep.Spec.Selector.MatchLabels["conduix.io/execution-id"])
+	}
+
+	deps, _ := fakeClient.AppsV1().Deployments("conduix").List(ctx, metav1.ListOptions{})
+	if len(deps.Items) != 1 {
+		t.Fatalf("expected 1 deployment, got %d", len(deps.Items))
+	}
+}
+
+func TestDeleteStreamingDeployment(t *testing.T) {
+	jm, _ := newTestJobManager()
+	ctx := context.Background()
+
+	dep, err := jm.CreateStreamingDeployment(ctx, &StreamingSpec{
+		ExecutionID:     "rt-del",
+		WorkflowID:      "wf-rt",
+		PipelinesConfig: `[]`,
+		JobConfig:       types.DefaultJobConfig(),
+	})
+	if err != nil {
+		t.Fatalf("CreateStreamingDeployment failed: %v", err)
+	}
+	if err := jm.DeleteStreamingDeployment(ctx, "", dep.Name); err != nil {
+		t.Fatalf("DeleteStreamingDeployment failed: %v", err)
+	}
+	// 없는 것 삭제는 NotFound 무시 → nil.
+	if err := jm.DeleteStreamingDeployment(ctx, "", dep.Name); err != nil {
+		t.Fatalf("DeleteStreamingDeployment on missing should be nil, got %v", err)
+	}
+}
+
+func TestUpdateStreamingDeployment(t *testing.T) {
+	jm, _ := newTestJobManager()
+	ctx := context.Background()
+
+	dep, err := jm.CreateStreamingDeployment(ctx, &StreamingSpec{
+		ExecutionID:     "rt-roll",
+		WorkflowID:      "wf-rt",
+		PipelinesConfig: `[]`,
+		JobConfig:       types.DefaultJobConfig(),
+		RunnerVersionID: "rv-old",
+	})
+	if err != nil {
+		t.Fatalf("CreateStreamingDeployment failed: %v", err)
+	}
+
+	// Recreate 전략이어야 rolling 중 구/신 pod 겹침이 없다(Q4 이중소비 방지).
+	if dep.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Errorf("strategy = %s, want Recreate", dep.Spec.Strategy.Type)
+	}
+
+	if err := jm.UpdateStreamingDeployment(ctx, "", dep.Name, "rv-new"); err != nil {
+		t.Fatalf("UpdateStreamingDeployment failed: %v", err)
+	}
+
+	updated, _ := jm.client.Clientset().AppsV1().Deployments("conduix").Get(ctx, dep.Name, metav1.GetOptions{})
+	var initCmd string
+	for _, ic := range updated.Spec.Template.Spec.InitContainers {
+		if ic.Name == fetchRunnerContainerName {
+			initCmd = ic.Command[len(ic.Command)-1]
+		}
+	}
+	if initCmd == "" {
+		t.Fatal("fetch-runner initContainer not found after update")
+	}
+	// 새 versionID 로 fetch URL 이 교체돼야 한다.
+	if !strings.Contains(initCmd, "rv-new") || strings.Contains(initCmd, "rv-old") {
+		t.Errorf("init command should fetch rv-new, got: %s", initCmd)
+	}
+
+	// versionID 없이 rolling → 에러.
+	if err := jm.UpdateStreamingDeployment(ctx, "", dep.Name, ""); err == nil {
+		t.Error("expected error when runnerVersionID empty")
+	}
+}
+
+func TestStreamingCommandURL(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	// running·IP 있는 pod 를 execution-id 라벨로 생성.
+	_, err := fakeClient.CoreV1().Pods("conduix").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "rt-pod-1",
+			Namespace: "conduix",
+			Labels:    map[string]string{"conduix.io/execution-id": "rt-exec-1"},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.1.2.3"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create pod failed: %v", err)
+	}
+
+	url, err := jm.StreamingCommandURL(ctx, "conduix", "rt-exec-1")
+	if err != nil {
+		t.Fatalf("StreamingCommandURL failed: %v", err)
+	}
+	want := fmt.Sprintf("http://10.1.2.3:%d/commands", streamingHealthPort)
+	if url != want {
+		t.Errorf("url = %q, want %q", url, want)
+	}
+
+	// 매칭 pod 없으면 에러.
+	if _, err := jm.StreamingCommandURL(ctx, "conduix", "no-such-exec"); err == nil {
+		t.Error("expected error when no running pod matches execution-id")
 	}
 }
 

@@ -59,8 +59,10 @@ type AgentCommand struct {
 	PipelineID  string      `json:"pipeline_id,omitempty"`
 	WorkflowID  string      `json:"workflow_id,omitempty"`  // 워크플로우 단위 명령 대상
 	ExecutionID string      `json:"execution_id,omitempty"` // 특정 실행 대상 (stop/pause/resume)
-	Payload     any         `json:"payload,omitempty"`
-	Timestamp   time.Time   `json:"timestamp"`
+	// RunnerVersionID 는 roll_workflow 명령에서 새 native 바이너리 버전을 지정한다(streaming rolling).
+	RunnerVersionID string    `json:"runner_version_id,omitempty"`
+	Payload         any       `json:"payload,omitempty"`
+	Timestamp       time.Time `json:"timestamp"`
 }
 
 // CommandType 명령 타입
@@ -78,6 +80,9 @@ const (
 	CommandStopWorkflow   CommandType = "stop_workflow"
 	CommandPauseWorkflow  CommandType = "pause_workflow"
 	CommandResumeWorkflow CommandType = "resume_workflow"
+	// CommandRollWorkflow 은 실행 중 realtime streaming Deployment 를 새 RunnerVersion 바이너리로
+	// rolling 한다(native stage 변경 반영). Payload 에 새 runner_version_id 를 담는다.
+	CommandRollWorkflow CommandType = "roll_workflow"
 )
 
 // AgentCommandResponse 명령 응답

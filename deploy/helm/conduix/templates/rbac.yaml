@@ -15,7 +15,12 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
-  # Job Pod 상태·로그 조회 (배치 실행 관측)
+  # worker가 realtime streaming pod(Deployment)를 생성/조회/rolling(update)/삭제
+  # (native stage realtime 실행 — CreateStreamingDeployment/UpdateStreamingDeployment/DeleteStreamingDeployment)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  # Job/streaming Pod 상태·로그 조회 (실행 관측 + streaming 명령 전송 대상 pod IP 조회)
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]

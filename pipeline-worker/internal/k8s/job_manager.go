@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/conduix/conduix/shared/types"
 )
@@ -21,6 +23,14 @@ const (
 	labelManagedByKey = "app.kubernetes.io/managed-by"
 	managedByValue    = "conduix-worker"
 )
+
+// streamingHealthPort 는 streaming pod 의 health/command REST 포트다.
+// pipeline-batch-job config 기본값(HEALTH_PORT=8082)과 일치해야 한다 — probe·명령 전송 대상 포트.
+const streamingHealthPort = 8082
+
+// fetchRunnerContainerName 은 바이너리 주입 initContainer 이름이다.
+// rolling(UpdateStreamingDeployment)에서 이 이름으로 initContainer 를 찾아 fetch URL 을 교체한다.
+const fetchRunnerContainerName = "fetch-runner"
 
 // JobManager K8s Job/CronJob 관리자
 type JobManager struct {
@@ -161,31 +171,8 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 		job.Spec.Template.Spec.ServiceAccountName = cfg.ServiceAccount
 	}
 
-	// native stage compile-in 실행: RunnerVersionID 가 있으면 CP 에서 바이너리를 받아
-	// initContainer 로 emptyDir 에 놓고, main container 는 그 바이너리를 실행한다.
-	// base 이미지(alpine 기반 batch-job)에 wget/gunzip/sh 내장 → 별도 이미지·레지스트리 push 불필요.
-	if spec.RunnerVersionID != "" {
-		const binMount = "/runner"
-		binURL := fmt.Sprintf("%s/api/v1/internal/runner/versions/%s/binary", m.controlPlaneURL, spec.RunnerVersionID)
-		ps := &job.Spec.Template.Spec
-		ps.Volumes = append(ps.Volumes, corev1.Volume{
-			Name:         "runner-bin",
-			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-		})
-		ps.InitContainers = append(ps.InitContainers, corev1.Container{
-			Name:            "fetch-runner",
-			Image:           image,
-			ImagePullPolicy: pullPolicy,
-			Command: []string{"sh", "-c",
-				fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s/pipeline-batch-job && chmod +x %s/pipeline-batch-job",
-					binURL, binMount, binMount)},
-			VolumeMounts: []corev1.VolumeMount{{Name: "runner-bin", MountPath: binMount}},
-		})
-		ps.Containers[0].Command = []string{binMount + "/pipeline-batch-job"}
-		ps.Containers[0].Args = nil // base 이미지 ENTRYPOINT/CMD 잔여 인자 제거
-		ps.Containers[0].VolumeMounts = append(ps.Containers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "runner-bin", MountPath: binMount})
-	}
+	// native stage compile-in 바이너리 주입(batch/streaming 공통 정책 — 한 곳에서 관리).
+	m.injectRunnerBinary(&job.Spec.Template.Spec, spec.RunnerVersionID, image, pullPolicy)
 
 	created, err := m.client.Clientset().BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
@@ -311,6 +298,254 @@ func (m *JobManager) DeleteJob(ctx context.Context, namespace, name string) erro
 		return fmt.Errorf("failed to delete job %s: %w", name, err)
 	}
 	return nil
+}
+
+// fetchRunnerCommand 는 RunnerVersion 바이너리를 CP 에서 받아 압축해제·설치하는 initContainer 명령이다.
+// URL 은 versionID 로만 달라지므로 rolling 시 이 명령만 교체하면 새 바이너리로 재기동된다.
+func (m *JobManager) fetchRunnerCommand(runnerVersionID, binMount string) []string {
+	binURL := fmt.Sprintf("%s/api/v1/internal/runner/versions/%s/binary", m.controlPlaneURL, runnerVersionID)
+	return []string{"sh", "-c",
+		fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s/pipeline-batch-job && chmod +x %s/pipeline-batch-job",
+			binURL, binMount, binMount)}
+}
+
+// injectRunnerBinary native stage compile-in 바이너리 주입(batch Job·streaming Deployment 공통).
+// RunnerVersionID 가 있으면 CP 에서 바이너리를 받아 initContainer(fetch-runner)로 emptyDir 에 놓고,
+// main container 는 그 바이너리를 실행한다. base 이미지(alpine)에 wget/gunzip/sh 내장 → 레지스트리 push 불필요.
+// RunnerVersionID 가 비면 no-op(이미지 실행).
+func (m *JobManager) injectRunnerBinary(ps *corev1.PodSpec, runnerVersionID, image string, pullPolicy corev1.PullPolicy) {
+	if runnerVersionID == "" {
+		return
+	}
+	const binMount = "/runner"
+	ps.Volumes = append(ps.Volumes, corev1.Volume{
+		Name:         "runner-bin",
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	})
+	ps.InitContainers = append(ps.InitContainers, corev1.Container{
+		Name:            fetchRunnerContainerName,
+		Image:           image,
+		ImagePullPolicy: pullPolicy,
+		Command:         m.fetchRunnerCommand(runnerVersionID, binMount),
+		VolumeMounts:    []corev1.VolumeMount{{Name: "runner-bin", MountPath: binMount}},
+	})
+	ps.Containers[0].Command = []string{binMount + "/pipeline-batch-job"}
+	ps.Containers[0].Args = nil // base 이미지 ENTRYPOINT/CMD 잔여 인자 제거
+	ps.Containers[0].VolumeMounts = append(ps.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: "runner-bin", MountPath: binMount})
+}
+
+// StreamingSpec realtime streaming Deployment 생성용 파라미터.
+// JobSpec 과 필드가 겹치지만 realtime 은 무한 실행이라 Job 이 아닌 Deployment 로 띄운다.
+type StreamingSpec struct {
+	ExecutionID        string
+	WorkflowID         string
+	AgentID            string
+	PipelinesConfig    string // JSON
+	JobConfig          types.JobConfig
+	AssignedPartitions []string
+	RunnerVersionID    string
+}
+
+// streamingDeploymentName realtime Deployment 이름. execution 단위(파티션 sub-execution 포함)로 고유.
+func (m *JobManager) streamingDeploymentName(workflowID, executionID string) string {
+	return "conduix-rt-" + sanitizeName(executionID)
+}
+
+// CreateStreamingDeployment realtime 파이프라인용 K8s Deployment 생성(무한 실행, RestartPolicy=Always).
+// batch(CreateBatchJob)와 달리 완료 개념이 없어 Job 이 아닌 Deployment(replicas=1)로 상주시킨다.
+// initContainer 바이너리 주입·env 는 batch 와 동일 정책(injectRunnerBinary 재사용).
+func (m *JobManager) CreateStreamingDeployment(ctx context.Context, spec *StreamingSpec) (*appsv1.Deployment, error) {
+	name := m.streamingDeploymentName(spec.WorkflowID, spec.ExecutionID)
+	cfg := spec.JobConfig
+
+	image := m.runnerImage
+	if cfg.Image != "" {
+		image = cfg.Image
+	}
+	if image == "" {
+		return nil, fmt.Errorf("runner image is required")
+	}
+
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = m.client.Namespace()
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/name":      "conduix-worker",
+		"app.kubernetes.io/component": "streaming-runner",
+		labelManagedByKey:             managedByValue,
+		"conduix.io/workflow-id":      sanitizeLabel(spec.WorkflowID),
+		"conduix.io/execution-id":     sanitizeLabel(spec.ExecutionID),
+	}
+	selector := map[string]string{"conduix.io/execution-id": sanitizeLabel(spec.ExecutionID)}
+
+	callbackURL := fmt.Sprintf("%s/api/v1/internal/job-result", m.controlPlaneURL)
+	envVars := []corev1.EnvVar{
+		{Name: "EXECUTION_MODE", Value: "streaming"},
+		{Name: "EXECUTION_ID", Value: spec.ExecutionID},
+		{Name: "WORKFLOW_ID", Value: spec.WorkflowID},
+		{Name: "PIPELINES_CONFIG", Value: spec.PipelinesConfig},
+		{Name: "CONTROL_PLANE_URL", Value: m.controlPlaneURL},
+		{Name: "CALLBACK_URL", Value: callbackURL},
+	}
+	if spec.AgentID != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENT_ID", Value: spec.AgentID})
+	}
+	if len(spec.AssignedPartitions) > 0 {
+		envVars = append(envVars, corev1.EnvVar{Name: "ASSIGNED_PARTITIONS", Value: strings.Join(spec.AssignedPartitions, ",")})
+	}
+
+	pullPolicy := corev1.PullIfNotPresent
+	switch cfg.ImagePullPolicy {
+	case "Always":
+		pullPolicy = corev1.PullAlways
+	case "Never":
+		pullPolicy = corev1.PullNever
+	}
+
+	replicas := int32(1)
+	// checkpoint flush 여유를 위해 graceful 종료 시간을 넉넉히(runStreaming 이 SIGTERM 후 flush).
+	gracePeriod := int64(60)
+
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: selector},
+			// native 변경 rolling(S8) 시 구/신 pod 가 동시에 살면 같은 파티션을 이중 소비한다
+			// (pod 내부에 source-level claim 이 없음 — Q4). Recreate 로 구 pod 를 완전히 종료
+			// (checkpoint flush)한 뒤 신 pod 를 띄워 겹침을 제거한다. 짧은 공백은 있으나 신 pod 가
+			// checkpoint offset 부터 재개하므로 무손실. Kafka 는 consumer group 이 겹침을 막지만
+			// 비-Kafka 파티션 소스까지 안전하게 하려면 Recreate 가 정답.
+			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					RestartPolicy:                 corev1.RestartPolicyAlways,
+					TerminationGracePeriodSeconds: &gracePeriod,
+					Containers: []corev1.Container{
+						{
+							Name:            "streaming-runner",
+							Image:           image,
+							ImagePullPolicy: pullPolicy,
+							Env:             envVars,
+							Resources:       buildResourceRequirements(cfg),
+							// health/command REST(:8082). agent 가 이 포트로 stop/pause/resume 를 보낸다(W4).
+							Ports: []corev1.ContainerPort{{Name: "health", ContainerPort: streamingHealthPort}},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{Path: "/health", Port: intstr.FromInt(streamingHealthPort)},
+								},
+								InitialDelaySeconds: 10,
+								PeriodSeconds:       15,
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromInt(streamingHealthPort)},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       10,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if len(cfg.NodeSelector) > 0 {
+		dep.Spec.Template.Spec.NodeSelector = cfg.NodeSelector
+	}
+	if cfg.ServiceAccount != "" {
+		dep.Spec.Template.Spec.ServiceAccountName = cfg.ServiceAccount
+	}
+
+	m.injectRunnerBinary(&dep.Spec.Template.Spec, spec.RunnerVersionID, image, pullPolicy)
+
+	created, err := m.client.Clientset().AppsV1().Deployments(namespace).Create(ctx, dep, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create streaming deployment %s: %w", name, err)
+	}
+	return created, nil
+}
+
+// DeleteStreamingDeployment realtime Deployment 삭제(워크플로우 stop 시).
+func (m *JobManager) DeleteStreamingDeployment(ctx context.Context, namespace, name string) error {
+	if namespace == "" {
+		namespace = m.client.Namespace()
+	}
+	propagation := metav1.DeletePropagationBackground
+	err := m.client.Clientset().AppsV1().Deployments(namespace).Delete(ctx, name, metav1.DeleteOptions{
+		PropagationPolicy: &propagation,
+	})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete streaming deployment %s: %w", name, err)
+	}
+	return nil
+}
+
+// UpdateStreamingDeployment 는 실행 중 realtime Deployment 를 새 RunnerVersion 바이너리로 rolling 한다(S8).
+// fetch-runner initContainer 의 URL(versionID)만 교체하면 pod template 이 바뀌어 K8s 가 재기동한다.
+// Deployment 전략이 Recreate 이므로 구 pod 가 완전히 종료(checkpoint flush)된 뒤 신 pod 가 뜬다 — 겹침 없음(Q4).
+// 신 pod 는 checkpoint offset 부터 재개하므로 무손실. versionID 가 비면(native 아님) rolling 대상 아님 → 에러.
+func (m *JobManager) UpdateStreamingDeployment(ctx context.Context, namespace, name, runnerVersionID string) error {
+	if runnerVersionID == "" {
+		return fmt.Errorf("runner version id required for streaming rolling")
+	}
+	if namespace == "" {
+		namespace = m.client.Namespace()
+	}
+
+	deps := m.client.Clientset().AppsV1().Deployments(namespace)
+	dep, err := deps.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get streaming deployment %s: %w", name, err)
+	}
+
+	const binMount = "/runner"
+	found := false
+	for i := range dep.Spec.Template.Spec.InitContainers {
+		ic := &dep.Spec.Template.Spec.InitContainers[i]
+		if ic.Name == fetchRunnerContainerName {
+			ic.Command = m.fetchRunnerCommand(runnerVersionID, binMount)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("streaming deployment %s has no %s initContainer (not native-injected?)", name, fetchRunnerContainerName)
+	}
+
+	if _, err := deps.Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to update streaming deployment %s: %w", name, err)
+	}
+	return nil
+}
+
+// StreamingCommandURL 은 execution-id 라벨로 streaming pod 를 찾아 command REST 엔드포인트 URL 을 만든다.
+// pod IP 는 in-cluster 에서 직접 접근 가능하므로 service 없이 pod IP:health-port 로 명령을 보낸다(Q2).
+// running·IP 배정된 pod 만 대상으로 한다. 없으면 에러(아직 스케줄 중이거나 rolling 교체 중일 수 있음).
+func (m *JobManager) StreamingCommandURL(ctx context.Context, namespace, executionID string) (string, error) {
+	if namespace == "" {
+		namespace = m.client.Namespace()
+	}
+	selector := "conduix.io/execution-id=" + sanitizeLabel(executionID)
+	pods, err := m.client.Clientset().CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return "", fmt.Errorf("failed to list streaming pods (execution=%s): %w", executionID, err)
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
+			return fmt.Sprintf("http://%s:%d/commands", pod.Status.PodIP, streamingHealthPort), nil
+		}
+	}
+	return "", fmt.Errorf("no running streaming pod with IP for execution=%s", executionID)
 }
 
 // DeleteCronJob CronJob 삭제

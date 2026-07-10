@@ -380,8 +380,8 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 
 		// native stage 실행 준비: 이 워크플로우가 native plugin 을 쓰면 실행할 RunnerVersion 을 확정한다.
 		// 빌드 필요(변경분/미빌드/바이너리없음)면 트랜잭션을 롤백해 status 오염 없이 차단한다.
-		// realtime 은 in-process 실행이라 바이너리 주입이 불가 → native 쓰는 realtime 도 차단(별도 지원은 미구현).
-		versionID, _, usesNative, rerr := h.runnerResolver.ResolveRunnerVersion(&workflow)
+		// batch 는 K8s Job, realtime 은 streaming Deployment(pod)로 바이너리를 initContainer 주입 실행한다.
+		versionID, _, _, rerr := h.runnerResolver.ResolveRunnerVersion(&workflow)
 		if rerr != nil {
 			var bre *services.BuildRequiredError
 			if errors.As(rerr, &bre) {
@@ -389,9 +389,6 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 				return fmt.Errorf("BUILD_REQUIRED")
 			}
 			return rerr
-		}
-		if usesNative && workflow.Type != string(types.WorkflowTypeBatch) {
-			return fmt.Errorf("REALTIME_NATIVE_UNSUPPORTED")
 		}
 		resolvedRunnerVersionID = versionID
 
@@ -443,11 +440,6 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		}
 		if err.Error() == "BUILD_REQUIRED" {
 			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState, buildRequiredErr.Error())
-			return
-		}
-		if err.Error() == "REALTIME_NATIVE_UNSUPPORTED" {
-			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidState,
-				"realtime workflow cannot use native(compile-in) stages — native stages run only in batch(K8s Job) via injected binary. Use batch type or js_script stages.")
 			return
 		}
 		if err == gorm.ErrRecordNotFound {
@@ -775,6 +767,59 @@ func (h *WorkflowHandler) ResumeWorkflow(c *gin.Context) {
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
 		Message: "Workflow resumed",
+	})
+}
+
+// RollWorkflow POST /api/v1/workflows/:id/roll
+// 실행 중 realtime 워크플로우를 native stage 최신 바이너리로 rolling 한다(S8, 수동 트리거).
+// 새 RunnerVersion 을 확정(필요 시 빌드 요구)한 뒤 실행 중 execution 의 cluster 로 roll 명령을 발행한다.
+// streaming 위임(native)인 실행에만 효과가 있으며, in-process 실행은 agent 가 skip 한다.
+func (h *WorkflowHandler) RollWorkflow(c *gin.Context) {
+	workflowID := c.Param("id")
+
+	var workflow models.Workflow
+	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
+		return
+	}
+	if workflow.Status != string(types.PipelineGroupStatusRunning) {
+		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowNotRunning, "Workflow is not running")
+		return
+	}
+
+	versionID, _, usesNative, rerr := h.runnerResolver.ResolveRunnerVersion(&workflow)
+	if rerr != nil {
+		var bre *services.BuildRequiredError
+		if errors.As(rerr, &bre) {
+			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState, bre.Error())
+			return
+		}
+		h.logger.Error("Failed to resolve runner version for roll", "workflow_id", workflowID, "error", rerr)
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to resolve runner version")
+		return
+	}
+	if !usesNative || versionID == "" {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidState,
+			"workflow does not use native stages — nothing to roll")
+		return
+	}
+
+	execID, execClusterID := h.runningExecution(workflowID)
+	if execID == "" {
+		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowNotRunning, "No running execution to roll")
+		return
+	}
+
+	if err := h.redisService.PublishWorkflowRollCommand(execClusterID, workflowID, execID, versionID); err != nil {
+		h.logger.Error("Failed to publish roll command", "workflow_id", workflowID, "execution_id", execID, "cluster_id", execClusterID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeInternalError, "Failed to publish roll command")
+		return
+	}
+
+	c.JSON(http.StatusOK, types.APIResponse[map[string]any]{
+		Success: true,
+		Message: "Workflow roll triggered",
+		Data:    map[string]any{"runner_version_id": versionID, "execution_id": execID},
 	})
 }
 

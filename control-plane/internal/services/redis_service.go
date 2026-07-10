@@ -147,6 +147,30 @@ func (s *RedisService) PublishWorkflowCommand(clusterID string, cmdType types.Co
 	return nil
 }
 
+// PublishWorkflowRollCommand 은 실행 중 realtime 을 새 RunnerVersion 으로 rolling 하도록 명령을 발행한다(S8).
+// stop/pause/resume 과 달리 새 바이너리 버전(runnerVersionID)을 실어야 하므로 별도 발행 경로다.
+func (s *RedisService) PublishWorkflowRollCommand(clusterID, workflowID, executionID, runnerVersionID string) error {
+	cmd := types.AgentCommand{
+		ID:              uuid.New().String(),
+		Type:            types.CommandRollWorkflow,
+		WorkflowID:      workflowID,
+		ExecutionID:     executionID,
+		RunnerVersionID: runnerVersionID,
+		Timestamp:       time.Now(),
+	}
+
+	channel := "workflow:commands:broadcast"
+	if clusterID != "" {
+		channel = fmt.Sprintf("cluster:%s:commands", clusterID)
+	}
+
+	if err := s.client.Publish(s.ctx, channel, cmd); err != nil {
+		return fmt.Errorf("failed to publish roll command to %s: %w", channel, err)
+	}
+	slog.Info("Workflow roll command sent", "channel", channel, "workflow_id", workflowID, "execution_id", executionID, "runner_version_id", runnerVersionID)
+	return nil
+}
+
 // queuePendingCommand 대기 큐에 명령 추가
 func (s *RedisService) queuePendingCommand(agentID string, cmd types.AgentCommand) {
 	s.commandMu.Lock()

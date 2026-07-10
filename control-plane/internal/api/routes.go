@@ -246,6 +246,7 @@ func (s *Server) setupRoutes() {
 				workflows.POST("/:id/stop", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.StopWorkflow)
 				workflows.POST("/:id/pause", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.PauseWorkflow)
 				workflows.POST("/:id/resume", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.ResumeWorkflow)
+				workflows.POST("/:id/roll", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.workflowHandler.RollWorkflow)
 				workflows.GET("/:id/executions", s.workflowHandler.GetWorkflowExecutions)
 				workflows.GET("/:id/executions/:execId", s.workflowHandler.GetWorkflowExecution)
 				workflows.GET("/:id/executions/:execId/monitoring", s.workflowHandler.GetExecutionMonitoring)

@@ -230,9 +230,23 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	}
 
 	// 7. 빌드 성공: DeployedHash 갱신 (빌드 중 수정 감지)
-	rb.updateDeployedHashes(plugins, pluginHashes, version.ID)
+	staleDetected := rb.updateDeployedHashes(plugins, pluginHashes, version.ID)
 
 	fmt.Fprintf(&logBuf, "  Build completed in %s\n", duration)
+
+	// 8. 빌드 중 소스가 바뀌어(연속 저장) deployed_hash 갱신을 스킵한 plugin 이 있으면,
+	//    그 최신 소스는 아직 빌드 안 된 상태다(lock 에 막혀 그때 트리거된 빌드는 거부됨).
+	//    락 해제(이 함수 defer) 후 자동으로 한 번 더 빌드해 최신 해시로 수렴시킨다.
+	//    → 연속 저장 시 BUILD_REQUIRED 에 영구히 갇히는 것을 방지.
+	if staleDetected {
+		rb.logger.Info("source changed during build — scheduling rebuild to converge", "version_id", version.ID)
+		go func() {
+			time.Sleep(500 * time.Millisecond) // 현재 빌드의 락 해제 대기
+			if _, err := rb.Build(context.Background(), createdBy); err != nil {
+				rb.logger.Warn("auto-rebuild after stale detection failed", "error", err)
+			}
+		}()
+	}
 
 	return &RunnerBuildResult{
 		VersionID: version.ID,
@@ -381,9 +395,11 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	return nil
 }
 
-// updateDeployedHashes 빌드 성공 시 각 Plugin의 DeployedHash를 갱신
-// 빌드 중 소스가 수정된 경우 (현재 SourceHash != 빌드 시점 해시) 해당 plugin은 갱신하지 않음
-func (rb *RunnerBuilder) updateDeployedHashes(plugins []models.Plugin, buildTimeHashes map[string]string, versionID string) {
+// updateDeployedHashes 빌드 성공 시 각 Plugin의 DeployedHash를 갱신.
+// 빌드 중 소스가 수정된 경우 (현재 SourceHash != 빌드 시점 해시) 해당 plugin은 갱신하지 않는다.
+// 반환값: 빌드 중 소스 변경으로 갱신을 스킵한 plugin 이 하나라도 있으면 true(재빌드 필요).
+func (rb *RunnerBuilder) updateDeployedHashes(plugins []models.Plugin, buildTimeHashes map[string]string, versionID string) bool {
+	staleDetected := false
 	for _, p := range plugins {
 		buildHash, ok := buildTimeHashes[p.ID]
 		if !ok {
@@ -400,8 +416,11 @@ func (rb *RunnerBuilder) updateDeployedHashes(plugins []models.Plugin, buildTime
 				"deployed_hash":     buildHash,
 				"runner_version_id": versionID,
 			})
+		} else {
+			staleDetected = true
 		}
 	}
+	return staleDetected
 }
 
 // runCommand 명령 실행.

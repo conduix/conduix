@@ -537,11 +537,21 @@ func (h *PluginHandler) TestNativePlugin(c *gin.Context) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	// main.go 작성
-	mainPath := filepath.Join(tmpDir, "main.go")
-	if err := os.WriteFile(mainPath, []byte(req.SourceCode), 0o600); err != nil {
+	// 사용자 소스는 stage.go 로 쓴다(package main, var Stage 선언 규약).
+	// 실행 러너 main 은 별도 파일로 주입한다 — 사용자 소스에 func main 이 없어
+	// "function main is undeclared" 로 빌드 실패하던 것을 해결한다(같은 package main 이라
+	// Stage 심볼 공유). 러너는 stdin(config+sample_data)→Stage.Process→stdout(records).
+	stagePath := filepath.Join(tmpDir, "stage.go")
+	if err := os.WriteFile(stagePath, []byte(req.SourceCode), 0o600); err != nil {
 		resp.Success = false
 		resp.BuildError = "Failed to write source file"
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+	runnerMainPath := filepath.Join(tmpDir, "runner_main.go")
+	if err := os.WriteFile(runnerMainPath, []byte(testRunnerMain), 0o600); err != nil {
+		resp.Success = false
+		resp.BuildError = "Failed to write runner main"
 		middleware.SuccessResponse(c, resp)
 		return
 	}

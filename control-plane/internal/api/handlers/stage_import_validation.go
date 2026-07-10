@@ -99,6 +99,46 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 	return false
 }
 
+// testRunnerMain 은 인-에디터 테스트 빌드에 주입하는 실행 러너(package main).
+// 사용자 소스(stage.go)의 `var Stage sdk.NativeStage` 를 참조해 stdin(config+sample_data)
+// 을 읽고 Init→Process 반복 후 stdout 으로 {records:[...]} 를 낸다. 사용자 소스에 func main
+// 이 없어도 빌드되게 한다(같은 package main, Stage 심볼 공유).
+const testRunnerMain = `package main
+
+import (
+	"encoding/json"
+	"os"
+)
+
+func main() {
+	var in struct {
+		Config     map[string]any   ` + "`json:\"config\"`" + `
+		SampleData []map[string]any ` + "`json:\"sample_data\"`" + `
+	}
+	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
+		json.NewEncoder(os.Stdout).Encode(map[string]any{"error": "decode input: " + err.Error()})
+		return
+	}
+	if err := Stage.Init(in.Config); err != nil {
+		json.NewEncoder(os.Stdout).Encode(map[string]any{"error": "init: " + err.Error()})
+		return
+	}
+	out := make([]map[string]any, 0, len(in.SampleData))
+	for _, rec := range in.SampleData {
+		r, err := Stage.Process(rec)
+		if err != nil {
+			json.NewEncoder(os.Stdout).Encode(map[string]any{"error": "process: " + err.Error()})
+			return
+		}
+		if r != nil {
+			out = append(out, r)
+		}
+	}
+	_ = Stage.Close()
+	json.NewEncoder(os.Stdout).Encode(map[string]any{"records": out})
+}
+`
+
 // buildTestGoMod 는 인-에디터 테스트 빌드용 go.mod 를 레지스트리 기반으로 생성한다.
 // TestNativePlugin(임시 빌드)이 실제 runner 빌드와 같은 의존성 버전을 쓰게 해,
 // "에디터 테스트는 실패/성공인데 실제 빌드는 반대" 인 불일치를 없앤다.

@@ -546,18 +546,9 @@ func (h *PluginHandler) TestNativePlugin(c *gin.Context) {
 		return
 	}
 
-	// go.mod 작성
-	goModContent := req.GoMod
-	if goModContent == "" {
-		goModContent = `module conduix-plugin-test
-
-go 1.26
-
-require github.com/conduix/conduix/plugin-sdk v0.0.0
-
-replace github.com/conduix/conduix/plugin-sdk => github.com/conduix/conduix/plugin-sdk v0.0.0
-`
-	}
+	// go.mod 작성 — 사용자 자유입력이 아니라 레지스트리(allowed_modules)로 생성(D2).
+	// 에디터 테스트 빌드와 실제 runner 빌드가 같은 의존성 버전을 쓰게 해 불일치를 없앤다.
+	goModContent := buildTestGoMod(h.db)
 	goModPath := filepath.Join(tmpDir, "go.mod")
 	if err := os.WriteFile(goModPath, []byte(goModContent), 0o600); err != nil {
 		resp.Success = false
@@ -572,9 +563,30 @@ replace github.com/conduix/conduix/plugin-sdk => github.com/conduix/conduix/plug
 
 	buildStart := time.Now()
 	binPath := filepath.Join(tmpDir, "plugin-test")
+	// GOCACHE/GOPATH/HOME 을 쓰기가능 경로로 지정 — control-plane 이 비-root(HOME=/)면
+	// go 가 /.cache 에 쓰려다 permission denied 로 실패한다(RunnerBuilder 와 동일 이슈).
+	// runner 빌드와 CacheDir 를 공유해 이미 받은 모듈(예: uuid)을 재다운로드하지 않는다.
+	testCacheDir := os.Getenv("CONDUIX_BUILD_CACHE_DIR")
+	if testCacheDir == "" {
+		testCacheDir = filepath.Join(os.TempDir(), "conduix-runner-cache")
+	}
+	buildEnv := append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOCACHE="+filepath.Join(testCacheDir, "gocache"),
+		"GOPATH="+filepath.Join(testCacheDir, "gopath"),
+		"GOMODCACHE="+filepath.Join(testCacheDir, "gopath", "pkg", "mod"),
+		"HOME="+tmpDir,
+	)
+
+	// 외부 모듈(레지스트리) require 해석을 위해 build 전에 go mod tidy(실패해도 build 에서 재시도).
+	tidyCmd := exec.CommandContext(buildCtx, "go", "mod", "tidy")
+	tidyCmd.Dir = tmpDir
+	tidyCmd.Env = buildEnv
+	_, _ = tidyCmd.CombinedOutput()
+
 	buildCmd := exec.CommandContext(buildCtx, "go", "build", "-o", binPath, ".")
 	buildCmd.Dir = tmpDir
-	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	buildCmd.Env = buildEnv
 
 	buildOutput, buildErr := buildCmd.CombinedOutput()
 	resp.BuildElapsed = time.Since(buildStart).String()

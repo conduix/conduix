@@ -33,6 +33,10 @@ import { testNativePlugin } from '../../services/pluginApi'
 import type { TestNativePluginResponse } from '../../types/plugin'
 import { LSPClient, lspKindToMonaco, lspSeverityToMonaco } from '../../services/lspClient'
 import type { LSPDiagnostic } from '../../services/lspClient'
+import { listModules, addModule } from '../../services/moduleApi'
+import type { AllowedModule } from '../../services/moduleApi'
+import { List, ListItem, ListItemText } from '@mui/material'
+import AddIcon from '@mui/icons-material/Add'
 
 // pluginNameToStructName converts plugin name (e.g. "ip-filter") to PascalCase struct name (e.g. "IpFilterStage")
 function pluginNameToStructName(name?: string): string {
@@ -74,13 +78,6 @@ var Stage sdk.NativeStage = &${structName}{}
 `
 }
 
-const DEFAULT_GO_MOD = `module conduix-plugin-test
-
-go 1.26
-
-require github.com/conduix/conduix/plugin-sdk v0.0.0
-`
-
 const DEFAULT_CONFIG = JSON.stringify({}, null, 2)
 
 const DEFAULT_SAMPLE = JSON.stringify(
@@ -91,19 +88,16 @@ const DEFAULT_SAMPLE = JSON.stringify(
 
 interface NativeStageEditorProps {
   sourceCode: string
-  goMod: string
   onSourceChange: (source: string) => void
-  onGoModChange: (goMod: string) => void
   onTestPassed: (passed: boolean) => void
   disabled?: boolean
   pluginName?: string // 기존 플러그인이면 테스트 결과 DB 기록
+  // goMod/onGoModChange 는 제거됨(D2): 의존성은 레지스트리로 관리, 자유 go.mod 입력 폐지.
 }
 
 export default function NativeStageEditor({
   sourceCode,
-  goMod,
   onSourceChange,
-  onGoModChange,
   onTestPassed,
   disabled,
   pluginName,
@@ -111,13 +105,48 @@ export default function NativeStageEditor({
   const { t } = useTranslation()
   const structName = pluginNameToStructName(pluginName)
   const code = sourceCode || generateDefaultSource(structName)
-  const mod = goMod || DEFAULT_GO_MOD
 
-  const [editorTab, setEditorTab] = useState(0) // 0: main.go, 1: go.mod
+  const [editorTab, setEditorTab] = useState(0) // 0: main.go, 1: 의존성(허용 모듈)
   const [configData, setConfigData] = useState(DEFAULT_CONFIG)
   const [sampleData, setSampleData] = useState(DEFAULT_SAMPLE)
   const [testResult, setTestResult] = useState<TestNativePluginResponse | null>(null)
   const [testing, setTesting] = useState(false)
+
+  // 허용 모듈 레지스트리(의존성) — 사용자는 목록에서 확인/추가만, 버전은 서버가 고정.
+  const [modules, setModules] = useState<AllowedModule[]>([])
+  const [newModulePath, setNewModulePath] = useState('')
+  const [moduleBusy, setModuleBusy] = useState(false)
+  const [moduleError, setModuleError] = useState<string | null>(null)
+
+  const loadModules = useCallback(async () => {
+    try {
+      setModules(await listModules())
+    } catch (e) {
+      setModuleError(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadModules()
+  }, [loadModules])
+
+  const handleAddModule = useCallback(async () => {
+    const path = newModulePath.trim()
+    if (!path) return
+    setModuleBusy(true)
+    setModuleError(null)
+    try {
+      await addModule(path)
+      setNewModulePath('')
+      await loadModules()
+    } catch (e) {
+      // 서버가 GOPROXY @latest 조회 실패/중복 등 사유를 반환.
+      const msg = e instanceof Error ? e.message : String(e)
+      setModuleError(msg)
+    } finally {
+      setModuleBusy(false)
+    }
+  }, [newModulePath, loadModules])
   const [lspConnected, setLspConnected] = useState(false)
   const lspClientRef = useRef<LSPClient | null>(null)
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor | null>(null)
@@ -268,15 +297,6 @@ export default function NativeStageEditor({
     [onSourceChange, onTestPassed]
   )
 
-  const handleGoModChange = useCallback(
-    (value: string | undefined) => {
-      onGoModChange(value || '')
-      onTestPassed(false)
-      setTestResult(null)
-    },
-    [onGoModChange, onTestPassed]
-  )
-
   const handleTest = useCallback(async () => {
     setTesting(true)
     setTestResult(null)
@@ -307,9 +327,9 @@ export default function NativeStageEditor({
         return
       }
 
+      // go_mod 는 보내지 않는다(D2): 서버가 레지스트리 기반으로 go.mod 를 생성한다.
       const result = await testNativePlugin({
         source_code: code,
-        go_mod: mod,
         config: parsedConfig,
         sample_data: parsedSample,
         plugin_name: pluginName,
@@ -326,7 +346,7 @@ export default function NativeStageEditor({
     } finally {
       setTesting(false)
     }
-  }, [code, mod, configData, sampleData, onTestPassed, pluginName])
+  }, [code, configData, sampleData, onTestPassed, pluginName])
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -339,7 +359,7 @@ export default function NativeStageEditor({
             sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0 }, flex: 1 }}
           >
             <Tab label="main.go" sx={{ textTransform: 'none', fontFamily: 'monospace' }} />
-            <Tab label="go.mod" sx={{ textTransform: 'none', fontFamily: 'monospace' }} />
+            <Tab label={t('plugins.deps.tab', '의존성')} sx={{ textTransform: 'none' }} />
           </Tabs>
           {lspConnected && (
             <Chip
@@ -376,21 +396,53 @@ export default function NativeStageEditor({
         )}
 
         {editorTab === 1 && (
-          <Editor
-            height="150px"
-            language="go"
-            value={mod}
-            onChange={handleGoModChange}
-            theme="vs-dark"
-            options={{
-              fontSize: 13,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              readOnly: disabled,
-              tabSize: 4,
-              automaticLayout: true,
-            }}
-          />
+          <Box sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              {t('plugins.deps.help', '허용된 외부 모듈만 import 할 수 있습니다. 버전은 플랫폼이 관리합니다(등록 시 최신 고정). 필요한 모듈을 추가하세요.')}
+            </Typography>
+            <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+              <TextField
+                size="small"
+                fullWidth
+                placeholder="github.com/google/uuid"
+                value={newModulePath}
+                onChange={(e) => setNewModulePath(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleAddModule() } }}
+                disabled={disabled || moduleBusy}
+                sx={{ '& input': { fontFamily: 'monospace', fontSize: 13 } }}
+              />
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={moduleBusy ? <CircularProgress size={14} /> : <AddIcon />}
+                onClick={() => void handleAddModule()}
+                disabled={disabled || moduleBusy || !newModulePath.trim()}
+              >
+                {t('common.add', '추가')}
+              </Button>
+            </Stack>
+            {moduleError && <Alert severity="error" sx={{ mb: 1 }}>{moduleError}</Alert>}
+            <List dense sx={{ maxHeight: 180, overflow: 'auto', bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+              {modules.length === 0 && (
+                <ListItem>
+                  <ListItemText>
+                    <Typography variant="body2" color="text.secondary">
+                      {t('plugins.deps.empty', '등록된 외부 모듈이 없습니다. 표준 라이브러리와 plugin-sdk 는 항상 사용 가능합니다.')}
+                    </Typography>
+                  </ListItemText>
+                </ListItem>
+              )}
+              {modules.map((m) => (
+                <ListItem key={m.module_path} secondaryAction={
+                  <Chip label={m.version} size="small" variant="outlined" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }} />
+                }>
+                  <ListItemText>
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>{m.module_path}</Typography>
+                  </ListItemText>
+                </ListItem>
+              ))}
+            </List>
+          </Box>
         )}
       </Paper>
       {/* Test Section */}

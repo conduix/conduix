@@ -632,8 +632,8 @@ func (Plugin) TableName() string {
 // 여러 stage 를 한 빌드에 합쳐도 버전 충돌이 발생하지 않는다(충돌 원천 제거).
 // 사용자가 추가하며, 추가 시점의 최신 버전으로 등록된다(GOPROXY @latest 조회).
 type AllowedModule struct {
-	ModulePath  string         `gorm:"primaryKey;size:255" json:"module_path"`  // 예: github.com/google/uuid
-	Version     string         `gorm:"size:100;not null" json:"version"`        // 예: v1.6.0 (module 당 단일 — 충돌 방지의 물리 근거)
+	ModulePath  string         `gorm:"primaryKey;size:255" json:"module_path"` // 예: github.com/google/uuid
+	Version     string         `gorm:"size:100;not null" json:"version"`       // 예: v1.6.0 (module 당 단일 — 충돌 방지의 물리 근거)
 	Description string         `gorm:"type:text" json:"description,omitempty"`
 	AddedBy     string         `gorm:"size:36" json:"added_by,omitempty"`
 	Status      string         `gorm:"size:50;default:active" json:"status"` // active, deprecated

@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/conduix/conduix/control-plane/internal/lsp"
+	"github.com/conduix/conduix/control-plane/pkg/database"
+	"github.com/conduix/conduix/control-plane/pkg/models"
 )
 
 // LSPHandler gopls LSP 프록시 핸들러
@@ -16,8 +18,20 @@ type LSPHandler struct {
 
 // NewLSPHandler LSPHandler 생성
 // sdkModPath: plugin-sdk 모듈의 절대 경로 (gopls가 참조할 replace 경로)
-func NewLSPHandler(sdkModPath string) *LSPHandler {
-	wm := lsp.NewWorkspaceManager(sdkModPath)
+// db: 허용 모듈 레지스트리 조회용(gopls workspace go.mod 에 반영 → 외부 심볼 자동완성).
+func NewLSPHandler(sdkModPath string, db *database.DB) *LSPHandler {
+	modulesFn := func() ([]lsp.AllowedModuleRef, error) {
+		var mods []models.AllowedModule
+		if err := db.Where("status = ?", "active").Order("module_path asc").Find(&mods).Error; err != nil {
+			return nil, err
+		}
+		refs := make([]lsp.AllowedModuleRef, len(mods))
+		for i, m := range mods {
+			refs[i] = lsp.AllowedModuleRef{ModulePath: m.ModulePath, Version: m.Version}
+		}
+		return refs, nil
+	}
+	wm := lsp.NewWorkspaceManager(sdkModPath, modulesFn)
 	return &LSPHandler{
 		proxy:            lsp.NewLSPProxy(wm),
 		workspaceManager: wm,

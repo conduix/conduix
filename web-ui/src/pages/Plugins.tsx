@@ -214,7 +214,7 @@ export default function PluginsPage() {
           : formData.stageMode === 'script'
             ? (formData.scriptConfig.code as string) || undefined
             : undefined,
-      go_mod: formData.stageMode === 'native' ? formData.go_mod || undefined : undefined,
+      // go_mod 는 더 이상 전송하지 않는다(D2): 의존성은 레지스트리로 관리, 서버가 go.mod 생성.
     }
 
     try {
@@ -692,9 +692,7 @@ export default function PluginsPage() {
             {formData.stageMode === 'native' && (
               <NativeStageEditor
                 sourceCode={formData.source_code}
-                goMod={formData.go_mod}
                 onSourceChange={(src) => setFormData((prev) => ({ ...prev, source_code: src }))}
-                onGoModChange={(mod) => setFormData((prev) => ({ ...prev, go_mod: mod }))}
                 onTestPassed={setTestPassed}
                 pluginName={selectedPlugin?.name}
               />

@@ -89,7 +89,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		pluginHandler:       handlers.NewPluginHandler(db),
 		moduleHandler:       handlers.NewModuleHandler(db),
 		runnerHandler:       handlers.NewRunnerHandler(db),
-		lspHandler:          handlers.NewLSPHandler(os.Getenv("CONDUIX_SDK_PATH")),
+		lspHandler:          handlers.NewLSPHandler(os.Getenv("CONDUIX_SDK_PATH"), db),
 		startTime:           time.Now(),
 		version:             Version,
 		allowedOrigins:      buildAllowedOrigins(frontendURL),

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"os"
 	"sort"
 	"strings"
 
@@ -96,4 +97,30 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+// buildTestGoMod 는 인-에디터 테스트 빌드용 go.mod 를 레지스트리 기반으로 생성한다.
+// TestNativePlugin(임시 빌드)이 실제 runner 빌드와 같은 의존성 버전을 쓰게 해,
+// "에디터 테스트는 실패/성공인데 실제 빌드는 반대" 인 불일치를 없앤다.
+// plugin-sdk 는 CONDUIX_SDK_PATH(런타임 이미지의 로컬 소스)로 replace 한다.
+func buildTestGoMod(db *database.DB) string {
+	var b strings.Builder
+	b.WriteString("module conduix-plugin-test\n\ngo 1.26\n\n")
+	b.WriteString("require github.com/conduix/conduix/plugin-sdk v0.0.0\n")
+
+	var allowed []models.AllowedModule
+	if err := db.Where("status = ?", "active").Order("module_path asc").Find(&allowed).Error; err == nil && len(allowed) > 0 {
+		b.WriteString("\nrequire (\n")
+		for _, m := range allowed {
+			fmt.Fprintf(&b, "\t%s %s\n", m.ModulePath, m.Version)
+		}
+		b.WriteString(")\n")
+	}
+
+	sdkPath := os.Getenv("CONDUIX_SDK_PATH")
+	if sdkPath == "" {
+		sdkPath = "/app/plugin-sdk"
+	}
+	fmt.Fprintf(&b, "\nreplace github.com/conduix/conduix/plugin-sdk => %s\n", sdkPath)
+	return b.String()
 }

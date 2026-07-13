@@ -86,6 +86,7 @@ type Config struct {
 	CommandPollInterval time.Duration `json:"command_poll_interval"` // REST 폴링 간격
 	EnableRESTFallback  bool          `json:"enable_rest_fallback"`  // REST 폴백 활성화
 	ExecutionTimeout    time.Duration `json:"execution_timeout"`     // 워크플로우 실행 최대 시간 (기본 10분)
+	ReconcileInterval   time.Duration `json:"reconcile_interval"`    // reconcile 백스톱 주기 (기본 60초, pub/sub 유실 명령 복구)
 
 	// batch 위임 시 생성할 K8s Job 설정
 	Namespace   string `json:"namespace"`    // Job 생성 네임스페이스 (비면 in-cluster 기본)
@@ -186,6 +187,10 @@ func (a *Agent) Start() error {
 
 	// 명령 수신 시작
 	go a.commandLoop()
+
+	// reconcile 백스톱 시작: pub/sub 실행 명령은 at-most-once 라 모든 agent 가 죽어있거나 구독이
+	// 끊긴 창에 발행되면 유실된다. DB 의 running execution 을 주기적으로 조회해 안 도는 것을 재발견·복구한다.
+	go a.reconcileLoop()
 
 	slog.Info("agent started", "agent_id", a.ID, "hostname", a.Hostname)
 	return nil
@@ -710,6 +715,102 @@ func (a *Agent) fetchCommandsREST() ([]string, error) {
 	}
 
 	return commands, nil
+}
+
+// reconcileDefaultInterval reconcile 백스톱 기본 주기. pub/sub 유실 명령의 최대 복구 지연이 된다.
+// 너무 짧으면 CP·Redis 부하, 너무 길면 유실 실행이 오래 방치된다. 60초는 stale 감지(2분)보다 짧아
+// 유실을 stale 오판 전에 복구할 여지를 준다.
+const reconcileDefaultInterval = 60 * time.Second
+
+// reconcileLoop 은 부팅 직후 1회 + 주기적으로 이 cluster 의 running execution 을 CP 에서 조회해,
+// pub/sub 으로 유실됐거나 agent 재부팅으로 놓친 실행을 재발견·복구한다. 중복은 SETNX claim 과
+// 로컬 runningExecs 로 막으므로 이미 도는 execution 은 건드리지 않는다(안전한 반복 실행).
+func (a *Agent) reconcileLoop() {
+	if a.controlPlaneURL == "" || a.config.ClusterID == "" {
+		return // cluster 미지정(레거시 broadcast)에서는 reconcile 대상 cluster 를 특정할 수 없음
+	}
+
+	interval := a.config.ReconcileInterval
+	if interval == 0 {
+		interval = reconcileDefaultInterval
+	}
+
+	// 부팅 직후 구독·claim 이 안정화된 뒤 1회 실행(재부팅으로 놓친 명령 즉시 복구).
+	select {
+	case <-time.After(5 * time.Second):
+	case <-a.ctx.Done():
+		return
+	}
+	a.reconcileOnce()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			a.reconcileOnce()
+		}
+	}
+}
+
+// reconcileOnce 는 CP 에서 이 cluster 의 running execution 을 조회해, 로컬에서 안 도는 것을
+// handleGroupExecution 경로로 재실행한다(claim 으로 중복 방지). 조회/파싱 실패는 로그만 남기고 넘어간다.
+func (a *Agent) reconcileOnce() {
+	cmds, err := a.fetchRunningExecutions()
+	if err != nil {
+		slog.Warn("reconcile fetch failed", "error", err, "agent_id", a.ID, "cluster_id", a.config.ClusterID)
+		return
+	}
+
+	for _, raw := range cmds {
+		var cmd types.GroupExecutionCommand
+		if err := json.Unmarshal(raw, &cmd); err != nil {
+			slog.Warn("reconcile: bad command payload, skipping", "error", err, "agent_id", a.ID)
+			continue
+		}
+
+		// 이미 이 agent 가 도는 execution 은 재실행하지 않는다(로컬 조기 스킵 — claim 전에 걸러 로그·부하 절감).
+		a.execMu.RLock()
+		_, running := a.runningExecs[cmd.ExecutionID]
+		a.execMu.RUnlock()
+		if running {
+			continue
+		}
+
+		slog.Info("reconcile: recovering execution missed by pub/sub",
+			"execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID, "agent_id", a.ID)
+		// 원본 JSON 그대로 handleGroupExecution 에 넘긴다(claim·타입분기·partition 배선 전부 재사용).
+		a.handleGroupExecution(string(raw))
+	}
+}
+
+// fetchRunningExecutions 는 CP reconcile API 에서 이 cluster 의 running execution 명령 목록을 받는다.
+func (a *Agent) fetchRunningExecutions() ([]json.RawMessage, error) {
+	url := fmt.Sprintf("%s/api/v1/internal/clusters/%s/running-executions", a.controlPlaneURL, a.config.ClusterID)
+	req, err := http.NewRequestWithContext(a.ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response struct {
+		Success bool              `json:"success"`
+		Data    []json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return response.Data, nil
 }
 
 // handleCommand 명령 처리

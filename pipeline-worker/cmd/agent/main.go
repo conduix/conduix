@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -100,6 +101,13 @@ func runAgentMode() {
 		// batch 위임 시 이 worker가 자기 cluster에 만들 K8s Job 설정
 		Namespace:   os.Getenv("NAMESPACE"),
 		RunnerImage: os.Getenv("RUNNER_IMAGE"), // pipeline-batch-job 이미지
+	}
+
+	// reconcile 백스톱 주기(선택). 미지정 시 in-code 기본값(60s). pub/sub 유실 복구 지연 튜닝용.
+	if env := os.Getenv("AGENT_RECONCILE_INTERVAL_SEC"); env != "" {
+		if sec, err := strconv.Atoi(env); err == nil && sec > 0 {
+			cfg.ReconcileInterval = time.Duration(sec) * time.Second
+		}
 	}
 
 	// 에이전트 생성

@@ -190,6 +190,14 @@ func (s *Server) setupRoutes() {
 			internalAgents.POST("/:id/heartbeat", s.agentHandler.Heartbeat)
 		}
 
+		// reconcile 백스톱(인증 불필요): agent 가 부팅/주기적으로 이 cluster 의 running execution 을
+		// 조회해 pub/sub 유실 명령을 재발견·복구한다. DB 가 source of truth.
+		// param 이름은 authenticated /clusters/:id 와 반드시 동일해야 한다(gin radix 트리 충돌 방지).
+		internalClusters := v1.Group("/clusters")
+		{
+			internalClusters.GET("/:id/running-executions", s.workflowHandler.ReconcileClusterExecutions)
+		}
+
 		// 플러그인 등록 내부 API (Helm hook에서 호출 - 클러스터 내부 통신)
 		internalPlugins := v1.Group("/plugins")
 		{

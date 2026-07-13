@@ -823,6 +823,85 @@ func (h *WorkflowHandler) RollWorkflow(c *gin.Context) {
 	})
 }
 
+// ReconcileClusterExecutions GET /api/v1/internal/clusters/:clusterId/running-executions
+// agent 가 부팅/주기적으로 조회하는 reconcile 백스톱. pub/sub 실행 명령은 at-most-once 라
+// 모든 agent 가 죽어있거나 구독이 끊긴 창에 발행되면 유실된다. DB 의 status=running execution 이
+// source of truth 이므로, 그 cluster 에서 running 인데 안 도는 execution 을 agent 가 재발견해
+// (SETNX claim 으로 중복 없이) 실행하게 한다. 인증 불필요(클러스터 내부 통신).
+//
+// 파티션 sub-execution(ParentExecutionID 有)은 제외한다 — AssignedPartitions 가 DB 에 영속되지
+// 않아 재구성 시 배정 파티션을 복원할 수 없다(복원하면 전체/오배정으로 이중 적재 위험). 단일 실행만
+// 안전하게 reconcile 한다. 파티션 무손실 reconcile 은 AssignedPartitions 영속화 후 별도 작업.
+func (h *WorkflowHandler) ReconcileClusterExecutions(c *gin.Context) {
+	clusterID := c.Param("id")
+	if clusterID == "" {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "clusterId required")
+		return
+	}
+
+	var execs []models.WorkflowExecution
+	if err := h.db.
+		Where("cluster_id = ? AND status = ? AND (parent_execution_id = '' OR parent_execution_id IS NULL)",
+			clusterID, string(types.PipelineGroupStatusRunning)).
+		Find(&execs).Error; err != nil {
+		h.logger.Error("reconcile query failed", "cluster_id", clusterID, "error", err)
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "reconcile query failed")
+		return
+	}
+
+	cmds := make([]*types.WorkflowExecutionCommand, 0, len(execs))
+	for i := range execs {
+		exec := &execs[i]
+
+		var workflow models.Workflow
+		if err := h.db.First(&workflow, "id = ?", exec.WorkflowID).Error; err != nil {
+			h.logger.Warn("reconcile: workflow not found, skipping", "workflow_id", exec.WorkflowID, "execution_id", exec.ID)
+			continue
+		}
+
+		// 실행 시점 스냅샷(PipelinesSnapshot)으로 파이프라인을 복원한다 — 현재 workflow 설정이
+		// 바뀌었어도 진행 중 execution 은 시작 당시 설정으로 이어져야 한다(D5 일관).
+		var pipelines []types.GroupedPipeline
+		if exec.PipelinesSnapshot != "" {
+			if err := json.Unmarshal([]byte(exec.PipelinesSnapshot), &pipelines); err != nil {
+				h.logger.Warn("reconcile: bad pipelines snapshot, skipping", "execution_id", exec.ID, "error", err)
+				continue
+			}
+		}
+
+		// native stage RunnerVersion 재확정(streaming pod 바이너리 주입에 필요). 실패는 스킵하지 않고
+		// 빈 값으로 둔다 — non-native 면 어차피 빈 값이고, native 인데 빌드가 사라진 예외는 로그만.
+		runnerVersionID := ""
+		if vid, _, usesNative, rerr := h.runnerResolver.ResolveRunnerVersion(&workflow); rerr == nil && usesNative {
+			runnerVersionID = vid
+		}
+
+		cmds = append(cmds, &types.WorkflowExecutionCommand{
+			ID:              uuid.New().String(),
+			WorkflowID:      exec.WorkflowID,
+			ExecutionID:     exec.ID,
+			TargetClusterID: clusterID,
+			TriggeredBy:     "reconcile",
+			WorkflowConfig: &types.Workflow{
+				ID:            workflow.ID,
+				ProjectID:     workflow.ProjectID,
+				Name:          workflow.Name,
+				Type:          types.PipelineGroupType(workflow.Type),
+				ExecutionMode: types.ExecutionMode(workflow.ExecutionMode),
+				Pipelines:     pipelines,
+			},
+			JobConfig:       workflow.JobConfig,
+			RunnerVersionID: runnerVersionID,
+			Timestamp:       time.Now(),
+		})
+	}
+
+	c.JSON(http.StatusOK, types.APIResponse[[]*types.WorkflowExecutionCommand]{
+		Success: true,
+		Data:    cmds,
+	})
+}
+
 // GetWorkflowExecutions GET /api/v1/workflows/:id/executions
 func (h *WorkflowHandler) GetWorkflowExecutions(c *gin.Context) {
 	workflowID := c.Param("id")

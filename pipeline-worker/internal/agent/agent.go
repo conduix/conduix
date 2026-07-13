@@ -788,7 +788,7 @@ func (a *Agent) reconcileOnce() {
 
 // fetchRunningExecutions 는 CP reconcile API 에서 이 cluster 의 running execution 명령 목록을 받는다.
 func (a *Agent) fetchRunningExecutions() ([]json.RawMessage, error) {
-	url := fmt.Sprintf("%s/api/v1/internal/clusters/%s/running-executions", a.controlPlaneURL, a.config.ClusterID)
+	url := fmt.Sprintf("%s/api/v1/clusters/%s/running-executions", a.controlPlaneURL, a.config.ClusterID)
 	req, err := http.NewRequestWithContext(a.ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)

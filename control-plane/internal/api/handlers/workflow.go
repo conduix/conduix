@@ -823,7 +823,7 @@ func (h *WorkflowHandler) RollWorkflow(c *gin.Context) {
 	})
 }
 
-// ReconcileClusterExecutions GET /api/v1/internal/clusters/:clusterId/running-executions
+// ReconcileClusterExecutions GET /api/v1/clusters/:id/running-executions (무인증 내부용)
 // agent 가 부팅/주기적으로 조회하는 reconcile 백스톱. pub/sub 실행 명령은 at-most-once 라
 // 모든 agent 가 죽어있거나 구독이 끊긴 창에 발행되면 유실된다. DB 의 status=running execution 이
 // source of truth 이므로, 그 cluster 에서 running 인데 안 도는 execution 을 agent 가 재발견해

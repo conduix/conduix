@@ -986,6 +986,14 @@ func (h *WorkflowHandler) AddPipelineToWorkflow(c *gin.Context) {
 		return
 	}
 
+	// 실행 중 파이프라인/stage 변경은 거부(UpdateWorkflow 와 동일 정책). 실행 중 execution 은 시작
+	// 시점 스냅샷으로 돌아 변경이 반영 안 되는데, 조용히 DB 만 바꾸면 실행 상태와 설정이 갈라져 혼란을 준다.
+	// 변경은 stop 후 수정하거나(batch 재실행), realtime 은 /roll 로 반영한다.
+	if workflow.Status == string(types.PipelineGroupStatusRunning) {
+		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowRunning, "Cannot add pipeline to running workflow")
+		return
+	}
+
 	var newPipeline types.GroupedPipeline
 	if err := c.ShouldBindJSON(&newPipeline); err != nil {
 		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidJSON, err.Error())
@@ -1030,6 +1038,12 @@ func (h *WorkflowHandler) RemovePipelineFromWorkflow(c *gin.Context) {
 	var workflow models.Workflow
 	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
 		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
+		return
+	}
+
+	// 실행 중 파이프라인 제거 거부(AddPipeline/UpdateWorkflow 와 동일 정책).
+	if workflow.Status == string(types.PipelineGroupStatusRunning) {
+		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowRunning, "Cannot remove pipeline from running workflow")
 		return
 	}
 

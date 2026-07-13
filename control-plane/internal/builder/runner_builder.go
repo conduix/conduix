@@ -78,11 +78,26 @@ func NewRunnerBuilder(db *gorm.DB, cfg *RunnerBuilderConfig) *RunnerBuilder {
 	if cfg == nil {
 		cfg = DefaultRunnerBuilderConfig()
 	}
-	return &RunnerBuilder{
+	rb := &RunnerBuilder{
 		config: cfg,
 		db:     db,
 		logger: slog.Default().With("component", "runner-builder"),
 	}
+
+	// 부팅 시 좀비 building 즉시 회수: 빌드는 HTTP 핸들러의 goroutine 으로 도는데 control-plane 이
+	// 재시작되면 그 goroutine 은 죽지만 DB 의 building 레코드는 남는다. 새 프로세스에는 진행 중 빌드가
+	// 없음이 확실하므로(방금 부팅) building 을 전부 failed 로 회수한다. 이게 없으면 Build() 의
+	// self-heal(2*BuildTimeout 경과분만 회수)이 돌 때까지 새 빌드가 "already in progress"로 막힌다.
+	res := db.Model(&models.RunnerVersion{}).
+		Where("status = ?", "building").
+		Updates(map[string]any{"status": "failed", "error": "reclaimed on control-plane startup (build goroutine did not survive restart)"})
+	if res.Error != nil {
+		rb.logger.Warn("startup: failed to reclaim stale building versions", "error", res.Error)
+	} else if res.RowsAffected > 0 {
+		rb.logger.Info("startup: reclaimed stale building runner versions", "count", res.RowsAffected)
+	}
+
+	return rb
 }
 
 // RunnerBuildResult 빌드 결과

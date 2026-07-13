@@ -253,9 +253,17 @@ func (s *KafkaSource) Open(ctx context.Context) error {
 		// CommitInterval(주기 자동커밋)은 처리 성공과 무관하게 offset 을 진행시켜
 		// 처리 실패 시 유실(at-most-once)을 만든다. 그래서 자동커밋을 끄고(=0),
 		// readFromReader 가 레코드를 다운스트림에 넘긴 뒤 명시적으로 커밋한다(at-least-once).
+		//
+		// WatchPartitionChanges: consumer group join 시점에 토픽이 아직 없으면 kafka-go 는
+		// 0 partition 을 배정하고(consumergroup.go assignTopicPartitions: "topic 없으면 no assignment"),
+		// WatchPartitionChanges 가 꺼져 있으면 토픽이 나중에 생겨도 재배정하지 않아 영구 무소비가 된다.
+		// realtime 은 토픽이 첫 produce 로 늦게 생성되는 경우가 흔하므로(streaming pod 가 먼저 뜸) 반드시 켠다.
+		// 파티션 증가에도 재배정해 신규 파티션을 소비한다.
 		if s.groupID != "" {
 			readerCfg.GroupID = s.groupID
 			readerCfg.CommitInterval = 0
+			readerCfg.WatchPartitionChanges = true
+			readerCfg.PartitionWatchInterval = 5 * time.Second
 		}
 
 		// SASL/TLS가 설정된 경우 Dialer 사용

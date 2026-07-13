@@ -100,17 +100,24 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 }
 
 // testRunnerMain 은 인-에디터 테스트 빌드에 주입하는 실행 러너(package main).
-// 사용자 소스(stage.go)의 `var Stage sdk.NativeStage` 를 참조해 stdin(config+sample_data)
-// 을 읽고 Init→Process 반복 후 stdout 으로 {records:[...]} 를 낸다. 사용자 소스에 func main
-// 이 없어도 빌드되게 한다(같은 package main, Stage 심볼 공유).
+// 실제 RunnerBuilder 와 동일 계약을 쓴다: 사용자 소스를 별도 subpackage(pluginstage)로 두고
+// import 해 `pluginstage.Stage{}`(구조체) 를 생성한다. 실제 빌드는 registry_custom.go 가
+// `plugin_<name>.Stage{}` 를 쓰므로(runner_builder.GenerateRegistryCustom), 테스트도 struct Stage
+// 를 요구해야 "에디터 테스트 통과=실제 빌드 통과" 가 성립한다.
+// (구 방식은 사용자 소스를 package main 으로 같은 디렉토리에 둬 package clash + var Stage 요구로
+// 실제 빌드 계약과 어긋났다 — BUG#6.)
 const testRunnerMain = `package main
 
 import (
 	"encoding/json"
 	"os"
+
+	sdk "github.com/conduix/conduix/plugin-sdk"
+	pluginstage "conduix-plugin-test/pluginstage"
 )
 
 func main() {
+	var stage sdk.NativeStage = &pluginstage.Stage{}
 	var in struct {
 		Config     map[string]any   ` + "`json:\"config\"`" + `
 		SampleData []map[string]any ` + "`json:\"sample_data\"`" + `
@@ -119,13 +126,13 @@ func main() {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{"error": "decode input: " + err.Error()})
 		return
 	}
-	if err := Stage.Init(in.Config); err != nil {
+	if err := stage.Init(in.Config); err != nil {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{"error": "init: " + err.Error()})
 		return
 	}
 	out := make([]map[string]any, 0, len(in.SampleData))
 	for _, rec := range in.SampleData {
-		r, err := Stage.Process(rec)
+		r, err := stage.Process(rec)
 		if err != nil {
 			json.NewEncoder(os.Stdout).Encode(map[string]any{"error": "process: " + err.Error()})
 			return
@@ -134,7 +141,7 @@ func main() {
 			out = append(out, r)
 		}
 	}
-	_ = Stage.Close()
+	_ = stage.Close()
 	json.NewEncoder(os.Stdout).Encode(map[string]any{"records": out})
 }
 `

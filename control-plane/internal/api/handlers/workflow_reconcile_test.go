@@ -72,7 +72,7 @@ func TestReconcileClusterExecutions(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var resp struct {
-		Success bool                             `json:"success"`
+		Success bool                              `json:"success"`
 		Data    []*types.WorkflowExecutionCommand `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -99,7 +99,7 @@ func TestReconcileClusterExecutions_EmptyWhenNoneRunning(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp struct {
-		Success bool                             `json:"success"`
+		Success bool                              `json:"success"`
 		Data    []*types.WorkflowExecutionCommand `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))

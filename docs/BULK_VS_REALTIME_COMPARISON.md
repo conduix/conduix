@@ -5,7 +5,7 @@
 
 ## 결론부터 (TL;DR)
 
-- **Bulk**: Conduix는 **파이프라인당 단일 프로세스 배치 엔진**이다. 파티션 병렬(partitioned source)·스테이지 병렬은 **존재하고 잘 동작**하지만, 그 병렬성은 **한 프로세스 안의 goroutine 병렬**이지 여러 노드로 데이터를 샤딩하는 분산 실행이 아니다(설계상 server-local). "여러 저장소 간 이동 + 소스별 병렬 읽기 + 스테이지 병렬 변환 + 소스별 서로 다른 싱크 적재"에 강하다. **분산 셔플·spill-to-disk가 필요한 대용량 GROUP BY/JOIN은 Spark/Flink가 맞다.** 데이터셋이 한 노드 메모리를 넘으면 Conduix로 하지 마라.
+- **Bulk**: Conduix는 **파이프라인당 단일 프로세스 배치 엔진**이다. 파티션 병렬(partitioned source)·스테이지 병렬은 **존재하고 잘 동작**하지만, 그 병렬성은 **한 프로세스 안의 goroutine 병렬**이지 여러 노드로 데이터를 샤딩하는 분산 실행이 아니다(설계상 server-local). "여러 저장소 간 이동 + 소스별 병렬 읽기 + 스테이지 병렬 변환 + 소스별 서로 다른 싱크 적재"에 강하다. **파티션 경계를 넘는 전역 GROUP BY/JOIN(= 분산 셔플: 같은 key 를 한 곳에 모으려 여러 노드로 데이터 재분배)** 은 Conduix 에 없다 — 이건 Spark/Flink 가 맞다. (단일 노드 spill-to-disk 는 원리상 Conduix 도 넣을 수 있는 개선이지 근본 한계가 아니다. §1.2 참고.)
 - **Realtime**: **at-least-once**(정확히-한번 아님) + **upsert 수렴** 모델. CDC(MySQL·PostgreSQL)는 **Debezium 없이 단독 처리 가능**하도록 개선·검증됐다(과거 "Debezium 경유 권장" 근거는 대부분 해소). 다만 **초기 스냅샷·다중 컨슈머 fan-out·스키마 레지스트리·대규모 상태연산**은 여전히 Debezium/Flink가 낫다.
 - **한 줄 기준**: *데이터가 노드 메모리에 들어가고, exactly-once 상태연산이 필수가 아니며, 커넥터+변환+오케스트레이션을 한 플랫폼에서 굴리고 싶다* → Conduix. 그 반대면 Spark/Flink/Debezium.
 

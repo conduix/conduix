@@ -50,6 +50,11 @@ type CreatePluginRequest struct {
 	Image       string `json:"image,omitempty"`
 	Description string `json:"description,omitempty"`
 	SourceRepo  string `json:"source_repo,omitempty"`
+	// SourceCode/GoMod/Type: web-ui 에서 커스텀 stage 를 신규 생성할 때 소스를 함께 보낸다.
+	// 이 필드가 없으면 빈 소스 plugin 이 만들어져 빌드가 조용히 실패한다(BUG#8).
+	SourceCode string `json:"source_code,omitempty"`
+	GoMod      string `json:"go_mod,omitempty"`
+	Type       string `json:"type,omitempty"` // native | script (기본 native)
 }
 
 // UpdatePluginRequest 플러그인 수정 요청
@@ -159,6 +164,11 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 		version = "v0.0.0"
 	}
 
+	pluginType := req.Type
+	if pluginType == "" {
+		pluginType = "native"
+	}
+
 	plugin := &models.Plugin{
 		ID:          uuid.New().String(),
 		Name:        req.Name,
@@ -166,10 +176,26 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 		Image:       req.Image,
 		Description: req.Description,
 		SourceRepo:  req.SourceRepo,
+		Type:        pluginType,
 		Status:      "active",
 		CreatedBy:   userIDStr,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
+	}
+
+	// 소스 함께 전송 시 저장(BUG#8: 없으면 빈 소스 plugin → 빌드 조용히 실패).
+	// native 는 import 검증 + SourceHash 계산(빌드 판정 키). script(js) 는 검증/빌드 불필요.
+	if req.SourceCode != "" {
+		if pluginType == "native" {
+			if err := validateStageImports(h.db, req.SourceCode); err != nil {
+				middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+				return
+			}
+			hash := sha256.Sum256([]byte(req.SourceCode))
+			plugin.SourceHash = fmt.Sprintf("%x", hash)
+		}
+		plugin.SourceCode = req.SourceCode
+		plugin.GoMod = req.GoMod
 	}
 
 	if err := h.db.Create(plugin).Error; err != nil {
@@ -178,9 +204,25 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 		return
 	}
 
-	// Revision 생성 (native plugin인 경우)
+	// native + 소스 있으면 revision 기록 + Runner auto-build 트리거(Update 경로와 동일).
 	if plugin.Type == "native" && plugin.SourceCode != "" {
 		h.createRevision(plugin.ID, plugin.Name, "create", plugin.SourceCode, plugin.GoMod, plugin.SourceHash, "", "", userIDStr)
+		latestSeq, _ := h.revisionService.GetLatestSeq()
+		go func() {
+			h.logger.Info("Auto-build triggered by plugin create", "plugin_name", plugin.Name, "hash", plugin.SourceHash)
+			result, err := h.runnerBuilder.Build(context.Background(), userIDStr)
+			if err != nil {
+				vid := ""
+				if result != nil {
+					vid = result.VersionID
+				}
+				h.logger.Error("Auto-build failed", "error", err, "version_id", vid)
+				return
+			}
+			h.db.Model(&models.RunnerVersion{}).Where("id = ?", result.VersionID).Updates(map[string]any{
+				"trigger": "auto", "revision_seq": latestSeq,
+			})
+		}()
 	}
 
 	h.logger.Info("Plugin created", "request_id", requestID, "plugin_id", plugin.ID, "plugin_name", plugin.Name)
@@ -200,10 +242,42 @@ func (h *PluginHandler) updateExistingPlugin(c *gin.Context, existing *models.Pl
 	existing.SourceRepo = req.SourceRepo
 	existing.UpdatedAt = time.Now()
 
+	// 소스 함께 오면 반영(BUG#8: upsert 경로도 소스 무시했었음). native 는 검증+해시.
+	oldSourceHash := existing.SourceHash
+	if req.SourceCode != "" && existing.Type == "native" {
+		if err := validateStageImports(h.db, req.SourceCode); err != nil {
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+			return
+		}
+		existing.SourceCode = req.SourceCode
+		if req.GoMod != "" {
+			existing.GoMod = req.GoMod
+		}
+		hash := sha256.Sum256([]byte(req.SourceCode))
+		existing.SourceHash = fmt.Sprintf("%x", hash)
+	} else if req.SourceCode != "" {
+		existing.SourceCode = req.SourceCode
+	}
+
 	if err := h.db.Save(existing).Error; err != nil {
 		h.logger.Error("Failed to update plugin", "request_id", requestID, "error", err)
 		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to update plugin")
 		return
+	}
+
+	// 소스 변경 시 auto-build(create/update 경로와 동일 정책).
+	if existing.Type == "native" && existing.SourceHash != "" && existing.SourceHash != oldSourceHash {
+		userID := c.GetString("user_id")
+		h.createRevision(existing.ID, existing.Name, "update", existing.SourceCode, existing.GoMod, existing.SourceHash, "", "", userID)
+		latestSeq, _ := h.revisionService.GetLatestSeq()
+		go func() {
+			result, err := h.runnerBuilder.Build(context.Background(), userID)
+			if err != nil {
+				h.logger.Error("Auto-build failed (upsert)", "error", err)
+				return
+			}
+			h.db.Model(&models.RunnerVersion{}).Where("id = ?", result.VersionID).Updates(map[string]any{"trigger": "auto", "revision_seq": latestSeq})
+		}()
 	}
 
 	h.logger.Info("Plugin updated", "request_id", requestID, "plugin_id", existing.ID, "plugin_name", existing.Name)

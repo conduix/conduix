@@ -323,3 +323,31 @@ function process(record {  // syntax error: missing )
 	assert.False(t, response.Data.Success)
 	assert.NotEmpty(t, response.Data.Error)
 }
+
+// BUG#8 회귀: CreatePlugin 이 source_code 를 저장해야 한다. 예전엔 CreatePluginRequest 에
+// SourceCode/Type 필드가 없어 web-ui 신규 커스텀 stage 생성 시 빈 소스 plugin 이 만들어졌다.
+func TestCreatePluginPersistsSourceCode(t *testing.T) {
+	db := setupTestDB(t)
+	handler := NewPluginHandler(db)
+	router := setupTestRouter(handler)
+
+	// js_script(script) 타입 — 소스는 저장되지만 빌드 트리거 없음(테스트에서 runnerBuilder 부담 없이 검증).
+	reqBody := CreatePluginRequest{
+		Name:       "js-custom",
+		Type:       "script",
+		SourceCode: "function process(r){ r.tag='x'; return r; }",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/plugins", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// DB 에 source_code 가 실제로 저장됐는지 확인(응답이 아니라 저장 상태).
+	var p models.Plugin
+	require.NoError(t, db.First(&p, "name = ?", "js-custom").Error)
+	assert.Equal(t, "function process(r){ r.tag='x'; return r; }", p.SourceCode, "CreatePlugin must persist source_code")
+	assert.Equal(t, "script", p.Type)
+}

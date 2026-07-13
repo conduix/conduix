@@ -110,7 +110,11 @@ migration:
 # Pipeline Agent
 # =============================================================================
 agent:
-  replicaCount: 3
+  # HA=2. agent 는 파이프라인을 직접 실행하지 않고 K8s Job(batch)/Deployment(realtime) 를
+  # 위임 생성하는 cluster 당 오케스트레이터다. 여러 replica 는 같은 cluster:<id>:execute 를
+  # 구독하고 Redis SETNX(execution:claim)로 한 execution 을 한 agent 만 실행해 중복을 막는다.
+  # 1이면 agent 사망 시 그 cluster 신규 실행 위임이 멈추고, 3+ 는 오케스트레이터에 과함 → 2 가 적정.
+  replicaCount: 2
   # 클러스터 ID (Agent가 속한 클러스터 식별자)
   # 미설정 시 'default' 사용
   clusterId: "default"

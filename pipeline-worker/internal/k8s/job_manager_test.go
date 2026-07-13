@@ -455,6 +455,41 @@ func TestUpdateStreamingDeployment(t *testing.T) {
 	}
 }
 
+func TestStreamingDeploymentExists(t *testing.T) {
+	jm, _ := newTestJobManager()
+	ctx := context.Background()
+
+	// 없으면 false, 에러 없음.
+	exists, err := jm.StreamingDeploymentExists(ctx, "conduix", "wf-x", "exec-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exists {
+		t.Error("expected not-exists before create")
+	}
+
+	dep, err := jm.CreateStreamingDeployment(ctx, &StreamingSpec{
+		ExecutionID: "exec-x", WorkflowID: "wf-x", PipelinesConfig: `[]`, JobConfig: types.DefaultJobConfig(),
+	})
+	if err != nil {
+		t.Fatalf("CreateStreamingDeployment failed: %v", err)
+	}
+
+	exists, err = jm.StreamingDeploymentExists(ctx, "conduix", "wf-x", "exec-x")
+	if err != nil || !exists {
+		t.Fatalf("expected exists=true after create, got exists=%v err=%v", exists, err)
+	}
+
+	// 삭제 후 다시 false.
+	if err := jm.DeleteStreamingDeployment(ctx, "", dep.Name); err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+	exists, _ = jm.StreamingDeploymentExists(ctx, "conduix", "wf-x", "exec-x")
+	if exists {
+		t.Error("expected not-exists after delete")
+	}
+}
+
 func TestStreamingCommandURL(t *testing.T) {
 	jm, fakeClient := newTestJobManager()
 	ctx := context.Background()

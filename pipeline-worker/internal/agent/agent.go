@@ -771,15 +771,38 @@ func (a *Agent) reconcileOnce() {
 			continue
 		}
 
-		// 이미 이 agent 가 도는 execution 은 재실행하지 않는다(로컬 조기 스킵 — claim 전에 걸러 로그·부하 절감).
 		a.execMu.RLock()
-		_, running := a.runningExecs[cmd.ExecutionID]
+		local, tracked := a.runningExecs[cmd.ExecutionID]
 		a.execMu.RUnlock()
-		if running {
-			continue
+
+		if tracked {
+			// streaming 위임은 로컬 추적이 "의도"일 뿐 — Deployment 가 외부 삭제/유실됐어도 로컬엔 남는다.
+			// 실제 K8s 상태를 확인해 Deployment 가 사라졌으면 로컬 추적을 버리고 복구를 진행한다.
+			// in-process 실행은 로컬 goroutine 이 곧 실체이므로 로컬 추적을 그대로 신뢰(스킵).
+			if local.StreamingDeployment == "" {
+				continue // in-process — 로컬이 authoritative
+			}
+			if jm := a.getJobManager(); jm != nil {
+				exists, err := jm.StreamingDeploymentExists(a.ctx, local.StreamingNamespace, cmd.WorkflowID, cmd.ExecutionID)
+				if err != nil {
+					slog.Warn("reconcile: deployment existence check failed, skipping this round",
+						"error", err, "execution_id", cmd.ExecutionID)
+					continue
+				}
+				if exists {
+					continue // Deployment 살아있음 — 정상
+				}
+			}
+			// Deployment 유실 확인 → 로컬 추적·claim 을 정리해 아래 재실행이 새로 claim·생성하게 한다.
+			slog.Warn("reconcile: streaming deployment missing, will recover",
+				"execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
+			a.execMu.Lock()
+			delete(a.runningExecs, cmd.ExecutionID)
+			a.execMu.Unlock()
+			a.releaseClaim(cmd.ExecutionID)
 		}
 
-		slog.Info("reconcile: recovering execution missed by pub/sub",
+		slog.Info("reconcile: recovering execution missed by pub/sub or lost",
 			"execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID, "agent_id", a.ID)
 		// 원본 JSON 그대로 handleGroupExecution 에 넘긴다(claim·타입분기·partition 배선 전부 재사용).
 		a.handleGroupExecution(string(raw))

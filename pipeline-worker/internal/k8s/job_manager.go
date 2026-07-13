@@ -490,6 +490,24 @@ func (m *JobManager) DeleteStreamingDeployment(ctx context.Context, namespace, n
 	return nil
 }
 
+// StreamingDeploymentExists 는 execution 의 streaming Deployment 가 실제로 존재하는지 K8s 에서 확인한다.
+// reconcile 이 로컬 상태(runningExecs)가 아니라 K8s 실제 상태로 복구 여부를 판단하게 한다 —
+// Deployment 가 외부 삭제/유실됐는데 agent 로컬엔 아직 "실행 중"으로 남아있는 경우를 잡는다.
+func (m *JobManager) StreamingDeploymentExists(ctx context.Context, namespace, workflowID, executionID string) (bool, error) {
+	if namespace == "" {
+		namespace = m.client.Namespace()
+	}
+	name := m.streamingDeploymentName(workflowID, executionID)
+	_, err := m.client.Clientset().AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get streaming deployment %s: %w", name, err)
+	}
+	return true, nil
+}
+
 // UpdateStreamingDeployment 는 실행 중 realtime Deployment 를 새 RunnerVersion 바이너리로 rolling 한다(S8).
 // fetch-runner initContainer 의 URL(versionID)만 교체하면 pod template 이 바뀌어 K8s 가 재기동한다.
 // Deployment 전략이 Recreate 이므로 구 pod 가 완전히 종료(checkpoint flush)된 뒤 신 pod 가 뜬다 — 겹침 없음(Q4).

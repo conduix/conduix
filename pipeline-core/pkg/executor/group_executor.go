@@ -101,6 +101,11 @@ func WithAssignedPartitions(ids []string) GroupExecutorOption {
 	}
 }
 
+// recordModeFlushInterval 레코드 단위 처리 모드의 시간 기반 flush 주기.
+// 저유입 realtime 에서 부분 배치(sink batch_size 미만)가 sink 버퍼에 갇혀 적재·ack 안 되는 것을 막는다.
+// batch 모드 기본 flush(5s)와 동일 값으로 맞춘다.
+const recordModeFlushInterval = 5 * time.Second
+
 // NewGroupExecutor 그룹 실행기 생성
 func NewGroupExecutor(group *types.PipelineGroup, opts ...GroupExecutorOption) *GroupExecutor {
 	e := &GroupExecutor{
@@ -779,7 +784,14 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			statsCollector, sampleBuffer, sourceValidator, saveCheckpoints, guard)
 	}
 
-	// 기존 레코드 단위 처리 모드
+	// 기존 레코드 단위 처리 모드.
+	// 시간 기반 flush: 레코드 수 임계치(ackEveryN)만으로는 저유입 realtime 에서 부분 배치가
+	// 영원히 sink 버퍼에 갇혀 적재·ack 안 된다(kafka 는 offset 미커밋 → LAG 잔존, 데이터 지연).
+	// 주기적으로 flushAndAck 을 호출해 부분 배치도 반드시 나가게 한다(batch 모드의 time-flush 와 동형).
+	recordFlushInterval := recordModeFlushInterval
+	flushTicker := time.NewTicker(recordFlushInterval)
+	defer flushTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -793,6 +805,10 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			flushAndAck()     // 취소 시에도 적재 성공분은 ack(WithoutCancel flush)
 			saveCheckpoints() // 취소 시에도 체크포인트 저장
 			return result, ctx.Err()
+
+		case <-flushTicker.C:
+			// 부분 배치 주기 flush. pendingOffsets 가 비어 있으면 flushAndAck 이 즉시 반환(no-op).
+			flushAndAck()
 
 		case record, ok := <-records:
 			if !ok {

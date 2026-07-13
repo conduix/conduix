@@ -167,10 +167,13 @@ func (s *Server) setupRoutes() {
 			internalJob.POST("/job-result", s.workflowHandler.HandleJobResultCallback)
 		}
 
-		// 파이프라인 체크포인트 내부 API (Agent에서 호출)
+		// 파이프라인 체크포인트 내부 API (Agent/streaming pod 에서 호출 — 인증 불필요, 클러스터 내부).
+		// GET(로드)은 pod 재시작·rolling 시 checkpoint offset 재개에 필요하다. UI 조회는 아래 authenticated
+		// /pipelines/:id/checkpoints GET(ListCheckpoints)에 유지 — pod 는 user JWT 를 만들 수 없으므로 분리.
 		internalPipelines := v1.Group("/pipelines")
 		{
 			internalPipelines.POST("/:id/checkpoints", s.checkpointHandler.UpdateCheckpoint)
+			internalPipelines.GET("/:id/checkpoints/internal", s.checkpointHandler.ListCheckpoints)
 		}
 
 		// 파이프라인 링크 조회 내부 API (executor가 실행 시 부모-자식 링크 조회 - 인증 불필요)

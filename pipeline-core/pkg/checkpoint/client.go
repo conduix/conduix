@@ -51,9 +51,11 @@ func NewClient(controlPlaneURL string) *Client {
 	}
 }
 
-// LoadCheckpoints 파이프라인의 체크포인트 로드
+// LoadCheckpoints 파이프라인의 체크포인트 로드.
+// 내부(무인증) 경로를 쓴다 — pod/agent 는 클러스터 내부 통신이라 user JWT 를 만들 수 없다.
+// UI 조회용 인증 경로(GET /pipelines/:id/checkpoints)와 핸들러는 같지만 경로만 분리한다.
 func (c *Client) LoadCheckpoints(ctx context.Context, pipelineID string) ([]*Checkpoint, error) {
-	url := fmt.Sprintf("%s/api/v1/pipelines/%s/checkpoints", c.baseURL, pipelineID)
+	url := fmt.Sprintf("%s/api/v1/pipelines/%s/checkpoints/internal", c.baseURL, pipelineID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {

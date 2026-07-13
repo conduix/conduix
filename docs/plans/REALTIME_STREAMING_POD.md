@@ -82,8 +82,12 @@ monitor: pod → CP REST (stage 처리량/offset), 주기 하트비트
 - ✅ realtime+native 워크플로우 start → `conduix-rt-*` Deployment 생성, injected 바이너리로 `runStreaming` 진입, native `pricedouble` stage compile-in, health server `/health`·`/ready`·`/commands` 동작(:8082).
 - ✅ W4 stop: CP stop → agent "stopped streaming execution" 로그 → pod Terminating + Deployment 삭제(~2s).
 - ✅ W2 pause/resume: pod REST `/commands` 직접 호출 → `{"success":true}` + "pause/resume command received" 로그. invalid→500.
-- ⚠️ **RBAC 신규 필요(발견·수정)**: agent SA 에 `apps/deployments` create/get/list/watch/update/patch/delete 권한 추가(helm rbac.yaml). 없으면 CreateStreamingDeployment 가 403.
-- ⚠️ **미해결(W1~W5 무관, 별도 이슈)**: kafka-go ConsumerGroup 이 topic(1 partition) 에서 0 partition 배정 → 데이터 미소비. streaming pod 라이프사이클·제어는 정상, 데이터플레인 kafka source offset/group 배정 이슈로 별도 조사 필요. checkpoint 로드 401(auth 헤더 누락)도 기존 이슈.
+- ✅ **데이터 플로우 검증(2026-07-13)**: Kafka(rt.orders) → native `pricedouble`(price 10→20) → MySQL(rt_orders_out) 100+건 적재 확인. realtime+native 전체 파이프라인 실동작.
+- ✅ **무손실 재개 검증(2026-07-13)**: checkpoint offset 639 저장 → pod 재생성 → 새 pod 가 "Kafka restored checkpoint offset=639" 로 재개(처음부터 재처리 안 함). Recreate 전략과 결합해 rolling 무손실 성립.
+- ⚠️→✅ **RBAC 신규 필요(발견·수정 완료)**: agent SA 에 `apps/deployments` create/get/list/watch/update/patch/delete 권한 추가(helm rbac.yaml). 없으면 CreateStreamingDeployment 가 403.
+- ⚠️→✅ **checkpoint 401(수정 완료)**: LoadCheckpoints 가 인증 경로 호출 → 내부 무인증 GET `/pipelines/:id/checkpoints/internal` 추가·client 변경(커밋 4632ebc).
+- ⚠️→✅ **checkpoint 400 WorkflowID(수정 완료)**: 401 고친 뒤 드러난 다음 레이어 — flush 페이로드에 WorkflowID 누락. executor 가 e.group.ID 설정(커밋 bb17a05).
+- ℹ️ **오해 정정**: 초기 관측된 "kafka 0 partition 배정"은 버그가 아니라 consumer group rebalance 의 일시적 타이밍이었음(재확인 시 1 partition 정상 배정, 데이터 정상 소비). SQL sink 는 batch_size(100) 단위 flush + time-flush 없음(기존 [realtime-sink-flush-gaps]) — 소량이면 batch 안 참.
 
 ### 빌드 사실(중요)
 - streaming pod 는 **injected RunnerVersion 바이너리**를 실행(image 아님). W2 runStreaming 변경을 반영하려면 **새 RunnerVersion 빌드 필요**.

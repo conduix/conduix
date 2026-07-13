@@ -694,6 +694,7 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 			sourceCheckpoints := cpSource.GetSourceCheckpoints()
 			for _, scp := range sourceCheckpoints {
 				cp := &checkpoint.Checkpoint{
+					WorkflowID:   e.group.ID, // 서버 저장 시 필수(누락 시 400). rolling/재시작 재개의 조회 키.
 					PipelineID:   pipeline.ID,
 					PipelineName: pipeline.Name,
 					SourceType:   cpSource.SourceType(),

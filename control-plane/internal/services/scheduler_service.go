@@ -130,6 +130,15 @@ func (s *SchedulerService) detectStaleExecutions() {
 	// Job 은 agent heartbeat 의 running_execs 에 등록되지 않는다(delegateBatchJob 은 runningExecs 미등록).
 	// 따라서 agent heartbeat 기반 stale 판정은 bulk 에 카테고리 오류 — 정상 실행 중인 Job(부모·sub)을
 	// 2분 후 stale 로 오판해 error 확정하게 된다. bulk Job 의 생명주기는 K8s 가 관리하고 완료는 콜백으로 반영된다.
+	//
+	// realtime+native(streaming Deployment) 실행은 여기서 별도 제외하지 않는다 — Type 은 realtime 이라
+	// 위 batch 필터에 안 걸리지만, agent reconcile 이 타이밍상 stale 오판을 앞질러 막기 때문이다:
+	// streaming pod 도 agent 와 독립적으로 돌아(agent 재시작 시 heartbeat 에서 빠짐) 원리상 batch 와 같은
+	// 카테고리지만, agent 부팅 reconcile(+~5s)이 running execution 을 재조회해 runningExecs 에 re-adopt →
+	// 다음 heartbeat 부터 다시 live 로 보고된다. 이 재적재는 staleGrace(2분)보다 24배 빨라, stale 감지기가
+	// grace 경과를 볼 시점엔 이미 live 라 오판이 성립하지 않는다. (reconcile 이 2분 넘게 실패하는 극단에서만
+	// 오판 가능 — 그 경우 실행 자체가 이미 문제이므로 error 확정이 오히려 맞다.) 확실한 제외가 필요해지면
+	// WorkflowExecution 에 Delegated 플래그를 두어 batch/streaming 을 함께 거르는 방식으로 강화할 수 있다.
 	cutoff := time.Now().Add(-s.staleGrace)
 	var execs []models.WorkflowExecution
 	if err := s.db.Where("status = ? AND started_at < ? AND workflow_id NOT IN (?)",

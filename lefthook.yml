@@ -18,6 +18,20 @@ pre-commit:
       run: cd pipeline-core && golangci-lint run --fix --allow-parallel-runners
 
 pre-push:
+  # Go 테스트를 push 게이트에 포함한다. lint(pre-commit)만으로는 "테스트에서만 드러나는" 결함
+  # (예: mock DB nil panic)을 못 잡아 깨진 코드가 push 되고 CI 에서야 걸렸다. CI 와 동일 명령으로
+  # 로컬에서 먼저 차단한다. web-ui 빌드와 병렬 실행해 push 지연을 줄인다.
+  parallel: true
   commands:
     build-web-ui:
       run: cd web-ui && npm run build
+    test-shared:
+      run: cd shared && go test -p 4 -parallel 8 ./...
+    test-plugin-sdk:
+      run: cd plugin-sdk && go test -p 4 -parallel 8 ./...
+    test-pipeline-core:
+      run: cd pipeline-core && go test -p 4 -parallel 8 ./...
+    test-pipeline-worker:
+      run: cd pipeline-worker && go test -p 4 -parallel 8 ./...
+    test-control-plane:
+      run: cd control-plane && go test -p 4 -parallel 8 ./...

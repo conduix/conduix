@@ -88,7 +88,30 @@ func NewRunnerBuilder(db *gorm.DB, cfg *RunnerBuilderConfig) *RunnerBuilder {
 	// 재시작되면 그 goroutine 은 죽지만 DB 의 building 레코드는 남는다. 새 프로세스에는 진행 중 빌드가
 	// 없음이 확실하므로(방금 부팅) building 을 전부 failed 로 회수한다. 이게 없으면 Build() 의
 	// self-heal(2*BuildTimeout 경과분만 회수)이 돌 때까지 새 빌드가 "already in progress"로 막힌다.
-	res := db.Model(&models.RunnerVersion{}).
+	//
+	// db 가 nil 이거나 미연결(라우트 등록 테스트의 mock DB 등)이면 회수 쿼리를 건너뛴다 —
+	// 생성자에서 DB 쓰기를 무조건 하면 mock DB(db.DB==nil)에서 nil pointer panic 이 난다.
+	rb.reclaimStaleBuilding()
+
+	return rb
+}
+
+// reclaimStaleBuilding 은 부팅 시 좀비 building 레코드를 failed 로 회수한다.
+// db 미연결이면 안전하게 no-op(생성자가 mock DB 로도 안전하게 만들어지도록).
+func (rb *RunnerBuilder) reclaimStaleBuilding() {
+	if rb.db == nil {
+		return
+	}
+	// 실제 커넥션이 없는 mock(*gorm.DB 는 있으나 ConnPool nil)에서도 패닉 없이 넘어가도록 방어.
+	sqlDB, err := rb.db.DB()
+	if err != nil || sqlDB == nil {
+		return
+	}
+	if err := sqlDB.Ping(); err != nil {
+		return
+	}
+
+	res := rb.db.Model(&models.RunnerVersion{}).
 		Where("status = ?", "building").
 		Updates(map[string]any{"status": "failed", "error": "reclaimed on control-plane startup (build goroutine did not survive restart)"})
 	if res.Error != nil {
@@ -96,8 +119,6 @@ func NewRunnerBuilder(db *gorm.DB, cfg *RunnerBuilderConfig) *RunnerBuilder {
 	} else if res.RowsAffected > 0 {
 		rb.logger.Info("startup: reclaimed stale building runner versions", "count", res.RowsAffected)
 	}
-
-	return rb
 }
 
 // RunnerBuildResult 빌드 결과

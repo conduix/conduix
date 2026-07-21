@@ -24,7 +24,7 @@
 
 ### 현행 작업
 - [REMAINING_WORK_CHECKLIST.md](REMAINING_WORK_CHECKLIST.md) — 남은 작업 체크리스트
-- [plans/](plans/) — 대규모 작업의 실행 계획(목표·범위·단계·완료기준). 예: `plans/cdc-roadmap.md`
+- [plans/](plans/) — **진행 중** 작업 계획만 둔다(완료되면 archive/로 이동). 현재: `plans/TODO.md`.
 
 > 현재 지원 기능·구현 현황은 [ARCHITECTURE.md](ARCHITECTURE.md)를 본다. 시점 스냅샷 문서는 archive에 있다.
 
@@ -32,6 +32,7 @@
 
 완료됐거나 폐기된 문서, 또는 **특정 시점 현황/계획 스냅샷**. 히스토리 참고용이며 **현재 상태를 반영하지 않는다**:
 - 완료된 스프린트 계획/진행: `PHASE*`, `WORK_PLAN_*`, `WORK_PROGRESS*`, `REMAINING_WORK_PLAN`, `MULTI_CLUSTER_IMPLEMENTATION_PROGRESS`, `OPERATOR_CONTROL_RESTORE_PLAN`
+- 완료된 설계·구현 계획(2026-07): `REALTIME_STREAMING_POD`(realtime 전용 streaming pod, W1~W5 완료), `MULTI_CLUSTER_E2E_PLAN`(멀티클러스터 e2e, 버그 6종 수정), `NATIVE_PLUGIN_WIP`(native stage e2e 갭), `CUSTOM_STAGE_DEPENDENCY_REGISTRY`(allowed_modules 레지스트리, 구현됨) → 현행은 ARCHITECTURE.md
 - 시점 스냅샷/계획: `PIPELINE_EXTENSION_PLAN`(확장 계획, 2026-03-04 현황), `STAGE_IMPLEMENTATION_STATUS`(2026-02-11 현황) → 현행은 ARCHITECTURE.md
 - 폐기된 아키텍처: `PLUGIN_ARCHITECTURE_PLAN_V2`(Docker), `PLUGIN_ARCHITECTURE_V3`(gRPC go-plugin), `PLUGIN_DEVELOPMENT_GUIDE`(V2 컨테이너 방식), `technical-design-review`(actor 엔진 선택 — actor는 이후 제거됨), `E2E_TEST_SCENARIOS`(V2 플러그인 기반 시나리오)
 
@@ -39,4 +40,5 @@
 
 - **실행 엔진**: `GroupExecutor` 단일. actor 엔진은 제거됨. (archive의 actor 관련 서술은 무효)
 - **플러그인**: V4만 유효. V2(Docker)/V3(gRPC)는 폐기.
-- **Stage 실행**: 워크플로우 executor가 stream 레지스트리로 위임 → 28개 내장 stage + native plugin이 워크플로우에서 실행됨.
+- **Stage 실행**: 워크플로우 executor가 stream 레지스트리로 위임 → 28개 내장 stage + 커스텀 stage 2종(native Go compile-in / js_script goja)이 워크플로우에서 실행됨.
+- **realtime 실행**: realtime+native custom stage는 **streaming Deployment(상주 Pod)** 위임(최신 stage 바이너리 주입). non-native realtime만 worker in-process. batch는 K8s Job. worker는 오케스트레이터이고 유실 명령은 reconcile 백스톱으로 복구. (과거 "realtime=in-process"만 있던 서술은 낡음)

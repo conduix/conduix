@@ -1,5 +1,7 @@
 # Realtime 전용 Streaming Pod — 설계·구현 계획 (A안 확정)
 
+> **[ARCHIVED]** 완료됨 — W1~W5 구현·e2e 검증 끝(2026-07-13). 현행 동작은 `../ARCHITECTURE.md` realtime 실행 분기 참조. 설계·이력 보존용.
+
 > 작성 2026-07-10. 대상: 이 작업을 이어서 구현할 Claude Code / 개발자.
 > 목적: web-ui 로 만든 native custom stage 를 realtime pipeline 에도 적용. bulk 는 매 실행 새 pod 라
 > 최신 stage 바이너리를 자동으로 받는데, realtime 은 agent in-process 라 못 받던 것을 해결한다.

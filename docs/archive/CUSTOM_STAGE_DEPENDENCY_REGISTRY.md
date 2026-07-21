@@ -1,5 +1,7 @@
 # Custom Stage 의존성 레지스트리 — 설계·실행 방안
 
+> **[ARCHIVED]** 구현 완료 — allowed_modules 레지스트리(D1~D5)가 control-plane 에 구현됨(plugin_handler/lsp/workspace_manager). 설계 근거 보존용.
+
 > 작성 2026-07-10. 대상: 이 작업을 이어서 구현할 Claude Code / 개발자.
 > 이 문서는 **native custom stage 의 외부 의존성 충돌을 원천 제거**하는 방안이다.
 > batch·realtime 공통의 선행 수정 — realtime native 지원([[REALTIME_NATIVE_IMPL_PLAN.md]])보다 먼저 풀어야 한다.

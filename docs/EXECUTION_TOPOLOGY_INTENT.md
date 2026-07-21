@@ -1,5 +1,12 @@
 # 실행 토폴로지 — 의도·가치 우선 설계
 
+> **갱신(2026-07-13):** 이 문서(2026-07-02)는 realtime 을 worker **in-process 상주 실행**으로
+> 기술한다. 이후 realtime + **native custom stage** 는 worker in-process 대신 **streaming
+> Deployment(상주 Pod) 위임**으로 진화했다(web-ui 로 만든 native stage 를 realtime 에 반영하기
+> 위함 — batch 의 "새 Pod=최신 바이너리 주입" 인프라 재사용). non-native realtime 만 in-process
+> 폴백. 아래 본문의 "realtime → in-process"는 non-native 경로로 읽는다. 현행 분기는
+> `ARCHITECTURE.md`, 설계·구현 이력은 `archive/REALTIME_STREAMING_POD.md` 참조.
+
 > **이 문서는 코드가 아니라 의도를 먼저 확정하기 위한 것이다.**
 > 원칙: *의도와 가치가 먼저이고, 코드·구현은 그것을 반영하는 도구다.*
 > 이 문서가 구현·이름·다이어그램의 기준(single source of truth)이다.

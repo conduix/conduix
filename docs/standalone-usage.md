@@ -17,8 +17,8 @@ Conduix의 `pipeline-core`는 독립 실행이 가능한 모듈입니다. YAML �
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │                    pipeline-core (독립 실행)                         │   │
 │   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                  │   │
-│   │  │   Config    │  │   Actor     │  │  Pipeline   │                  │   │
-│   │  │   Parser    │──│   System    │──│   Runner    │                  │   │
+│   │  │   Config    │  │    Group    │  │  Pipeline   │                  │   │
+│   │  │   Parser    │──│  Executor   │──│   Runner    │                  │   │
 │   │  └─────────────┘  └─────────────┘  └─────────────┘                  │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │         │                                                                    │
@@ -165,68 +165,9 @@ checkpoint:
   interval: 10s
 ```
 
-### 계층적 Actor 구조 (고급)
-
-Apache Flink와 유사한 계층적 구조로, 세밀한 장애 복구 제어가 가능합니다.
-
-```yaml
-version: "1.0"
-name: "actor-pipeline"
-type: actor
-
-# Actor 시스템 설정
-actor_system:
-  dispatcher:
-    type: fork-join
-    parallelism: 8
-  mailbox:
-    capacity: 10000
-    overflow_strategy: backpressure
-
-# 계층적 파이프라인 정의
-pipeline:
-  name: "RootSupervisor"
-  supervision:
-    strategy: one_for_one
-    max_restarts: 3
-    within_seconds: 60
-
-  children:
-    - name: "SourceSupervisor"
-      type: supervisor
-      children:
-        - name: "KafkaSource"
-          type: source
-          config:
-            source_type: kafka
-            # kafka 설정...
-          outputs: ["TransformSupervisor"]
-
-    - name: "TransformSupervisor"
-      type: supervisor
-      children:
-        - name: "Parser"
-          type: transform
-          config:
-            transform_type: remap
-            # remap 설정...
-          outputs: ["SinkSupervisor"]
-
-    - name: "SinkSupervisor"
-      type: supervisor
-      children:
-        - name: "Output"
-          type: sink
-          config:
-            sink_type: console
-            # sink 설정...
-
-checkpoint:
-  enabled: true
-  storage: file
-  directory: ./checkpoints
-  interval: 10s
-```
+> **삭제됨(ADR-0002):** 과거 이 문서에 있던 계층적 Actor 구조(`type: actor`, `actor_system`,
+> `supervisor` 트리)는 actor 실행 엔진 제거와 함께 삭제됐다. 파이프라인 타입은 `flat`/`group`
+> (GroupExecutor)만 유효하다. 장애 복구는 checkpoint 기반 재개 + (K8s 배포 시) reconcile 로 대체됐다.
 
 ---
 
@@ -676,102 +617,9 @@ sinks:
 ./pipeline --config file-monitor.yaml
 ```
 
-### 예시 4: Actor 모델 기반 복잡한 파이프라인
-
-```yaml
-# complex-pipeline.yaml
-version: "1.0"
-name: "multi-source-analytics"
-type: actor
-
-actor_system:
-  dispatcher:
-    parallelism: 4
-  mailbox:
-    capacity: 5000
-    overflow_strategy: backpressure
-
-pipeline:
-  name: "RootSupervisor"
-  supervision:
-    strategy: one_for_one
-    max_restarts: 5
-    within_seconds: 300
-
-  children:
-    - name: "Sources"
-      type: supervisor
-      children:
-        - name: "KafkaSource"
-          type: source
-          config:
-            source_type: kafka
-            brokers: ["localhost:9092"]
-            topics: ["events"]
-          outputs: ["Transforms"]
-
-        - name: "HTTPSource"
-          type: source
-          config:
-            source_type: http_server
-            address: "0.0.0.0:8080"
-            path: "/ingest"
-          outputs: ["Transforms"]
-
-    - name: "Transforms"
-      type: supervisor
-      children:
-        - name: "Parser"
-          type: transform
-          parallelism: 2
-          config:
-            transform_type: remap
-            source: '. = parse_json!(.message)'
-          outputs: ["Router"]
-
-        - name: "Router"
-          type: router
-          config:
-            routing:
-              - condition: '.type == "metric"'
-                output: "MetricsSink"
-              - condition: '.type == "log"'
-                output: "LogsSink"
-              - condition: 'true'
-                output: "DefaultSink"
-
-    - name: "Sinks"
-      type: supervisor
-      children:
-        - name: "MetricsSink"
-          type: sink
-          config:
-            sink_type: console
-            prefix: "[METRICS] "
-
-        - name: "LogsSink"
-          type: sink
-          config:
-            sink_type: elasticsearch
-            endpoints: ["http://localhost:9200"]
-            index: "logs"
-
-        - name: "DefaultSink"
-          type: sink
-          config:
-            sink_type: file
-            path: "/var/log/pipeline/default.log"
-
-checkpoint:
-  enabled: true
-  storage: file
-  directory: ./checkpoints
-  interval: 10s
-```
-
-```bash
-./pipeline --config complex-pipeline.yaml --log-level debug
-```
+> **삭제됨(ADR-0002):** "예시 4: Actor 모델 기반 복잡한 파이프라인"(`type: actor` +
+> supervisor 트리 + router)은 actor 엔진 제거로 삭제됐다. 멀티소스·라우팅은 `group` 타입
+> 파이프라인 + `route` stage 로 구성한다(예시 1~3 및 ARCHITECTURE.md 참고).
 
 ---
 
@@ -874,7 +722,6 @@ curl http://localhost:9090/metrics
 # pipeline_events_failed_total
 # pipeline_checkpoint_success_total
 # pipeline_checkpoint_failed_total
-# pipeline_actor_restarts_total
 # pipeline_source_lag_seconds
 ```
 
@@ -944,12 +791,13 @@ ls -la ./checkpoints/
 
 #### 4. 메모리 부족
 
+배치 크기/워커 수를 줄여 한 번에 메모리에 올리는 레코드 수를 낮춘다(파이프라인의 `batch` 설정).
+
 ```yaml
-# 버퍼 크기 조정
-actor_system:
-  mailbox:
-    capacity: 1000  # 기본 10000에서 축소
-    overflow_strategy: drop_oldest  # backpressure 대신 삭제
+batch:
+  enabled: true
+  size: 100      # 배치 크기 축소 (한 번에 처리하는 레코드 수)
+  workers: 4     # 병렬 워커 수 축소
 ```
 
 ### 로그 레벨별 정보

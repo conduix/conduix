@@ -20,7 +20,7 @@
 | `shared/` | 공통 타입·유틸 (Redis ResilientClient, 메트릭) | 없음 |
 | `plugin-sdk/` | 네이티브 stage 인터페이스 (`NativeStage`) | 없음 |
 | `pipeline-core/` | 실행 엔진 (GroupExecutor, source/stage/output, 체크포인트) | shared, plugin-sdk |
-| `pipeline-worker/` | **cluster 소속 상주 워커**: Redis로 실행 명령 수신, realtime은 in-process 실행, batch는 자기 cluster에 K8s Job 위임 생성. | shared, pipeline-core |
+| `pipeline-worker/` | **cluster 소속 상주 워커(오케스트레이터)**: Redis로 실행 명령 수신 후 자기 cluster에 위임 생성 — batch=K8s Job, realtime+native=streaming Deployment. non-native realtime만 in-process. reconcile 백스톱으로 유실 명령 복구. | shared, pipeline-core |
 | `pipeline-batch-job/` | **일회성 K8s Job 바이너리**: worker가 만든 Job이 실행하는 배치 실행 이미지. 환경변수로 config 받아 GroupExecutor 한 번 구동 후 종료. | shared, pipeline-core |
 | `control-plane/` | 운영 백엔드 (Gin+GORM+MySQL, 스케줄러, Redis pub/sub) | shared, pipeline-core |
 | `web-ui/` | 프론트엔드 (React+TS+MUI) | control-plane REST |
@@ -81,13 +81,13 @@ flowchart LR
 
 > 상세 의도·가치·설계 결정은 [EXECUTION_TOPOLOGY_INTENT.md](EXECUTION_TOPOLOGY_INTENT.md).
 
-멀티 K8s를 지원한다. **control-plane은 K8s Job을 직접 만들지 않는다.** 워크플로우의 대상 cluster에 소속된 `pipeline-worker`에게 실행을 **위임**하고, batch면 그 worker가 자기 cluster에 in-cluster 권한으로 `pipeline-batch-job` K8s Job을 생성한다.
+멀티 K8s를 지원한다. **control-plane은 K8s Job/Deployment를 직접 만들지 않는다.** 워크플로우의 대상 cluster에 소속된 `pipeline-worker`에게 실행을 **위임**하고, worker가 자기 cluster에 in-cluster 권한으로 `pipeline-batch-job` 바이너리를 K8s에 띄운다 — batch=Job(일회성), realtime+native=Deployment(상주).
 
 | | `pipeline-worker` | `pipeline-batch-job` |
 |---|---|---|
-| 정체 | cluster 소속 상주 워커(realtime 실행 + Job 위임생성) | worker가 만든 일회성 Job의 실행 바이너리 |
-| 생명주기 | **상주** (항상 떠 있음) | **일회성** (Pod 실행 후 종료) |
-| 명령 수신 | Redis Pub/Sub `cluster:<id>:*` (REST 폴백) | 환경변수로 config 주입 |
+| 정체 | cluster 소속 상주 워커(오케스트레이터: Job/Deployment 위임생성 + non-native realtime in-process) | worker가 K8s에 띄운 실행 바이너리 |
+| 생명주기 | **상주** (항상 떠 있음) | batch=**일회성**(Pod 종료), realtime=**상주**(Deployment) |
+| 명령 수신 | Redis Pub/Sub `cluster:<id>:*` (REST 폴백) | 환경변수로 config 주입 (streaming pod는 REST `/commands`로 stop/pause/resume) |
 | 실행 엔진 | `GroupExecutor` | `GroupExecutor` (동일) |
 
 **realtime vs batch 갈림 = 데이터 타입이 아니라 워크플로우 `type`이 결정한다.** control-plane은 realtime·batch 모두 대상 cluster 채널로 실행 명령을 발행하고, **worker가** `type`을 보고 분기한다:
@@ -96,9 +96,18 @@ flowchart LR
 control-plane: workflow.cluster_id(없으면 default, 없으면 실행 거부)로 대상 cluster 확정
              → cluster:<id>:execute 로 실행 명령 발행 (K8s Job 직접 생성 안 함)
 worker(그룹 중 SETNX claim으로 1대):
-    type==realtime → in-process 상주 실행 (executeGroup)
+    type==realtime + native stage(RunnerVersionID 有)
+                   → streaming Deployment 위임 생성 (delegateStreamingDeployment) → 상주 Pod
+    type==realtime + non-native
+                   → in-process 상주 실행 (executeGroup)  ※ 비-K8s standalone 폴백
     type==batch    → in-cluster로 K8s Job 생성 (delegateBatchJob) → 일회성 Pod
 ```
+
+> realtime+native 를 별도 streaming Deployment 로 분리한 이유: web-ui 로 만든 native custom
+> stage 를 realtime 에도 반영하려면 "매 실행 새 Pod = 최신 stage 바이너리 주입"(bulk 와 동일
+> 인프라)이 필요한데, in-process 는 이미 켜진 worker 에 컴파일된 stage 만 쓸 수 있기 때문이다.
+> 상세: `archive/REALTIME_STREAMING_POD.md`. 유실 명령 복구는 reconcile 백스톱(worker 가
+> 주기적으로 CP 의 running execution 을 재조회해 안 도는 것을 복구).
 
 `JobConfig`는 트리거가 아니라 **선택적 리소스 스펙**(CPU/mem/namespace/재시도)이다. 있으면 worker가 Job에 적용하고, 없으면 기본값.
 
@@ -134,7 +143,10 @@ sequenceDiagram
     R-->>W: 명령 fan-out (그 cluster의 전 worker 수신)
     W->>R: SETNX execution:claim (단독 실행 획득)
     Note over W: 획득한 1대만 진행, 나머지 skip
-    alt type == realtime
+    alt type == realtime + native
+        W->>J: streaming Deployment 위임 생성 (상주 Pod)
+        J-->>CP: 결과/체크포인트 콜백
+    else type == realtime + non-native
         W->>W: executeGroup (in-process 상주 실행)
         W-->>CP: 결과/하트비트
     else type == batch
@@ -151,9 +163,11 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     CP[control-plane] -->|"cluster:&lt;id&gt;:execute (위임)"| W{pipeline-worker<br/>claim 획득 1대<br/>type?}
-    W -->|realtime| AG["in-process 상주 실행<br/>장기 + pause/resume"]
+    W -->|realtime + native| SD["streaming Deployment 위임<br/>→ 상주 Pod (최신 stage 바이너리 주입)<br/>pause/resume/roll"]
+    W -->|realtime + non-native| AG["in-process 상주 실행<br/>(비-K8s 폴백)"]
     W -->|batch| KJ["in-cluster K8s Job 생성<br/>→ pipeline-batch-job Pod<br/>소스 소진 시 종료"]
-    AG --> GE[GroupExecutor]
+    SD --> GE[GroupExecutor]
+    AG --> GE
     KJ --> GE
     GE -->|병렬/순차/DAG| PIPE[파이프라인들<br/>서버-로컬 인프로세스]
 ```

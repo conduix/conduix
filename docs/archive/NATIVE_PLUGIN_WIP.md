@@ -1,5 +1,7 @@
 # Native Plugin 실행 갭 수정 — 진행 상태 (WIP)
 
+> **[ARCHIVED]** native 커스텀 stage e2e 갭 수정. 이후 REALTIME_STREAMING_POD/MULTI_CLUSTER_E2E_PLAN 에서 native e2e 실제 통과로 마무리됨. 초기 조사·수정 이력 보존용.
+
 > 작성 2026-07-08. 목표: "A(빌드 캐시)부터 고쳐 native 커스텀 stage 샘플이 e2e 로 통과하게 하고, 드러나는 수정사항 모두 수정."
 > 세션이 끊겨도 이어서 검증할 수 있도록 상태를 남긴다.
 

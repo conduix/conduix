@@ -73,24 +73,33 @@ jobs:
             -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4
 
       - name: Wait for MySQL
+        # mysqladmin ping 은 인증 실패여도 exit 0 → entrypoint 의 임시 서버(빈 패스워드)를
+        # ready 로 오판한다. 임시 서버는 TCP 를 열지 않으므로(port=0) 127.0.0.1 경유
+        # 인증 쿼리 성공을 실제 서버 기동의 판정 기준으로 삼는다.
         run: |
+          ready=0
           for i in $(seq 1 60); do
-            if docker exec cdc-mysql mysqladmin ping -uroot -prootpw --silent 2>/dev/null; then
-              echo "mysql ready"; break
+            if docker exec cdc-mysql mysql -h127.0.0.1 -uroot -prootpw -N -e "SELECT 1" --silent 2>/dev/null; then
+              echo "mysql ready"; ready=1; break
             fi
             sleep 2
           done
-          docker exec cdc-mysql mysql -uroot -prootpw -N -e "SELECT @@log_bin, @@binlog_format, @@gtid_mode;"
+          if [ "$ready" != "1" ]; then echo "mysql not ready in 120s"; exit 1; fi
+          docker exec cdc-mysql mysql -h127.0.0.1 -uroot -prootpw -N -e "SELECT @@log_bin, @@binlog_format, @@gtid_mode;"
 
       - name: Wait for PostgreSQL
+        # entrypoint 초기화용 임시 서버는 unix socket 만 연다 → 127.0.0.1 로 체크해야
+        # 임시 서버를 ready 로 오판하지 않는다 (MySQL 과 동일한 레이스).
         run: |
+          ready=0
           for i in $(seq 1 60); do
-            if docker exec cdc-pg pg_isready -U postgres 2>/dev/null | grep -q "accepting"; then
-              echo "pg ready"; break
+            if docker exec cdc-pg pg_isready -h 127.0.0.1 -U postgres 2>/dev/null | grep -q "accepting"; then
+              echo "pg ready"; ready=1; break
             fi
             sleep 2
           done
-          docker exec cdc-pg psql -U postgres -d cdcdb -tAc "SHOW wal_level;"
+          if [ "$ready" != "1" ]; then echo "postgres not ready in 120s"; exit 1; fi
+          docker exec -e PGPASSWORD=pgpw cdc-pg psql -h 127.0.0.1 -U postgres -d cdcdb -tAc "SHOW wal_level;"
 
       - name: Run CDC integration tests
         run: |

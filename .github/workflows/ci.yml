@@ -25,11 +25,11 @@ jobs:
       matrix:
         package: [shared, plugin-sdk, pipeline-core, pipeline-worker, control-plane]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         id: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           cache: true
@@ -48,10 +48,10 @@ jobs:
   test-cdc-integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           cache: true
@@ -121,18 +121,21 @@ jobs:
   test-web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         id: setup-node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # Vite 8 requires Node 20.19+/22.12+ (Node 18 fails: CustomEvent not defined)
           node-version: "22"
+          # v5+ 는 npm 자동 캐싱(~/.npm)을 켠다 — 아래 node_modules 직접 캐싱과
+          # 이중 캐시가 되므로 끈다
+          package-manager-cache: false
 
       - name: Cache node_modules
         id: cache-web
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: web-ui/node_modules
           # OS, Node 버전, lock 파일 해시를 조합한 정교한 키
@@ -174,20 +177,20 @@ jobs:
           - service: pipeline-batch-job
             dockerfile: pipeline-batch-job/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Platform pair slug
         id: platform
@@ -195,7 +198,7 @@ jobs:
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -211,7 +214,7 @@ jobs:
           touch "/tmp/digests/${{ matrix.service }}/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digest-${{ matrix.service }}-${{ steps.platform.outputs.slug }}
           path: /tmp/digests/${{ matrix.service }}/*
@@ -231,25 +234,25 @@ jobs:
         service: [control-plane, agent, web-ui, pipeline-batch-job]
     steps:
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: digest-${{ matrix.service }}-*
           merge-multiple: true
           path: /tmp/digests
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
           tags: |

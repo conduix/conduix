@@ -33,7 +33,8 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-          cache-dependency-path: "${{ matrix.package }}/go.sum"
+          # plugin-sdk 는 외부 의존성이 없어 go.sum 이 없다 → go.* 로 go.mod 폴백
+          cache-dependency-path: "${{ matrix.package }}/go.*"
 
       - name: Test ${{ matrix.package }}
         run: cd ${{ matrix.package }} && go test -v -p 4 -parallel 8 ./...

@@ -8,10 +8,18 @@ spec:
   source:
     chart: mysql-operator
     repoURL: https://mysql.github.io/mysql-operator/
-    targetRevision: 2.2.7
+    targetRevision: 2.3.0
   destination:
     server: https://kubernetes.default.svc
     namespace: mysql-operator
+  # 차트 CRD 의 빈 description("") 을 kube-apiserver 가 저장 시 제거해
+  # 영구 OutOfSync 가 되므로 diff 에서 제외
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      name: innodbclusters.mysql.oracle.com
+      jqPathExpressions:
+        - '.. | .description? | select(. == "")'
   syncPolicy:
     automated:
       prune: true

@@ -8,7 +8,7 @@ spec:
   source:
     chart: mysql-innodbcluster
     repoURL: https://mysql.github.io/mysql-operator/
-    targetRevision: 2.2.7
+    targetRevision: 2.3.0
     helm:
       values: |
         credentials:

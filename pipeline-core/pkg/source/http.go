@@ -326,7 +326,7 @@ func (s *HTTPSource) readWithOffsetPagination(ctx context.Context, records chan<
 
 		// totalCount 기반 종료 체크 (객체 응답인 경우만)
 		if respObj != nil && s.pagination.TotalField != "" {
-			if totalVal, ok := respObj[s.pagination.TotalField]; ok {
+			if totalVal := lookupField(respObj, s.pagination.TotalField); totalVal != nil {
 				var total int
 				switch v := totalVal.(type) {
 				case float64:
@@ -968,7 +968,7 @@ func extractItems(response any, dataField string) ([]any, map[string]any) {
 			fieldName = "data"
 		}
 
-		if dataValue, ok := obj[fieldName]; ok {
+		if dataValue := lookupField(obj, fieldName); dataValue != nil {
 			if arr, ok := dataValue.([]any); ok {
 				return arr, obj
 			}
@@ -977,6 +977,19 @@ func extractItems(response any, dataField string) ([]any, map[string]any) {
 	}
 
 	return nil, nil
+}
+
+// lookupField 최상위 키를 먼저 찾고, 없으면 점 구분 경로로 폴백
+// data.go.kr 처럼 배열이 response.body.items.item 에 중첩된 응답을 지원한다.
+// 최상위 키 이름에 "."이 포함된 기존 설정과의 호환을 위해 직접 조회가 우선이다.
+func lookupField(obj map[string]any, field string) any {
+	if v, ok := obj[field]; ok {
+		return v
+	}
+	if strings.Contains(field, ".") {
+		return getNestedValue(obj, field)
+	}
+	return nil
 }
 
 // getNestedValue JSON 객체에서 점으로 구분된 경로의 값을 가져옴

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
@@ -714,5 +715,118 @@ func TestGetNestedValue(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Nested data_field / total_field Tests
+
+func TestExtractItems_NestedDataField(t *testing.T) {
+	nested := map[string]any{
+		"response": map[string]any{
+			"body": map[string]any{
+				"items":      map[string]any{"item": []any{map[string]any{"id": 1.0}}},
+				"totalCount": 5.0,
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		response  any
+		dataField string
+		wantLen   int
+	}{
+		{"top-level key", map[string]any{"data": []any{map[string]any{"id": 1.0}}}, "data", 1},
+		{"nested path", nested, "response.body.items.item", 1},
+		{"missing nested path", nested, "response.body.no_such", 0},
+		{"direct array response", []any{map[string]any{"id": 1.0}}, "", 1},
+		// 최상위에 점 포함 키가 있으면 nested 해석보다 직접 조회가 우선
+		{"dotted top-level key wins", map[string]any{
+			"a.b": []any{map[string]any{"id": 1.0}},
+			"a":   map[string]any{"b": []any{}},
+		}, "a.b", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, _ := extractItems(tt.response, tt.dataField)
+			if len(items) != tt.wantLen {
+				t.Errorf("expected %d items, got %d", tt.wantLen, len(items))
+			}
+		})
+	}
+}
+
+// data.go.kr 형태(중첩 배열 + 중첩 totalCount) 응답의 페이지네이션 종료 검증
+func TestHTTPSource_Pagination_NestedDataAndTotalField(t *testing.T) {
+	var mu sync.Mutex
+	requestedPages := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("pageNo")
+		mu.Lock()
+		requestedPages = append(requestedPages, page)
+		mu.Unlock()
+
+		var items []any
+		switch page {
+		case "1":
+			items = []any{map[string]any{"id": 1}, map[string]any{"id": 2}}
+		case "2":
+			items = []any{map[string]any{"id": 3}, map[string]any{"id": 4}}
+		case "3":
+			items = []any{map[string]any{"id": 5}}
+		default:
+			items = []any{}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"response": map[string]any{
+				"body": map[string]any{
+					"items":      map[string]any{"item": items},
+					"totalCount": 5,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.SourceV2{
+		Type:   "http",
+		URL:    server.URL,
+		Method: "GET",
+		Pagination: &config.PaginationConfig{
+			Type:         "page_increment",
+			PageParam:    "pageNo",
+			PerPageParam: "numOfRows",
+			PerPage:      2,
+			StartPage:    1,
+			MaxPages:     10,
+			DataField:    "response.body.items.item",
+			TotalField:   "response.body.totalCount",
+		},
+	}
+
+	source, err := NewHTTPSource(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	records, errs := source.Read(context.Background())
+
+	var received []Record
+	for record := range records {
+		received = append(received, record)
+	}
+	for err := range errs {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if len(received) != 5 {
+		t.Errorf("expected 5 records, got %d", len(received))
+	}
+	// totalCount(5) 소진 시점(3*2>=5)에 멈춰야 함 — 4페이지 요청은 과호출
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requestedPages) != 3 {
+		t.Errorf("expected 3 page requests, got %d (%v)", len(requestedPages), requestedPages)
 	}
 }

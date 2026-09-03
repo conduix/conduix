@@ -1,12 +1,37 @@
 package executor
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
+
+// decodeConfig map 설정을 구조체의 yaml 태그를 메타데이터로 삼아 디코드한다.
+// 필드별 수동 복사는 구조체에 필드가 추가될 때마다 매퍼도 같이 고쳐야 하는
+// 동기화 버그(auth api_key 유실 등)를 만들므로 금지 — 새 필드는 태그만 달면
+// 자동 반영된다. 타입이 안 맞는 필드는 건너뛰고 나머지는 정상 디코드된다
+// (yaml.TypeError 는 부분 디코드 후 반환되는 에러라 치명 에러와 구분해 삼킨다).
+func decodeConfig(cfg map[string]any, out any) error {
+	b, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := yaml.Unmarshal(b, out); err != nil {
+		var typeErr *yaml.TypeError
+		if errors.As(err, &typeErr) {
+			slog.Default().Warn("config fields skipped due to type mismatch", "errors", typeErr.Errors)
+			return nil
+		}
+		return fmt.Errorf("unmarshal config: %w", err)
+	}
+	return nil
+}
 
 // parseConnectionString connection_string을 driver와 dsn으로 파싱
 // 지원 형식:
@@ -104,299 +129,20 @@ func parseURLConnectionString(connStr string) (driver string, dsn string, err er
 }
 
 // configToInputV2 map[string]any를 config.InputV2로 변환
+// yaml 태그 기반 자동 디코드 — InputV2 에 필드가 추가되면 여기 수정 없이 반영된다.
 func configToInputV2(cfg map[string]any) config.InputV2 {
 	result := config.InputV2{}
-
-	// Type
-	if v, ok := cfg["type"].(string); ok {
-		result.Type = v
+	if err := decodeConfig(cfg, &result); err != nil {
+		slog.Default().Warn("failed to decode input config", "error", err)
 	}
 
-	// File
-	if v, ok := cfg["path"].(string); ok {
-		result.Path = v
-	}
-	if v, ok := cfg["paths"].([]any); ok {
-		for _, p := range v {
-			if ps, ok := p.(string); ok {
-				result.Paths = append(result.Paths, ps)
-			}
-		}
-	}
-	if v, ok := cfg["format"].(string); ok {
-		result.Format = v
-	}
-
-	// SQL
-	if v, ok := cfg["driver"].(string); ok {
-		result.Driver = v
-	}
-	if v, ok := cfg["dsn"].(string); ok {
-		result.DSN = v
-	}
-	// connection_string 파싱 (driver와 dsn이 없고 connection_string이 있는 경우)
+	// connection_string 파싱 (명시적 driver/dsn 이 우선)
 	if result.Driver == "" && result.DSN == "" {
 		if connStr, ok := cfg["connection_string"].(string); ok && connStr != "" {
-			driver, dsn, err := parseConnectionString(connStr)
-			if err == nil {
+			if driver, dsn, err := parseConnectionString(connStr); err == nil {
 				result.Driver = driver
 				result.DSN = dsn
 			}
-		}
-	}
-	if v, ok := cfg["query"].(string); ok {
-		result.Query = v
-	}
-	if v, ok := cfg["params"].([]any); ok {
-		for _, p := range v {
-			if ps, ok := p.(string); ok {
-				result.Params = append(result.Params, ps)
-			}
-		}
-	}
-
-	// HTTP
-	if v, ok := cfg["url"].(string); ok {
-		result.URL = v
-	}
-	if v, ok := cfg["method"].(string); ok {
-		result.Method = v
-	}
-	if v, ok := cfg["headers"].(map[string]any); ok {
-		result.Headers = make(map[string]string)
-		for k, val := range v {
-			if vs, ok := val.(string); ok {
-				result.Headers[k] = vs
-			}
-		}
-	}
-	if v, ok := cfg["body"].(string); ok {
-		result.Body = v
-	}
-
-	// Auth
-	if authCfg, ok := cfg["auth"].(map[string]any); ok {
-		result.Auth = &config.AuthConfig{}
-		if v, ok := authCfg["type"].(string); ok {
-			result.Auth.Type = v
-		}
-		if v, ok := authCfg["username"].(string); ok {
-			result.Auth.Username = v
-		}
-		if v, ok := authCfg["password"].(string); ok {
-			result.Auth.Password = v
-		}
-		if v, ok := authCfg["token"].(string); ok {
-			result.Auth.Token = v
-		}
-		if v, ok := authCfg["client_id"].(string); ok {
-			result.Auth.ClientID = v
-		}
-		if v, ok := authCfg["client_secret"].(string); ok {
-			result.Auth.ClientSecret = v
-		}
-		if v, ok := authCfg["token_url"].(string); ok {
-			result.Auth.TokenURL = v
-		}
-	}
-
-	// Kafka
-	if v, ok := cfg["brokers"].([]any); ok {
-		for _, b := range v {
-			if bs, ok := b.(string); ok {
-				result.Brokers = append(result.Brokers, bs)
-			}
-		}
-	}
-	if v, ok := cfg["topics"].([]any); ok {
-		for _, t := range v {
-			if ts, ok := t.(string); ok {
-				result.Topics = append(result.Topics, ts)
-			}
-		}
-	}
-	if v, ok := cfg["group_id"].(string); ok {
-		result.GroupID = v
-	}
-	if v, ok := cfg["start_offset"].(string); ok {
-		result.StartOffset = v
-	}
-	if v, ok := cfg["min_bytes"].(float64); ok {
-		result.MinBytes = int(v)
-	}
-	if v, ok := cfg["max_bytes"].(float64); ok {
-		result.MaxBytes = int(v)
-	}
-	if v, ok := cfg["max_wait"].(float64); ok {
-		result.MaxWait = int(v)
-	}
-	if v, ok := cfg["commit_interval"].(float64); ok {
-		result.CommitInterval = int(v)
-	}
-
-	// SQL Event Table
-	if v, ok := cfg["table"].(string); ok {
-		result.Table = v
-	}
-	if v, ok := cfg["id_column"].(string); ok {
-		result.IDColumn = v
-	}
-	if v, ok := cfg["timestamp_column"].(string); ok {
-		result.TimestampColumn = v
-	}
-	if v, ok := cfg["columns"].([]any); ok {
-		for _, c := range v {
-			if cs, ok := c.(string); ok {
-				result.Columns = append(result.Columns, cs)
-			}
-		}
-	}
-	if v, ok := cfg["where"].(string); ok {
-		result.Where = v
-	}
-	if v, ok := cfg["order_by"].(string); ok {
-		result.OrderBy = v
-	}
-	if v, ok := cfg["batch_size"].(float64); ok {
-		result.BatchSize = int(v)
-	}
-	if v, ok := cfg["poll_interval"].(float64); ok {
-		result.PollInterval = int(v)
-	}
-
-	// Pagination
-	if paginationCfg, ok := cfg["pagination"].(map[string]any); ok {
-		result.Pagination = &config.PaginationConfig{}
-		if v, ok := paginationCfg["type"].(string); ok {
-			result.Pagination.Type = v
-		}
-		if v, ok := paginationCfg["page_param"].(string); ok {
-			result.Pagination.PageParam = v
-		}
-		if v, ok := paginationCfg["param_name"].(string); ok {
-			result.Pagination.ParamName = v
-		}
-		if v, ok := paginationCfg["per_page_param"].(string); ok {
-			result.Pagination.PerPageParam = v
-		}
-		if v, ok := paginationCfg["start_page"].(float64); ok {
-			result.Pagination.StartPage = int(v)
-		}
-		if v, ok := paginationCfg["start_value"].(float64); ok {
-			result.Pagination.StartValue = int(v)
-		}
-		if v, ok := paginationCfg["per_page"].(float64); ok {
-			result.Pagination.PerPage = int(v)
-		}
-		if v, ok := paginationCfg["max_pages"].(float64); ok {
-			result.Pagination.MaxPages = int(v)
-		}
-		if v, ok := paginationCfg["data_field"].(string); ok {
-			result.Pagination.DataField = v
-		}
-		if v, ok := paginationCfg["next_field"].(string); ok {
-			result.Pagination.NextField = v
-		}
-		if v, ok := paginationCfg["total_field"].(string); ok {
-			result.Pagination.TotalField = v
-		}
-		if v, ok := paginationCfg["offset_param"].(string); ok {
-			result.Pagination.OffsetParam = v
-		}
-		if v, ok := paginationCfg["offset_path"].(string); ok {
-			result.Pagination.OffsetPath = v
-		}
-		if v, ok := paginationCfg["url_path"].(string); ok {
-			result.Pagination.URLPath = v
-		}
-	}
-
-	// CDC
-	if v, ok := cfg["host"].(string); ok {
-		result.Host = v
-	}
-	if v, ok := cfg["port"].(float64); ok {
-		result.Port = int(v)
-	}
-	if v, ok := cfg["username"].(string); ok {
-		result.Username = v
-	}
-	if v, ok := cfg["password"].(string); ok {
-		result.Password = v
-	}
-	if v, ok := cfg["database"].(string); ok {
-		result.Database = v
-	}
-	if v, ok := cfg["tables"].([]any); ok {
-		for _, t := range v {
-			if ts, ok := t.(string); ok {
-				result.Tables = append(result.Tables, ts)
-			}
-		}
-	}
-	if v, ok := cfg["server_id"].(float64); ok {
-		result.ServerID = uint32(v)
-	}
-	if v, ok := cfg["slot_name"].(string); ok {
-		result.SlotName = v
-	}
-
-	// Kubernetes Logs
-	if v, ok := cfg["namespace"].(string); ok {
-		result.K8sNamespace = v
-	}
-	if v, ok := cfg["pod_selector"].(string); ok {
-		result.K8sPodSelector = v
-	}
-	if v, ok := cfg["pod_names"].([]any); ok {
-		for _, p := range v {
-			if ps, ok := p.(string); ok {
-				result.K8sPodNames = append(result.K8sPodNames, ps)
-			}
-		}
-	}
-	if v, ok := cfg["container_name"].(string); ok {
-		result.K8sContainerName = v
-	}
-	if v, ok := cfg["follow"].(bool); ok {
-		result.K8sFollow = v
-	}
-	if v, ok := cfg["since_seconds"].(float64); ok {
-		result.K8sSinceSeconds = int64(v)
-	}
-	if v, ok := cfg["tail_lines"].(float64); ok {
-		result.K8sTailLines = int64(v)
-	}
-	if v, ok := cfg["kubeconfig"].(string); ok {
-		result.K8sKubeconfig = v
-	}
-	if v, ok := cfg["context"].(string); ok {
-		result.K8sContext = v
-	}
-	if v, ok := cfg["log_format"].(string); ok {
-		result.K8sLogFormat = v
-	}
-	if v, ok := cfg["log_pattern"].(string); ok {
-		result.K8sLogPattern = v
-	}
-
-	// Rate Limit
-	if rateLimitCfg, ok := cfg["rate_limit"].(map[string]any); ok {
-		result.RateLimit = &config.RateLimitSourceConfig{}
-		if v, ok := rateLimitCfg["enabled"].(bool); ok {
-			result.RateLimit.Enabled = v
-		}
-		if v, ok := rateLimitCfg["rate"].(float64); ok {
-			result.RateLimit.Rate = int(v)
-		}
-		if v, ok := rateLimitCfg["interval"].(string); ok {
-			result.RateLimit.Interval = v
-		}
-		if v, ok := rateLimitCfg["burst"].(float64); ok {
-			result.RateLimit.Burst = int(v)
-		}
-		if v, ok := rateLimitCfg["strategy"].(string); ok {
-			result.RateLimit.Strategy = v
 		}
 	}
 

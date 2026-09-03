@@ -1427,146 +1427,78 @@ func (e *GroupExecutor) sendToSink(ctx context.Context, data map[string]any, s o
 }
 
 // createSinkFromStage Stage에서 Sink 생성
+// 설정 매핑은 yaml 태그 기반 자동 디코드(decodeConfig) — OutputConfig 에 필드가
+// 추가되면 여기 수정 없이 반영된다. 구조체에 없는 executor 편의 키(upsert,
+// connection_string, flush_interval)만 아래에서 별도 처리한다.
 func (e *GroupExecutor) createSinkFromStage(stage types.Stage) (output.Output, error) {
-	cfg := config.OutputConfig{
-		Type: stage.Type,
-	}
+	cfg := config.OutputConfig{}
+	var flushInterval time.Duration // BatchingWrapper 전용 (OutputConfig 에 없음)
 
-	// Config에서 필드 매핑
 	if stage.Config != nil {
-		// connection_string이 있으면 파싱하여 driver/dsn 설정
+		if err := decodeConfig(stage.Config, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to decode sink config: %w", err)
+		}
+
+		// connection_string → driver/dsn 파싱 (명시적 driver/dsn 이 우선)
 		if connStr, ok := stage.Config["connection_string"].(string); ok && connStr != "" {
 			connStr = os.ExpandEnv(connStr)
 			driver, dsn, err := parseConnectionString(connStr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse connection_string: %w", err)
 			}
-			cfg.Driver = driver
-			cfg.DSN = dsn
+			if cfg.Driver == "" {
+				cfg.Driver = driver
+			}
+			if cfg.DSN == "" {
+				cfg.DSN = dsn
+			}
 		}
 
-		// 명시적 driver/dsn이 있으면 덮어쓰기 (우선순위 높음)
-		if driver, ok := stage.Config["driver"].(string); ok {
-			cfg.Driver = driver
-		}
-		if dsn, ok := stage.Config["dsn"].(string); ok {
-			// 환경변수 확장 (${VAR} 형식)
-			cfg.DSN = os.ExpandEnv(dsn)
-		}
-		if table, ok := stage.Config["table"].(string); ok {
-			cfg.Table = table
-		}
-		if batchSize, ok := stage.Config["batch_size"].(float64); ok {
-			cfg.BatchSize = int(batchSize)
-		}
-		if onConflict, ok := stage.Config["on_conflict"].(string); ok {
-			cfg.OnConflict = onConflict
-		}
-		// upsert가 true이면 on_conflict를 "update"로 설정
+		// 환경변수 확장 (${VAR} 형식)
+		cfg.DSN = os.ExpandEnv(cfg.DSN)
+		cfg.URL = os.ExpandEnv(cfg.URL)
+
+		// upsert 는 on_conflict=update 의 편의 표기
 		if upsert, ok := stage.Config["upsert"].(bool); ok && upsert {
 			cfg.OnConflict = "update"
 		}
-		// conflict_columns 처리
-		if conflictCols, ok := stage.Config["conflict_columns"].([]any); ok {
-			for _, col := range conflictCols {
-				if colStr, ok := col.(string); ok {
-					cfg.ConflictColumns = append(cfg.ConflictColumns, colStr)
-				}
-			}
-		}
-		if columnMap, ok := stage.Config["column_map"].(map[string]any); ok {
-			cfg.ColumnMap = make(map[string]string)
-			for k, v := range columnMap {
-				if str, ok := v.(string); ok {
-					cfg.ColumnMap[k] = str
-				}
-			}
-		}
-		// create_table SQL 처리
-		if createTable, ok := stage.Config["create_table"].(string); ok {
-			cfg.CreateTable = createTable
-		}
-
-		// REST API Sink 필드 매핑
-		if url, ok := stage.Config["url"].(string); ok {
-			cfg.URL = os.ExpandEnv(url)
-		}
-		if method, ok := stage.Config["method"].(string); ok {
-			cfg.Method = method
-		}
-		if headers, ok := stage.Config["headers"].(map[string]any); ok {
-			cfg.Headers = make(map[string]string)
-			for k, v := range headers {
-				if str, ok := v.(string); ok {
-					cfg.Headers[k] = str
-				}
-			}
-		}
-		if timeout, ok := stage.Config["timeout"].(string); ok {
-			cfg.Timeout = timeout
-		}
-		if retryCount, ok := stage.Config["retry_count"].(float64); ok {
-			cfg.RetryCount = int(retryCount)
-		}
-		if retryDelay, ok := stage.Config["retry_delay"].(string); ok {
-			cfg.RetryDelay = retryDelay
-		}
-		if successCodes, ok := stage.Config["success_codes"].([]any); ok {
-			for _, code := range successCodes {
-				if codeFloat, ok := code.(float64); ok {
-					cfg.SuccessCodes = append(cfg.SuccessCodes, int(codeFloat))
-				}
-			}
-		}
-
-		// 배치 설정
-		if batchEnabled, ok := stage.Config["batch_enabled"].(bool); ok {
-			cfg.BatchEnabled = batchEnabled
-		}
-		if batchSizeHTTP, ok := stage.Config["batch_size_http"].(float64); ok {
-			cfg.BatchSizeHTTP = int(batchSizeHTTP)
-		}
-		if batchDelimiter, ok := stage.Config["batch_delimiter"].(string); ok {
-			cfg.BatchDelimiter = batchDelimiter
-		}
-		// flush_interval은 BatchingWrapper에서 사용
-		var flushInterval time.Duration
 		if flushIntervalStr, ok := stage.Config["flush_interval"].(string); ok {
 			if parsed, err := time.ParseDuration(flushIntervalStr); err == nil {
 				flushInterval = parsed
 			}
 		}
-
-		// Sink 생성
-		s, err := output.NewOutput(cfg)
-		if err != nil {
-			return nil, err
-		}
-
-		// 배치가 활성화된 경우 BatchingWrapper로 감싸기
-		if cfg.BatchEnabled {
-			batchConfig := output.BatchConfig{
-				Enabled:       true,
-				Size:          cfg.BatchSizeHTTP,
-				FlushInterval: flushInterval,
-				Format:        "ndjson",
-			}
-			if cfg.BatchDelimiter != "\n" && cfg.BatchDelimiter != "" {
-				batchConfig.Format = "array"
-			}
-			if batchConfig.Size <= 0 {
-				batchConfig.Size = 100
-			}
-			if batchConfig.FlushInterval <= 0 {
-				batchConfig.FlushInterval = 5 * time.Second
-			}
-			return output.WrapWithBatching(s, batchConfig), nil
-		}
-
-		return s, nil
 	}
 
-	return output.NewOutput(cfg)
+	// sink 타입의 원천은 stage.Type (Config 의 type 키가 아님)
+	cfg.Type = stage.Type
+
+	// Sink 생성
+	s, err := output.NewOutput(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// 배치가 활성화된 경우 BatchingWrapper로 감싸기
+	if cfg.BatchEnabled {
+		batchConfig := output.BatchConfig{
+			Enabled:       true,
+			Size:          cfg.BatchSizeHTTP,
+			FlushInterval: flushInterval,
+			Format:        "ndjson",
+		}
+		if cfg.BatchDelimiter != "\n" && cfg.BatchDelimiter != "" {
+			batchConfig.Format = "array"
+		}
+		if batchConfig.Size <= 0 {
+			batchConfig.Size = 100
+		}
+		if batchConfig.FlushInterval <= 0 {
+			batchConfig.FlushInterval = 5 * time.Second
+		}
+		return output.WrapWithBatching(s, batchConfig), nil
+	}
+
+	return s, nil
 }
 
 // createSinkFromOutput Output에서 Sink 생성

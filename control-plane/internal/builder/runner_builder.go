@@ -177,12 +177,16 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		return nil, fmt.Errorf("no native plugins found")
 	}
 
-	// 3. 소스 해시 스냅샷 + 결합 해시 계산
+	// 3. 소스 해시 스냅샷 + 결합 해시 계산.
+	// 코어 모듈(pipeline-core/shared/plugin-sdk) 소스 해시도 포함해야 한다 —
+	// 안 하면 플러그인 소스가 그대로일 때 코어 코드가 바뀌어도(예: 새 stage 헬퍼,
+	// config 해소 로직) 옛 바이너리를 재사용해 stale 실행이 된다.
 	pluginHashes := make(map[string]string)
 	for _, p := range plugins {
 		pluginHashes[p.ID] = p.SourceHash
 	}
-	combinedHash := CombinedSourceHash(pluginHashes)
+	coreHash := rb.coreSourceHash()
+	combinedHash := CombinedSourceHash(pluginHashes, coreHash)
 
 	// 4. 동일 해시 ready 버전이 있으면 빌드 스킵 + DeployedHash만 갱신
 	var existing models.RunnerVersion
@@ -552,7 +556,9 @@ func gzipBytes(data []byte) ([]byte, error) {
 
 // CombinedSourceHash 모든 native plugin의 SourceHash를 결합하여 단일 해시 생성
 // 정렬된 plugin ID 순서로 해시를 결합하여 결정적(deterministic) 결과 보장
-func CombinedSourceHash(pluginHashes map[string]string) string {
+// CombinedSourceHash 플러그인 소스 해시들 + 코어 모듈 해시를 하나로 결합한다.
+// coreHash 는 pipeline-core/shared/plugin-sdk 소스 스냅샷 해시(빈 문자열 허용 — 하위호환).
+func CombinedSourceHash(pluginHashes map[string]string, coreHash string) string {
 	ids := make([]string, 0, len(pluginHashes))
 	for id := range pluginHashes {
 		ids = append(ids, id)
@@ -562,6 +568,45 @@ func CombinedSourceHash(pluginHashes map[string]string) string {
 	h := sha256.New()
 	for _, id := range ids {
 		_, _ = fmt.Fprintf(h, "%s:%s\n", id, pluginHashes[id])
+	}
+	if coreHash != "" {
+		_, _ = fmt.Fprintf(h, "core:%s\n", coreHash)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// coreSourceHash pipeline-core/shared/plugin-sdk 의 .go 소스 내용을 해시한다.
+// 코어 코드가 바뀌면(플러그인 소스는 그대로여도) combinedHash 가 달라져 재빌드된다.
+// 실패 시 빈 문자열(해시 미포함) — 재사용 스킵 판정이 관대해질 뿐 안전에는 무해.
+func (rb *RunnerBuilder) coreSourceHash() string {
+	h := sha256.New()
+	for _, mod := range []string{"pipeline-core", "shared", "plugin-sdk"} {
+		root := filepath.Join(rb.config.SourceRoot, mod)
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" || d.Name() == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, _ := filepath.Rel(rb.config.SourceRoot, path)
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return rerr
+			}
+			_, _ = fmt.Fprintf(h, "%s:%x\n", rel, sha256.Sum256(data))
+			return nil
+		})
+		if err != nil {
+			rb.logger.Warn("core source hash walk failed — 코어 변경 감지 없이 진행", "module", mod, "error", err)
+			return ""
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

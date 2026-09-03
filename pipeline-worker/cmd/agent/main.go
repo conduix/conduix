@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -101,6 +102,10 @@ func runAgentMode() {
 		// batch 위임 시 이 worker가 자기 cluster에 만들 K8s Job 설정
 		Namespace:   os.Getenv("NAMESPACE"),
 		RunnerImage: os.Getenv("RUNNER_IMAGE"), // pipeline-batch-job 이미지
+		// 실행 파드에 envFrom 으로 붙일 Secret/ConfigMap(콤마 구분). 파이프라인 config 의
+		// ${VAR}(DB 비밀번호·API 키 등)를 batch Job 안에서 해소하려면 여기에 지정한다.
+		RunnerEnvFromSecrets:    splitCSV(os.Getenv("RUNNER_ENV_FROM_SECRETS")),
+		RunnerEnvFromConfigMaps: splitCSV(os.Getenv("RUNNER_ENV_FROM_CONFIGMAPS")),
 	}
 
 	// reconcile 백스톱 주기(선택). 미지정 시 in-code 기본값(60s). pub/sub 유실 복구 지연 튜닝용.
@@ -152,4 +157,19 @@ func runAgentMode() {
 	}
 
 	slog.Info("agent stopped")
+}
+
+// splitCSV 콤마 구분 문자열을 트림된 비어있지 않은 항목 슬라이스로 변환한다.
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

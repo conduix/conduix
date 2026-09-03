@@ -37,15 +37,52 @@ type JobManager struct {
 	client          *Client
 	controlPlaneURL string
 	runnerImage     string
+	// runnerEnvFrom: batch Job/streaming pod 에 envFrom 으로 주입할 Secret/ConfigMap 이름 목록.
+	// 파이프라인 config 의 ${VAR}(예: DB 비밀번호, API 키)를 실행 파드에서 해소하려면 그 값이
+	// 파드 env 로 존재해야 한다 — Job 은 CP/agent 와 별개 파드라 자동 상속되지 않으므로 명시 주입.
+	// 비면(기본) envFrom 없음 → 평문 config 만 동작(기존 동작 보존).
+	runnerEnvFrom []corev1.EnvFromSource
 }
 
-// NewJobManager JobManager 생성
-func NewJobManager(client *Client, controlPlaneURL, runnerImage string) *JobManager {
+// NewJobManager JobManager 생성.
+// envFromSecrets/envFromConfigMaps: 실행 파드에 envFrom 으로 붙일 Secret/ConfigMap 이름들(빈 슬라이스 허용).
+func NewJobManager(client *Client, controlPlaneURL, runnerImage string, envFromSecrets, envFromConfigMaps []string) *JobManager {
 	return &JobManager{
 		client:          client,
 		controlPlaneURL: controlPlaneURL,
 		runnerImage:     runnerImage,
+		runnerEnvFrom:   buildEnvFromSources(envFromSecrets, envFromConfigMaps),
 	}
+}
+
+// buildEnvFromSources Secret/ConfigMap 이름 목록을 EnvFromSource 로 변환한다.
+// optional=true: 목록에 있으나 클러스터에 없는 소스 때문에 파드가 기동 실패하지 않도록.
+func buildEnvFromSources(secrets, configMaps []string) []corev1.EnvFromSource {
+	sources := make([]corev1.EnvFromSource, 0, len(secrets)+len(configMaps))
+	optional := true
+	for _, name := range secrets {
+		if name == "" {
+			continue
+		}
+		sources = append(sources, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: name},
+				Optional:             &optional,
+			},
+		})
+	}
+	for _, name := range configMaps {
+		if name == "" {
+			continue
+		}
+		sources = append(sources, corev1.EnvFromSource{
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: name},
+				Optional:             &optional,
+			},
+		})
+	}
+	return sources
 }
 
 // JobSpec 배치 Job 생성용 파라미터
@@ -153,6 +190,7 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 							Image:           image,
 							ImagePullPolicy: pullPolicy,
 							Env:             envVars,
+							EnvFrom:         m.runnerEnvFrom,
 							Resources:       resources,
 						},
 					},
@@ -259,6 +297,7 @@ func (m *JobManager) CreateCronJob(ctx context.Context, spec *CronJobSpec) (*bat
 									Name:      "pipeline-batch-job",
 									Image:     image,
 									Env:       envVars,
+									EnvFrom:   m.runnerEnvFrom,
 									Resources: resources,
 								},
 							},
@@ -304,9 +343,11 @@ func (m *JobManager) DeleteJob(ctx context.Context, namespace, name string) erro
 // URL 은 versionID 로만 달라지므로 rolling 시 이 명령만 교체하면 새 바이너리로 재기동된다.
 func (m *JobManager) fetchRunnerCommand(runnerVersionID, binMount string) []string {
 	binURL := fmt.Sprintf("%s/api/v1/internal/runner/versions/%s/binary", m.controlPlaneURL, runnerVersionID)
-	return []string{"sh", "-c",
+	return []string{
+		"sh", "-c",
 		fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s/pipeline-batch-job && chmod +x %s/pipeline-batch-job",
-			binURL, binMount, binMount)}
+			binURL, binMount, binMount),
+	}
 }
 
 // injectRunnerBinary native stage compile-in 바이너리 주입(batch Job·streaming Deployment 공통).
@@ -435,6 +476,7 @@ func (m *JobManager) CreateStreamingDeployment(ctx context.Context, spec *Stream
 							Image:           image,
 							ImagePullPolicy: pullPolicy,
 							Env:             envVars,
+							EnvFrom:         m.runnerEnvFrom,
 							Resources:       buildResourceRequirements(cfg),
 							// health/command REST(:8082). agent 가 이 포트로 stop/pause/resume 를 보낸다(W4).
 							Ports: []corev1.ContainerPort{{Name: "health", ContainerPort: streamingHealthPort}},

@@ -57,6 +57,16 @@ spec:
             - name: AGENT_PREFERRED_BACKOFF_MS
               value: {{ .Values.agent.preferredBackoffMs | quote }}
             {{- end }}
+            {{- if .Values.agent.runnerEnvFromSecrets }}
+            # batch Job/streaming pod 에 envFrom 으로 붙일 Secret 이름들(콤마 구분).
+            # 파이프라인 config 의 ${VAR}(API 키·DB 비밀번호)를 실행 파드에서 해소하는 값 공급원.
+            - name: RUNNER_ENV_FROM_SECRETS
+              value: {{ join "," .Values.agent.runnerEnvFromSecrets | quote }}
+            {{- end }}
+            {{- if .Values.agent.runnerEnvFromConfigMaps }}
+            - name: RUNNER_ENV_FROM_CONFIGMAPS
+              value: {{ join "," .Values.agent.runnerEnvFromConfigMaps | quote }}
+            {{- end }}
           envFrom:
             # ConfigMap에서 환경변수 주입
             - configMapRef:

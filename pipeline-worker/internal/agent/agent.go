@@ -91,6 +91,10 @@ type Config struct {
 	// batch 위임 시 생성할 K8s Job 설정
 	Namespace   string `json:"namespace"`    // Job 생성 네임스페이스 (비면 in-cluster 기본)
 	RunnerImage string `json:"runner_image"` // 배치 실행용 pipeline-batch-job 이미지
+	// 실행 파드(batch Job/streaming pod)에 envFrom 으로 붙일 Secret/ConfigMap 이름들.
+	// 파이프라인 config 의 ${VAR} 해소용 값을 실행 파드에 공급한다(비면 평문 config 만 동작).
+	RunnerEnvFromSecrets    []string `json:"runner_env_from_secrets"`
+	RunnerEnvFromConfigMaps []string `json:"runner_env_from_configmaps"`
 }
 
 // defaultExecutionTimeout 워크플로우 실행 기본 타임아웃.
@@ -1089,7 +1093,8 @@ func (a *Agent) getJobManager() *k8s.JobManager {
 		slog.Warn("K8s client unavailable, batch delegation disabled", "error", err, "agent_id", a.ID)
 		return nil
 	}
-	a.jobManager = k8s.NewJobManager(client, a.controlPlaneURL, a.config.RunnerImage)
+	a.jobManager = k8s.NewJobManager(client, a.controlPlaneURL, a.config.RunnerImage,
+		a.config.RunnerEnvFromSecrets, a.config.RunnerEnvFromConfigMaps)
 	return a.jobManager
 }
 

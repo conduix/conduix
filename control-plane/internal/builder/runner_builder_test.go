@@ -65,8 +65,8 @@ func TestCombinedSourceHash_Deterministic(t *testing.T) {
 		"plugin-c": "hash-ccc",
 	}
 
-	hash1 := CombinedSourceHash(hashes)
-	hash2 := CombinedSourceHash(hashes)
+	hash1 := CombinedSourceHash(hashes, "")
+	hash2 := CombinedSourceHash(hashes, "")
 
 	if hash1 != hash2 {
 		t.Errorf("CombinedSourceHash is not deterministic: %s != %s", hash1, hash2)
@@ -81,7 +81,7 @@ func TestCombinedSourceHash_OrderIndependent(t *testing.T) {
 	h1 := map[string]string{"a": "1", "b": "2"}
 	h2 := map[string]string{"b": "2", "a": "1"}
 
-	if CombinedSourceHash(h1) != CombinedSourceHash(h2) {
+	if CombinedSourceHash(h1, "") != CombinedSourceHash(h2, "") {
 		t.Error("CombinedSourceHash should be order-independent")
 	}
 }
@@ -90,7 +90,7 @@ func TestCombinedSourceHash_DifferentHashes(t *testing.T) {
 	h1 := map[string]string{"a": "1"}
 	h2 := map[string]string{"a": "2"}
 
-	if CombinedSourceHash(h1) == CombinedSourceHash(h2) {
+	if CombinedSourceHash(h1, "") == CombinedSourceHash(h2, "") {
 		t.Error("different source hashes should produce different combined hashes")
 	}
 }
@@ -245,4 +245,23 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// coreHash 가 다르면 결합 해시도 달라져야 한다 — 코어 코드 변경 시 재빌드 트리거.
+func TestCombinedSourceHash_CoreHashChangesResult(t *testing.T) {
+	plugins := map[string]string{"p1": "abc"}
+	base := CombinedSourceHash(plugins, "core-v1")
+	same := CombinedSourceHash(plugins, "core-v1")
+	diff := CombinedSourceHash(plugins, "core-v2")
+	noCore := CombinedSourceHash(plugins, "")
+
+	if base != same {
+		t.Error("same inputs must produce same hash")
+	}
+	if base == diff {
+		t.Error("different core hash must change combined hash")
+	}
+	if base == noCore {
+		t.Error("presence of core hash must change combined hash")
+	}
 }

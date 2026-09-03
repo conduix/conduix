@@ -1360,9 +1360,11 @@ func (e *GroupExecutor) getOrCreateStreamStage(stage types.Stage) (stream.Stage,
 	}
 
 	s, err := stream.NewStage(stream.StageConfig{
-		Name:   stage.Name,
-		Type:   stage.Type,
-		Config: stage.Config,
+		Name: stage.Name,
+		Type: stage.Type,
+		// config 의 ${VAR} 를 실행 파드 env 로 해소한다. built-in sink(createSinkFromStage)는
+		// DSN/URL 에만 하던 것을 stage config 전체로 확장 — 이 경로가 유일하게 누락돼 있었다.
+		Config: config.ExpandEnvInConfig(stage.Config),
 	})
 	if err != nil {
 		return nil, err

@@ -18,7 +18,7 @@ import (
 func newTestJobManager() (*JobManager, *fake.Clientset) {
 	fakeClient := fake.NewClientset()
 	client := NewClientWithInterface(fakeClient, "conduix")
-	jm := NewJobManager(client, "http://localhost:8080", "conduix/runner:latest")
+	jm := NewJobManager(client, "http://localhost:8080", "conduix/runner:latest", nil, nil)
 	return jm, fakeClient
 }
 
@@ -136,7 +136,7 @@ func TestCreateBatchJobWithCustomImage(t *testing.T) {
 func TestCreateBatchJobNoImage(t *testing.T) {
 	fakeClient := fake.NewClientset()
 	client := NewClientWithInterface(fakeClient, "conduix")
-	jm := NewJobManager(client, "http://localhost:8080", "") // 이미지 없음
+	jm := NewJobManager(client, "http://localhost:8080", "", nil, nil) // 이미지 없음
 
 	spec := &JobSpec{
 		ExecutionID:     "exec-003",
@@ -529,4 +529,50 @@ func envToMap(envs []corev1.EnvVar) map[string]string {
 		m[e.Name] = e.Value
 	}
 	return m
+}
+
+// envFrom 주입: runnerEnvFromSecrets/ConfigMaps 로 지정한 소스가 batch Job 컨테이너에
+// EnvFrom 으로 붙어야 파이프라인 config 의 ${VAR} 를 실행 파드에서 해소할 수 있다.
+func TestCreateBatchJob_EnvFromInjection(t *testing.T) {
+	fakeClient := fake.NewClientset()
+	client := NewClientWithInterface(fakeClient, "conduix")
+	jm := NewJobManager(client, "http://cp:8080", "runner:latest",
+		[]string{"pipeline-secrets", ""}, []string{"pipeline-config"}) // 빈 이름은 무시돼야 함
+
+	job, err := jm.CreateBatchJob(context.Background(), &JobSpec{
+		ExecutionID: "e1", WorkflowID: "w1",
+		PipelinesConfig: `[{"id":"p1"}]`, JobConfig: types.DefaultJobConfig(),
+	})
+	if err != nil {
+		t.Fatalf("CreateBatchJob: %v", err)
+	}
+
+	envFrom := job.Spec.Template.Spec.Containers[0].EnvFrom
+	if len(envFrom) != 2 {
+		t.Fatalf("expected 2 envFrom sources (empty name skipped), got %d", len(envFrom))
+	}
+	if envFrom[0].SecretRef == nil || envFrom[0].SecretRef.Name != "pipeline-secrets" {
+		t.Errorf("expected secret ref pipeline-secrets, got %+v", envFrom[0])
+	}
+	if envFrom[0].SecretRef.Optional == nil || !*envFrom[0].SecretRef.Optional {
+		t.Errorf("secret ref should be optional (missing source must not block pod start)")
+	}
+	if envFrom[1].ConfigMapRef == nil || envFrom[1].ConfigMapRef.Name != "pipeline-config" {
+		t.Errorf("expected configmap ref pipeline-config, got %+v", envFrom[1])
+	}
+}
+
+// 소스 미지정(nil) 시 envFrom 이 비어야 한다 — 기존 동작 보존.
+func TestCreateBatchJob_NoEnvFromByDefault(t *testing.T) {
+	jm, _ := newTestJobManager()
+	job, err := jm.CreateBatchJob(context.Background(), &JobSpec{
+		ExecutionID: "e1", WorkflowID: "w1",
+		PipelinesConfig: `[{"id":"p1"}]`, JobConfig: types.DefaultJobConfig(),
+	})
+	if err != nil {
+		t.Fatalf("CreateBatchJob: %v", err)
+	}
+	if len(job.Spec.Template.Spec.Containers[0].EnvFrom) != 0 {
+		t.Errorf("expected no envFrom by default")
+	}
 }

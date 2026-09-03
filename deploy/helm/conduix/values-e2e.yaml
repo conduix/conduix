@@ -50,10 +50,14 @@ controlPlane:
   resources:
     limits:
       cpu: "2"
-      memory: 2Gi
+      memory: 4Gi
     requests:
       cpu: 200m
       memory: 256Mi
+  # 단일 노드에서 surge 롤링은 "구 pod 가 CPU requests 를 쥔 채 새 pod Pending" 데드락을
+  # 만든다 (노드 requests 92% 실측). 로컬 e2e 는 무중단이 필요 없으므로 Recreate.
+  strategy:
+    type: Recreate
 
 agent:
   replicaCount: 1
@@ -88,6 +92,8 @@ env:
   DB_USER: "root"
   DB_NAME: "conduix"
   AUTO_MIGRATE: "true"
+  # 첫 native plugin 빌드는 모듈 전체 다운로드(콜드 캐시)로 5분을 넘긴다
+  CONDUIX_BUILD_TIMEOUT: "20m"
   FRONTEND_URL: "http://localhost:30000"
   MAX_DATATYPE_DEPTH: "5"
   CONDUIX_ADMIN_EMAILS: "admin@example.com"

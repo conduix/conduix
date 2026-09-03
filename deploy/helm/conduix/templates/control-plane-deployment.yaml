@@ -8,6 +8,12 @@ metadata:
 spec:
   replicas: {{ .Values.controlPlane.replicaCount }}
   revisionHistoryLimit: 3
+  {{- with .Values.controlPlane.strategy }}
+  # 단일 노드(로컬 e2e)에서는 surge 롤링이 CPU requests 부족으로 데드락을 만들 수 있어
+  # Recreate 로 전환 가능하게 한다 (values-e2e.yaml 참조)
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "conduix.selectorLabels" . | nindent 6 }}

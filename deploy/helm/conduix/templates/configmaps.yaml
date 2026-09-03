@@ -46,6 +46,11 @@ data:
   CONDUIX_OPERATOR_EMAILS: "{{ .Values.env.CONDUIX_OPERATOR_EMAILS }}"
   {{- end }}
 
+  # Native plugin 빌드 타임아웃 (콜드 캐시 첫 빌드는 5분을 넘길 수 있음)
+  {{- if .Values.env.CONDUIX_BUILD_TIMEOUT }}
+  CONDUIX_BUILD_TIMEOUT: "{{ .Values.env.CONDUIX_BUILD_TIMEOUT }}"
+  {{- end }}
+
   # OAuth2 Settings
   {{- if .Values.env.OAUTH_REDIRECT_URL }}
   OAUTH_REDIRECT_URL: "{{ .Values.env.OAUTH_REDIRECT_URL }}"

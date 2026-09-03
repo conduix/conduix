@@ -1,5 +1,5 @@
 # Build stage
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
 ARG TARGETOS TARGETARCH
 
@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Runtime stage — golang 이미지 사용 (go build + gopls 필요)
 # TestNativePlugin에서 서버 사이드 go build 수행
 # gopls LSP 서버로 자동완성 제공
-FROM golang:1.26-alpine
+FROM golang:1.27-alpine
 
 RUN apk --no-cache add ca-certificates tzdata git
 

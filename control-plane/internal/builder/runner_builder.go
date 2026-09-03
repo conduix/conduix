@@ -588,7 +588,7 @@ func (rb *RunnerBuilder) activeAllowedModules() ([]models.AllowedModule, error) 
 // 사용자 자유입력(p.GoMod)을 쓰지 않으므로 stage 마다 버전이 갈릴 수 없다.
 func generatePluginGoMod(name string, allowed []models.AllowedModule) string {
 	var buf strings.Builder
-	fmt.Fprintf(&buf, "module github.com/conduix/plugins/%s\n\ngo 1.26\n", name)
+	fmt.Fprintf(&buf, "module github.com/conduix/plugins/%s\n\ngo 1.27\n", name)
 	buf.WriteString("\nrequire github.com/conduix/conduix/plugin-sdk v0.0.0\n")
 	if len(allowed) > 0 {
 		buf.WriteString("\nrequire (\n")

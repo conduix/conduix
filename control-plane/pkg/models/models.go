@@ -547,7 +547,7 @@ type InputCheckpoint struct {
 	WorkflowID   string    `gorm:"size:36;not null;index:idx_checkpoint_workflow" json:"workflow_id"`
 	PipelineID   string    `gorm:"size:36;not null;index:idx_checkpoint_pipeline" json:"pipeline_id"`
 	PipelineName string    `gorm:"size:255" json:"pipeline_name"`
-	InputType    string    `gorm:"size:50;not null;column:source_type" json:"input_type"`                        // kubernetes, kafka, cdc, sql_event (DB 컬럼명은 하위호환성 유지)
+	InputType    string    `gorm:"size:50;not null;column:source_type" json:"input_type"`                        // kubernetes, kafka, cdc, sql_incremental(구 sql_event) (DB 컬럼명은 하위호환성 유지)
 	PartitionKey string    `gorm:"size:255;not null;index:idx_checkpoint_partition,unique" json:"partition_key"` // ns/pod/container, topic/partition
 	OffsetValue  string    `gorm:"size:255;not null" json:"offset_value"`                                        // timestamp, offset number
 	OffsetType   string    `gorm:"size:50;not null" json:"offset_type"`                                          // timestamp, numeric

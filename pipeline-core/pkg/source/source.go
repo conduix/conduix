@@ -63,7 +63,7 @@ type CheckpointableSource interface {
 	// SetSourceCheckpoints 체크포인트 설정 (재시작 시 복원용)
 	SetSourceCheckpoints(checkpoints []*SourceCheckpoint) error
 
-	// SourceType 소스 타입 반환 (kubernetes, kafka, cdc, sql_event)
+	// SourceType 소스 타입 반환 (kubernetes, kafka, cdc, sql_event(=sql_incremental 구명칭))
 	SourceType() string
 }
 
@@ -105,7 +105,7 @@ func NewSource(cfg config.SourceV2) (Source, error) {
 		return NewPartitionedSQLSource(cfg)
 	case "kafka":
 		return NewKafkaSource(cfg)
-	case "sql_event":
+	case "sql_incremental", "sql_event": // sql_event 는 구명칭 — 저장된 기존 워크플로우 호환용 영구 alias
 		return NewSQLEventSource(cfg)
 	case "cdc":
 		return NewCDCSource(cfg)

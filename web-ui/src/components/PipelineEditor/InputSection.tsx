@@ -39,7 +39,8 @@ import { usePipelineEditor } from './PipelineEditorContext'
 import type { RateLimitConfig } from '../../types/pipeline'
 
 // Input 타입 정의
-type InputType = 'rest_api' | 'kafka' | 'cdc' | 'sql' | 'file' | 'sql_event' | 'kubernetes' | 'partitioned_http' | 'partitioned_sql'
+// sql_event 는 구명칭 alias — 기존 저장 워크플로우 렌더용으로만 유지 (신규 선택 목록엔 sql_incremental 만)
+type InputType = 'rest_api' | 'kafka' | 'cdc' | 'sql' | 'file' | 'sql_incremental' | 'sql_event' | 'kubernetes' | 'partitioned_http' | 'partitioned_sql'
 
 // Input 타입별 설정
 const inputTypeConfig: Record<InputType, { color: string; icon: React.ReactNode; label: string }> = {
@@ -50,14 +51,15 @@ const inputTypeConfig: Record<InputType, { color: string; icon: React.ReactNode;
   cdc: { color: '#9c27b0', icon: <SyncIcon fontSize="small" />, label: 'CDC' },
   sql: { color: '#ff9800', icon: <StorageIcon fontSize="small" />, label: 'SQL' },
   file: { color: '#00bcd4', icon: <InsertDriveFileIcon fontSize="small" />, label: 'File' },
-  sql_event: { color: '#e91e63', icon: <CloudIcon fontSize="small" />, label: 'SQL Event' },
+  sql_incremental: { color: '#e91e63', icon: <CloudIcon fontSize="small" />, label: 'SQL Incremental' },
+  sql_event: { color: '#e91e63', icon: <CloudIcon fontSize="small" />, label: 'SQL Incremental (구 SQL Event)' },
   kubernetes: { color: '#3f51b5', icon: <CloudIcon fontSize="small" />, label: 'Kubernetes Logs' },
 }
 
 // 워크플로우 타입별 사용 가능한 Input 타입
 const inputTypesByWorkflow: Record<'batch' | 'realtime', InputType[]> = {
   batch: ['rest_api', 'partitioned_http', 'partitioned_sql', 'sql', 'file'],
-  realtime: ['rest_api', 'kafka', 'cdc', 'sql_event', 'kubernetes'],
+  realtime: ['rest_api', 'kafka', 'cdc', 'sql_incremental', 'kubernetes'],
 }
 
 export function InputSection() {
@@ -78,6 +80,7 @@ export function InputSection() {
       cdc: { connection_string: '', database: '', table: '', slot_name: '' },
       sql: { connection_string: '', query: '', fetch_size: 1000 },
       file: { path: '', format: 'json', delimiter: '' },
+      sql_incremental: { connection_string: '', query: '', poll_interval: '1m', watermark_column: '' },
       sql_event: { connection_string: '', query: '', poll_interval: '1m', watermark_column: '' },
       kubernetes: { namespace: '', pod_selector: '', container_name: '', follow: true, tail_lines: 100 },
     }
@@ -320,6 +323,7 @@ export function InputSection() {
           </Stack>
         )
 
+      case 'sql_incremental':
       case 'sql_event':
         return (
           <Stack spacing={2}>

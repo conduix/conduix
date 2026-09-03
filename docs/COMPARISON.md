@@ -76,7 +76,7 @@ Input → [공통 Stage] → [Output별 PreStages] → Output(들)
 - **부모-자식 파이프라인**: pipeline link(부모→자식 Kafka 주입) 또는 subpipeline stage(중첩 실행)로 Board→Post→Comment 같은 계층 데이터 수집. (`group_executor` link 라우팅 / `stream/subpipeline_stage.go`)
 
 ### 4.2 커넥터 인벤토리 (실제 구현)
-- **Source 16종**: kafka, sql, partitioned_sql, http/rest_api, partitioned_http, file, sql_event(폴링), cdc(MySQL), mongodb_cdc, kubernetes(pod logs), websocket, mqtt, sse, sqs, rabbitmq, gcp_pubsub, redis_stream
+- **Source 16종**: kafka, sql, partitioned_sql, http/rest_api, partitioned_http, file, sql_incremental(증분 폴링, 구 sql_event), cdc(MySQL), mongodb_cdc, kubernetes(pod logs), websocket, mqtt, sse, sqs, rabbitmq, gcp_pubsub, redis_stream
 - **Sink 9종**: sql(upsert), kafka, elasticsearch, mongodb(upsert), s3, gcs, bigquery, rest_api, stub
 - **Stage 21종 등록**: filter, remap(Bloblang), drop, merge, split, encrypt(aes256/sha256/bcrypt/mask), dedupe, default, cast, timestamp, throttle, sample, route, validate(JSON Schema), contract(Data Contract), base64, js_script + sink 재사용 stage(sql/es/kafka/mongodb)
   - 추가로 구현되어 있으나 아직 GUI 미노출: enrich/lookup, join, windowed aggregate, subpipeline, fanout 등 (§7 참고)

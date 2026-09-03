@@ -69,7 +69,7 @@ func NewSQLEventSource(cfg config.SourceV2) (*SQLEventSource, error) {
 }
 
 func (s *SQLEventSource) Name() string {
-	return "sql_event"
+	return "sql_incremental"
 }
 
 func (s *SQLEventSource) Open(ctx context.Context) error {
@@ -205,7 +205,7 @@ func (s *SQLEventSource) poll(ctx context.Context, records chan<- Record) error 
 		record := Record{
 			Data: data,
 			Metadata: Metadata{
-				Source:    "sql_event",
+				Source:    "sql_incremental",
 				Origin:    s.table,
 				Timestamp: time.Now().UnixMilli(),
 			},
@@ -303,6 +303,8 @@ func (s *SQLEventSource) SetCheckpoint(checkpoint map[string]any) error {
 }
 
 // SourceType 소스 타입 반환 (CheckpointableSource 구현)
+// 주의: "sql_incremental" 로 개명됐지만 이 값은 체크포인트 식별 키로 저장돼 있어
+// 바꾸면 기존 파이프라인이 재시작 시 체크포인트를 못 찾는다 — 구명칭 유지.
 func (s *SQLEventSource) SourceType() string {
 	return "sql_event"
 }

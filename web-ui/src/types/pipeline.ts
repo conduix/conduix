@@ -63,9 +63,9 @@ export type PaginationConfig =
   | PageWithCountConfig
 
 // Input 설정 (데이터 입력 소스)
-// Input 타입: kafka, cdc, rest_api, sql, file, sql_event
+// Input 타입: kafka, cdc, rest_api, sql, file, sql_incremental(구 sql_event)
 export interface WorkflowInput {
-  type: string // kafka, cdc, rest_api, sql, file, sql_event, partitioned_http
+  type: string // kafka, cdc, rest_api, sql, file, sql_incremental(구 sql_event), partitioned_http
   name: string
   config: Record<string, unknown>
   rate_limit?: RateLimitConfig  // 입력 레벨 rate limiting

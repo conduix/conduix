@@ -1171,7 +1171,7 @@ func (e *GroupExecutor) createSource(gs types.GroupedSource) (source.Source, err
 		return createHTTPSourceFromConfig(configWithRateLimit)
 	case "sql":
 		return createSQLSourceFromConfig(configWithRateLimit)
-	case "sql_event":
+	case "sql_incremental", "sql_event": // sql_event 는 구명칭 alias
 		return createSQLEventSourceFromConfig(configWithRateLimit)
 	case "cdc":
 		return createCDCSourceFromConfig(configWithRateLimit)
@@ -1656,7 +1656,7 @@ func createSQLSourceFromConfig(config map[string]any) (source.Source, error) {
 
 func createSQLEventSourceFromConfig(config map[string]any) (source.Source, error) {
 	cfg := configToInputV2(config)
-	cfg.Type = "sql_event"
+	cfg.Type = "sql_incremental"
 	return source.NewSQLEventSource(cfg)
 }
 

@@ -59,7 +59,7 @@ flowchart LR
 
 - 공통 Stage는 모든 Output 공유, PreStages는 Output 전용 변환. bulk(배치 벌크쓰기)/individual(건별) 선택.
 
-- **Input**: kafka, rest_api, sql, sql_event, cdc, file, k8s_logs, mqtt, rabbitmq, sqs, websocket, redis_stream, pubsub 등
+- **Input**: kafka, rest_api, sql, sql_incremental(구 sql_event), cdc, file, k8s_logs, mqtt, rabbitmq, sqs, websocket, redis_stream, pubsub 등
 - **Stage**: filter, remap, cast, timestamp, encrypt, dedupe, validate, throttle, route, aggregate, enrich, js_script(goja) 등 28종
 - **Output**: sql(mysql/postgres), elasticsearch, kafka, mongodb, s3, gcs, bigquery, rest_api
 - **PreStages**: Output별 전용 변환 (bulk/record 양 모드 모두 적용)

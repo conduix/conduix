@@ -183,7 +183,7 @@ pipelines:
 
 **하위 호환성**: `source` 필드도 `input`과 동일하게 동작합니다.
 
-**Input Types** (데이터 소스): kafka, rest_api, sql, cdc, file, k8s_logs
+**Input Types** (데이터 소스): kafka, rest_api, sql, sql_incremental(증분 폴링, 구 sql_event), cdc, file, k8s_logs
 
 **Stage Types** (데이터 변환): filter, remap, drop, merge, split, encrypt, dedupe, default, cast, timestamp, throttle, validate, contract, route, delete
 

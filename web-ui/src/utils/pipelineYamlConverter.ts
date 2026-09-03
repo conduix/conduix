@@ -26,7 +26,7 @@ export interface ValidationResult {
 }
 
 // Input 타입 목록
-const INPUT_TYPES = ['kafka', 'rest_api', 'sql', 'cdc', 'file', 'sql_event', 'kubernetes', 'partitioned_http', 'partitioned_sql'] as const
+const INPUT_TYPES = ['kafka', 'rest_api', 'sql', 'cdc', 'file', 'sql_incremental', 'sql_event', 'kubernetes', 'partitioned_http', 'partitioned_sql'] as const
 type InputType = (typeof INPUT_TYPES)[number]
 
 // Stage 타입 목록

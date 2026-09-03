@@ -147,9 +147,9 @@ type PartitionConfig struct {
 }
 
 // WorkflowInput 워크플로우 내 입력 소스 설정
-// Input 타입: kafka, cdc, rest_api, sql, file, sql_event
+// Input 타입: kafka, cdc, rest_api, sql, file, sql_incremental(구 sql_event)
 type WorkflowInput struct {
-	Type       string            `json:"type"`                  // kafka, cdc, rest_api, sql, file, sql_event, partitioned_http
+	Type       string            `json:"type"`                  // kafka, cdc, rest_api, sql, file, sql_incremental(구 sql_event), partitioned_http
 	Name       string            `json:"name"`                  // 입력 소스 식별자
 	Config     map[string]any    `json:"config"`                // 소스별 설정
 	Partitions []PartitionConfig `json:"partitions,omitempty"`  // 파티션 설정 (병렬 처리용)

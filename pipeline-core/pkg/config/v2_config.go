@@ -52,7 +52,7 @@ type RateLimitInputConfig struct {
 type RateLimitSourceConfig = RateLimitInputConfig
 
 type InputV2 struct {
-	Type string `yaml:"type"` // file, sql, http, kafka, sql_event, cdc
+	Type string `yaml:"type"` // file, sql, http, kafka, sql_incremental(구 sql_event), cdc
 
 	// File
 	Path   string   `yaml:"path,omitempty"`
@@ -801,15 +801,15 @@ func (c *PipelineConfigV2) validateInput() error {
 			c.Input.GroupID = c.Name + "-consumer"
 		}
 
-	case "sql_event":
+	case "sql_incremental", "sql_event": // sql_event 는 구명칭 alias
 		if c.Input.Driver == "" {
-			return fmt.Errorf("sql_event driver is required")
+			return fmt.Errorf("sql_incremental driver is required")
 		}
 		if c.Input.DSN == "" {
-			return fmt.Errorf("sql_event dsn is required")
+			return fmt.Errorf("sql_incremental dsn is required")
 		}
 		if c.Input.Table == "" {
-			return fmt.Errorf("sql_event table is required")
+			return fmt.Errorf("sql_incremental table is required")
 		}
 		if c.Input.IDColumn == "" {
 			c.Input.IDColumn = "id"

@@ -51,3 +51,53 @@ func TestNewRunnerBuilder_ReclaimsStaleBuildingOnStartup(t *testing.T) {
 		t.Errorf("ready version status = %q, want ready (건드리면 안 됨)", ok.Status)
 	}
 }
+
+// build_number(autoIncrement) 회귀: 실패 기록이 전 컬럼 Save 였을 때 build_number 를
+// 0 으로 덮어, 두 번째 실패부터 unique 충돌로 저장 자체가 실패해 building 좀비가 남았다.
+// persistFailure 는 변경 필드만 갱신하므로 연속 실패가 전부 기록되어야 한다.
+func TestPersistFailure_DoesNotClobberBuildNumber(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.RunnerVersion{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	rb := NewRunnerBuilder(db, nil)
+
+	for i, id := range []string{"rv-fail-1", "rv-fail-2"} {
+		v := models.RunnerVersion{ID: id, Status: "building", SourceHash: "h"}
+		if err := db.Create(&v).Error; err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+		v.Status = "failed"
+		v.Error = "go build: signal: killed"
+		if err := rb.persistFailure(&v); err != nil {
+			t.Fatalf("persistFailure %s: %v", id, err)
+		}
+	}
+
+	var got []models.RunnerVersion
+	if err := db.Order("id").Find(&got).Error; err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if len(got) != 2 || got[0].Status != "failed" || got[1].Status != "failed" {
+		t.Fatalf("expected both failed, got %+v", got)
+	}
+	// autoIncrement 로 채워진 build_number 가 보존되어야 한다 (0 덮어쓰기 금지)
+	if got[0].BuildNumber == got[1].BuildNumber {
+		t.Fatalf("build_number clobbered: %d == %d", got[0].BuildNumber, got[1].BuildNumber)
+	}
+}
+
+// CONDUIX_BUILD_TIMEOUT 으로 빌드 타임아웃을 조절할 수 있어야 한다 (콜드 캐시 첫 빌드 대응)
+func TestDefaultRunnerBuilderConfig_BuildTimeoutEnv(t *testing.T) {
+	t.Setenv("CONDUIX_BUILD_TIMEOUT", "20m")
+	if got := DefaultRunnerBuilderConfig().BuildTimeout; got != 20*time.Minute {
+		t.Fatalf("expected 20m, got %v", got)
+	}
+	t.Setenv("CONDUIX_BUILD_TIMEOUT", "invalid")
+	if got := DefaultRunnerBuilderConfig().BuildTimeout; got != 5*time.Minute {
+		t.Fatalf("expected 5m fallback, got %v", got)
+	}
+}

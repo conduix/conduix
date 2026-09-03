@@ -49,8 +49,17 @@ func DefaultRunnerBuilderConfig() *RunnerBuilderConfig {
 	if cacheDir == "" {
 		cacheDir = filepath.Join(os.TempDir(), "conduix-runner-cache")
 	}
+	// 첫 빌드는 모듈 전체 다운로드로 5분을 넘길 수 있다(콜드 캐시).
+	// 타임아웃 kill 은 "go build: signal: killed" 로 나타나 OOM 과 구분이 어려우므로
+	// 환경에 맞게 조절 가능해야 한다.
+	buildTimeout := 5 * time.Minute
+	if v := os.Getenv("CONDUIX_BUILD_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			buildTimeout = d
+		}
+	}
 	return &RunnerBuilderConfig{
-		BuildTimeout: 5 * time.Minute,
+		BuildTimeout: buildTimeout,
 		GoProxy:      "https://proxy.golang.org,direct",
 		ImagePrefix:  "ghcr.io/conduix/pipeline-batch-job",
 		Platform:     "linux/arm64",
@@ -221,7 +230,10 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	if buildErr != nil {
 		version.Status = "failed"
 		version.Error = buildErr.Error()
-		if err := rb.db.Save(&version).Error; err != nil {
+		// Save(전 컬럼) 금지: Create 가 채운 DB의 build_number(autoIncrement)를 Go 구조체는
+		// 모르므로(0) Save 가 0 으로 덮어쓴다 — 두 번째 실패부터 unique(build_number) 중복으로
+		// 저장이 실패해 status 가 building 좀비로 남는다. 변경 필드만 갱신한다.
+		if err := rb.persistFailure(&version); err != nil {
 			rb.logger.Error("failed to persist build failure", "version_id", version.ID, "error", err)
 		}
 		return &RunnerBuildResult{
@@ -240,7 +252,7 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		version.BinarySize = 0
 		version.Status = "failed"
 		version.Error = fmt.Sprintf("build succeeded but binary persist failed: %v", saveErr)
-		if err := rb.db.Save(&version).Error; err != nil {
+		if err := rb.persistFailure(&version); err != nil {
 			rb.logger.Error("failed to persist binary-save failure", "version_id", version.ID, "error", err)
 		}
 		return &RunnerBuildResult{
@@ -501,6 +513,20 @@ func (rb *RunnerBuilder) runCommand(ctx context.Context, dir string, extraEnv []
 
 // persistBinary 는 gzip 바이너리(수십MB longblob)만 별도 UPDATE 로 저장한다.
 // status/메타데이터와 분리해, 큰 write 가 실패해도 상위에서 build 를 failed 로 확정할 수 있게 한다.
+// persistFailure 실패 상태를 변경 필드만으로 기록한다.
+// Save(전 컬럼 UPDATE)는 autoIncrement 인 build_number 를 0 으로 덮어
+// unique 충돌 → 저장 실패 → building 좀비를 만들므로 쓰지 않는다.
+func (rb *RunnerBuilder) persistFailure(version *models.RunnerVersion) error {
+	return rb.db.Model(version).Omit("binary").Updates(map[string]any{
+		"status":      version.Status,
+		"error":       version.Error,
+		"finished_at": version.FinishedAt,
+		"duration_ms": version.DurationMs,
+		"build_log":   version.BuildLog,
+		"binary_size": version.BinarySize,
+	}).Error
+}
+
 func (rb *RunnerBuilder) persistBinary(version *models.RunnerVersion) error {
 	if len(version.Binary) == 0 {
 		return fmt.Errorf("empty binary")

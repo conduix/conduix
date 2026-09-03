@@ -30,6 +30,10 @@ type SchedulerService struct {
 	running         bool
 	refreshInterval time.Duration // stale 실행 감지 주기
 	staleGrace      time.Duration // 실행 시작 후 이 시간 이전은 감지 대상 제외(하트비트 등록 유예)
+	// runnerResolver: native 커스텀 stage 를 쓰는 워크플로우의 실행 바이너리 결정.
+	// StartWorkflow 경로만 resolve 하고 trigger/cron 경로가 누락하면, 커스텀 stage 가
+	// 기본 바이너리에서 조용히 passthrough 되는 버그가 된다 — 발행 지점에서 공통 처리.
+	runnerResolver *RunnerResolver
 }
 
 // SchedulerConfig 스케줄러 설정
@@ -61,6 +65,7 @@ func NewSchedulerService(db *database.DB, redisService *RedisService, cfg *Sched
 		cancel:          cancel,
 		refreshInterval: cfg.RefreshInterval,
 		staleGrace:      2 * time.Minute, // 실행 직후 하트비트 등록 유예
+		runnerResolver:  NewRunnerResolver(db.DB),
 	}
 }
 
@@ -413,6 +418,20 @@ func (s *SchedulerService) publishWorkflowExecution(workflow *models.Workflow, e
 		Pipelines:     pipelines,
 	}
 
+	// native 커스텀 stage 사용 시 실행 바이너리 결정 — 누락하면 기본 바이너리가
+	// stage 를 몰라 조용히 passthrough 된다(데이터가 변환 없이 그대로 적재됨).
+	// 빌드 미완이면 실행을 시작하지 않고 에러로 알린다 (StartWorkflow 의 409 와 동일 정책).
+	runnerVersionID := ""
+	if s.runnerResolver != nil {
+		vid, _, usesNative, rerr := s.runnerResolver.ResolveRunnerVersion(workflow)
+		if rerr != nil {
+			return fmt.Errorf("resolve runner version: %w", rerr)
+		}
+		if usesNative {
+			runnerVersionID = vid
+		}
+	}
+
 	cmd := &types.WorkflowExecutionCommand{
 		ID:              uuid.New().String(),
 		WorkflowID:      workflow.ID,
@@ -421,6 +440,7 @@ func (s *SchedulerService) publishWorkflowExecution(workflow *models.Workflow, e
 		TriggeredBy:     triggeredBy,
 		UserID:          userID,
 		WorkflowConfig:  workflowConfig,
+		RunnerVersionID: runnerVersionID,
 		Timestamp:       time.Now(),
 	}
 

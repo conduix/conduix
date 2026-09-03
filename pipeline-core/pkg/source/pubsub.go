@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub" //nolint:staticcheck // v2 마이그레이션은 별도 작업 (수신 API 전면 변경)
 	"google.golang.org/api/option"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
@@ -96,7 +96,8 @@ func (s *PubSubSource) Open(ctx context.Context) error {
 
 	// 서비스 계정 인증
 	if s.credentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(s.credentialsFile))
+		// deprecated 대체재가 cloud.google.com/go/auth 전면 이전이라 별도 마이그레이션에서 처리
+		opts = append(opts, option.WithCredentialsFile(s.credentialsFile)) //nolint:staticcheck
 	}
 	// 그 외는 기본 자격 증명 사용 (GOOGLE_APPLICATION_CREDENTIALS 환경변수, GCE 메타데이터 등)
 

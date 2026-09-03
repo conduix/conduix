@@ -58,12 +58,13 @@ func NewGCPSecretManagerProvider(cfg *GCPConfig) (*GCPSecretManagerProvider, err
 	var opts []option.ClientOption
 
 	// 인증 설정
+	// deprecated 대체재가 cloud.google.com/go/auth 전면 이전이라 별도 마이그레이션에서 처리
 	if cfg.CredentialsJSON != "" {
-		opts = append(opts, option.WithCredentialsJSON([]byte(cfg.CredentialsJSON)))
+		opts = append(opts, option.WithCredentialsJSON([]byte(cfg.CredentialsJSON))) //nolint:staticcheck
 	} else if cfg.CredentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile))
+		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile)) //nolint:staticcheck
 	} else if credFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credFile != "" {
-		opts = append(opts, option.WithCredentialsFile(credFile))
+		opts = append(opts, option.WithCredentialsFile(credFile)) //nolint:staticcheck
 	}
 	// 그렇지 않으면 Application Default Credentials 사용
 

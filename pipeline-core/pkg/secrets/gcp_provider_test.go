@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"context"
 	"testing"
 )
 
@@ -108,7 +109,7 @@ func TestManager_Expand_WithCloudProviders(t *testing.T) {
 
 	// 환경변수 확장 (클라우드 시크릿 없이)
 	input := "path: $PATH"
-	result, _ := manager.Expand(nil, input)
+	result, _ := manager.Expand(context.Background(), input)
 	if result == input {
 		// $PATH가 확장되지 않았다면 그대로 반환
 		t.Log("environment variable expansion working")

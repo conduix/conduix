@@ -633,6 +633,15 @@ type OutputConfig struct {
 	// incoming.version > existing.version 일 때만 덮어쓴다. 초기적재+CDC 동시 실행에서
 	// snapshot old 값이 CDC 최신값을 뒤늦게 덮는 race 를 막아 순서 무관 수렴을 보장한다.
 	VersionColumn string `yaml:"version_column,omitempty"`
+	// SyncedAtColumn: 지정 시 매 upsert 레코드에 파이프라인 시작 시각 T 를 이 컬럼으로
+	// 주입한다. 값이 안 바뀐 행도 T 로 갱신되므로 "이번 수집에 나타났는가" 판정에 쓸 수
+	// 있다 (DB 의 ON UPDATE CURRENT_TIMESTAMP 는 값이 같으면 안 갱신돼 이 용도에 부적합).
+	// 미지정 시 아무 동작 없음.
+	SyncedAtColumn string `yaml:"synced_at_column,omitempty" json:"synced_at_column,omitempty"`
+	// Sweep: 전체 수집 파이프라인이 "성공 완료"했을 때만, 이번 실행에 나타나지 않은
+	// 행(synced_at < T)을 정리한다. 미지정 시 아무 동작 없음(완전 opt-in) —
+	// 삭제 없는 배치 수집 파이프라인은 이 설정을 생략하면 어떤 영향도 받지 않는다.
+	Sweep *SweepConfig `yaml:"sweep,omitempty" json:"sweep,omitempty"`
 
 	// Kafka Sink
 	Brokers []string `yaml:"brokers,omitempty"` // Kafka broker addresses
@@ -654,6 +663,19 @@ type OutputConfig struct {
 	BatchEnabled   bool              `yaml:"batch_enabled,omitempty"`   // Enable batch mode
 	BatchSizeHTTP  int               `yaml:"batch_size_http,omitempty"` // Batch size for HTTP (default: 1)
 	BatchDelimiter string            `yaml:"batch_delimiter,omitempty"` // Delimiter for batch (default: newline)
+}
+
+// SweepConfig mark-and-sweep 삭제 설정 (SQL sink 전용).
+// "수집 전 시각 T 기록 → 전량 upsert(synced_at=T) → 전체 성공 시 synced_at < T 정리"
+// 흐름의 마지막 단계를 정의한다. 부분 실패 시에는 절대 실행되지 않는다.
+type SweepConfig struct {
+	// Mode: delete(물리 삭제) | soft(플래그 컬럼에 T 기록, 물리 삭제 없음)
+	Mode string `yaml:"mode" json:"mode"`
+	// Column: 판정 기준 컬럼. 비우면 synced_at_column 을 따른다.
+	Column string `yaml:"column,omitempty" json:"column,omitempty"`
+	// SoftColumn: soft 모드에서 삭제 표시를 기록할 컬럼 (기본: deleted_at).
+	// upsert 로 재등장한 행은 NULL 로 복원된다.
+	SoftColumn string `yaml:"soft_column,omitempty" json:"soft_column,omitempty"`
 }
 
 // MetricsOutputConfig 메트릭 출력 설정

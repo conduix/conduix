@@ -182,7 +182,8 @@ func (o *BigQueryOutput) Open(ctx context.Context) error {
 
 	// 서비스 계정 인증
 	if o.credentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(o.credentialsFile))
+		// deprecated 대체재가 cloud.google.com/go/auth 전면 이전이라 별도 마이그레이션에서 처리
+		opts = append(opts, option.WithCredentialsFile(o.credentialsFile)) //nolint:staticcheck
 	}
 
 	// BigQuery 클라이언트 생성

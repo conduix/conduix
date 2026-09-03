@@ -23,6 +23,13 @@ type Output interface {
 	Stats() OutputStats
 }
 
+// Finalizable 파이프라인 종료 시 성공 여부와 함께 호출되는 후처리를 가진 Output.
+// executor 가 flush 후·close 전에 한 번 호출한다. sweep 처럼 "전체 성공 시에만
+// 실행해야 하는" 마무리 작업용이며, 구현하지 않은 Output 은 아무 영향이 없다.
+type Finalizable interface {
+	Finalize(ctx context.Context, success bool) error
+}
+
 // BatchOutput 배치 쓰기를 지원하는 Output 인터페이스
 type BatchOutput interface {
 	Output

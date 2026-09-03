@@ -158,8 +158,8 @@ func (s *SQSSource) Read(ctx context.Context) (<-chan Record, <-chan error) {
 				MessageAttributeNames: []string{
 					string(types.QueueAttributeNameAll),
 				},
-				AttributeNames: []types.QueueAttributeName{
-					types.QueueAttributeNameAll,
+				MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+					types.MessageSystemAttributeNameAll,
 				},
 			})
 			if err != nil {

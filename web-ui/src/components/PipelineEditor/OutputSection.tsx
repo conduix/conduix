@@ -262,6 +262,67 @@ export function OutputSection() {
               helperText={t('pipelineEditor.output.conflictColumnsHelp')}
               fullWidth
             />
+            <Divider />
+            <TextField
+              label={t('pipelineEditor.output.syncedAtColumn')}
+              value={config.synced_at_column || ''}
+              onChange={(e) => handleConfigChange('synced_at_column', e.target.value || undefined)}
+              placeholder="synced_at"
+              helperText={t('pipelineEditor.output.syncedAtColumnHelp')}
+              fullWidth
+            />
+            <FormControl fullWidth>
+              <InputLabel>{t('pipelineEditor.output.sweepMode')}</InputLabel>
+              <Select
+                value={(config.sweep as { mode?: string } | undefined)?.mode || ''}
+                label={t('pipelineEditor.output.sweepMode')}
+                onChange={(e) => {
+                  const mode = e.target.value
+                  if (!mode) {
+                    handleConfigChange('sweep', undefined)
+                  } else {
+                    handleConfigChange('sweep', {
+                      ...((config.sweep as Record<string, unknown>) || {}),
+                      mode,
+                    })
+                  }
+                }}
+              >
+                <MenuItem value="">{t('pipelineEditor.output.sweepNone')}</MenuItem>
+                <MenuItem value="delete">{t('pipelineEditor.output.sweepDelete')}</MenuItem>
+                <MenuItem value="soft">{t('pipelineEditor.output.sweepSoft')}</MenuItem>
+              </Select>
+            </FormControl>
+            {(config.sweep as { mode?: string } | undefined)?.mode && (
+              <TextField
+                label={t('pipelineEditor.output.sweepColumn')}
+                value={(config.sweep as { column?: string }).column || ''}
+                onChange={(e) =>
+                  handleConfigChange('sweep', {
+                    ...(config.sweep as Record<string, unknown>),
+                    column: e.target.value || undefined,
+                  })
+                }
+                placeholder={String(config.synced_at_column || 'synced_at')}
+                helperText={t('pipelineEditor.output.sweepColumnHelp')}
+                fullWidth
+              />
+            )}
+            {(config.sweep as { mode?: string } | undefined)?.mode === 'soft' && (
+              <TextField
+                label={t('pipelineEditor.output.sweepSoftColumn')}
+                value={(config.sweep as { soft_column?: string }).soft_column || ''}
+                onChange={(e) =>
+                  handleConfigChange('sweep', {
+                    ...(config.sweep as Record<string, unknown>),
+                    soft_column: e.target.value || undefined,
+                  })
+                }
+                placeholder="deleted_at"
+                helperText={t('pipelineEditor.output.sweepSoftColumnHelp')}
+                fullWidth
+              />
+            )}
           </Stack>
         )
 

@@ -642,10 +642,22 @@ func (e *GroupExecutor) runPipeline(ctx context.Context, pipeline types.GroupedP
 		// 잔여 레코드가 유실되기 때문(realtime 소량 유입 시 특히).
 		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
+		// result 는 포인터로 in-place 갱신되므로 이 defer 시점의 최종 상태가 성공 판정이다.
+		pipelineSucceeded := result.Status == "completed" && result.ErrorMessage == ""
 		for name, s := range outputSinks {
+			flushOK := true
 			if err := s.Flush(flushCtx); err != nil {
 				slog.Error("output flush error",
 					"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", name, "error", err)
+				flushOK = false
+			}
+			// sweep 등 성공 시에만 수행하는 후처리 (Finalizable 미구현 sink 는 무영향).
+			// 이 sink 의 flush 실패분이 미반영된 채 sweep 하면 오탐 삭제라 flushOK 도 조건.
+			if f, ok := s.(output.Finalizable); ok {
+				if err := f.Finalize(flushCtx, pipelineSucceeded && flushOK); err != nil {
+					slog.Error("output finalize error",
+						"workflow_id", e.group.ID, "pipeline_id", pipeline.ID, "output", name, "error", err)
+				}
 			}
 			if err := s.Close(); err != nil {
 				slog.Error("output close error",

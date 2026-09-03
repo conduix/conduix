@@ -316,6 +316,10 @@ interface StageFormState {
   sql_upsert: boolean
   sql_conflict_columns: string
   sql_create_table: string
+  sql_synced_at_column: string
+  sql_sweep_mode: string
+  sql_sweep_column: string
+  sql_sweep_soft_column: string
   // Elasticsearch Output
   es_addresses: string
   es_index: string
@@ -392,6 +396,10 @@ const initialStageFormState: StageFormState = {
   sql_upsert: true,
   sql_conflict_columns: '',
   sql_create_table: '',
+  sql_synced_at_column: '',
+  sql_sweep_mode: '',
+  sql_sweep_column: '',
+  sql_sweep_soft_column: '',
   es_addresses: '',
   es_index: '',
   es_batch_size: 100,
@@ -818,6 +826,10 @@ export default function StageEditorPage() {
       sql_upsert: (stage.config?.upsert as boolean) ?? true,
       sql_conflict_columns: (stage.config?.conflict_columns as string[])?.join(', ') || '',
       sql_create_table: stage.config?.create_table as string || '',
+      sql_synced_at_column: stage.config?.synced_at_column as string || '',
+      sql_sweep_mode: (stage.config?.sweep as { mode?: string })?.mode || '',
+      sql_sweep_column: (stage.config?.sweep as { column?: string })?.column || '',
+      sql_sweep_soft_column: (stage.config?.sweep as { soft_column?: string })?.soft_column || '',
       // Elasticsearch output
       es_addresses: (stage.config?.addresses as string[])?.join(', ') || '',
       es_index: stage.config?.index as string || '',
@@ -1310,6 +1322,17 @@ export default function StageEditorPage() {
             ? stageForm.sql_conflict_columns.split(',').map((s: string) => s.trim()).filter(Boolean)
             : [],
           create_table: stageForm.sql_create_table || '',
+          synced_at_column: stageForm.sql_synced_at_column || undefined,
+          sweep: stageForm.sql_sweep_mode
+            ? {
+                mode: stageForm.sql_sweep_mode,
+                column: stageForm.sql_sweep_column || undefined,
+                soft_column:
+                  stageForm.sql_sweep_mode === 'soft'
+                    ? stageForm.sql_sweep_soft_column || undefined
+                    : undefined,
+              }
+            : undefined,
         }
         break
       // Elasticsearch Output stage
@@ -2172,6 +2195,49 @@ export default function StageEditorPage() {
               fullWidth
               sx={{ fontFamily: 'monospace' }}
             />
+            <TextField
+              label={t('pipelineEditor.output.syncedAtColumn')}
+              value={stageForm.sql_synced_at_column}
+              onChange={(e) => updateStageFormField('sql_synced_at_column', e.target.value)}
+              helperText={t('pipelineEditor.output.syncedAtColumnHelp')}
+              placeholder="synced_at"
+              fullWidth
+              sx={{ fontFamily: 'monospace' }}
+            />
+            <FormControl fullWidth>
+              <InputLabel>{t('pipelineEditor.output.sweepMode')}</InputLabel>
+              <Select
+                value={stageForm.sql_sweep_mode}
+                onChange={(e) => updateStageFormField('sql_sweep_mode', e.target.value)}
+                label={t('pipelineEditor.output.sweepMode')}
+              >
+                <MenuItem value="">{t('pipelineEditor.output.sweepNone')}</MenuItem>
+                <MenuItem value="delete">{t('pipelineEditor.output.sweepDelete')}</MenuItem>
+                <MenuItem value="soft">{t('pipelineEditor.output.sweepSoft')}</MenuItem>
+              </Select>
+            </FormControl>
+            {stageForm.sql_sweep_mode && (
+              <TextField
+                label={t('pipelineEditor.output.sweepColumn')}
+                value={stageForm.sql_sweep_column}
+                onChange={(e) => updateStageFormField('sql_sweep_column', e.target.value)}
+                helperText={t('pipelineEditor.output.sweepColumnHelp')}
+                placeholder={stageForm.sql_synced_at_column || 'synced_at'}
+                fullWidth
+                sx={{ fontFamily: 'monospace' }}
+              />
+            )}
+            {stageForm.sql_sweep_mode === 'soft' && (
+              <TextField
+                label={t('pipelineEditor.output.sweepSoftColumn')}
+                value={stageForm.sql_sweep_soft_column}
+                onChange={(e) => updateStageFormField('sql_sweep_soft_column', e.target.value)}
+                helperText={t('pipelineEditor.output.sweepSoftColumnHelp')}
+                placeholder="deleted_at"
+                fullWidth
+                sx={{ fontFamily: 'monospace' }}
+              />
+            )}
             <TextField
               label={t('stage.sqlCreateTable')}
               value={stageForm.sql_create_table}

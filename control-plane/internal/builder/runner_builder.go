@@ -69,6 +69,12 @@ func DefaultRunnerBuilderConfig() *RunnerBuilderConfig {
 	}
 }
 
+// runnerSourceModules 는 runner 바이너리를 구성하는 소스 모듈이다.
+// 빌드용 복사 대상과 coreSourceHash 대상이 반드시 같아야 한다 — 어긋나면 해시에 안 잡힌
+// 모듈의 변경이 "identical source hash" 로 스킵돼 옛 바이너리가 계속 배포된다.
+// (pipeline-batch-job 이 해시에서 빠져 있어 /monitoring 추가가 반영되지 않았다.)
+var runnerSourceModules = []string{"pipeline-batch-job", "pipeline-core", "shared", "plugin-sdk"}
+
 // buildMu 는 Build() 를 프로세스 전역으로 직렬화한다.
 // auto-build(plugin update)와 수동 build 가 각각 goroutine 으로 거의 동시에 Build() 를 호출하면,
 // DB building-count 락(체크→레코드생성이 비원자적)을 둘 다 통과해 두 go build 가 같은 CacheDir 을
@@ -328,7 +334,7 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	// pipeline-batch-job 모듈을 tmpDir 로 복사. replace 가 ../pipeline-core 등 상대경로라
 	// 형제 모듈(pipeline-core/shared/plugin-sdk)도 sourceRoot 에서 함께 복사해야 한다.
 	batchJobDir := filepath.Join(tmpDir, "pipeline-batch-job")
-	for _, mod := range []string{"pipeline-batch-job", "pipeline-core", "shared", "plugin-sdk"} {
+	for _, mod := range runnerSourceModules {
 		src := filepath.Join(rb.config.SourceRoot, mod)
 		if err := copyDir(src, filepath.Join(tmpDir, mod)); err != nil {
 			return fmt.Errorf("copy module %s from source root: %w", mod, err)
@@ -580,7 +586,7 @@ func CombinedSourceHash(pluginHashes map[string]string, coreHash string) string 
 // 실패 시 빈 문자열(해시 미포함) — 재사용 스킵 판정이 관대해질 뿐 안전에는 무해.
 func (rb *RunnerBuilder) coreSourceHash() string {
 	h := sha256.New()
-	for _, mod := range []string{"pipeline-core", "shared", "plugin-sdk"} {
+	for _, mod := range runnerSourceModules {
 		root := filepath.Join(rb.config.SourceRoot, mod)
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {

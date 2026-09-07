@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -263,5 +264,46 @@ func TestCombinedSourceHash_CoreHashChangesResult(t *testing.T) {
 	}
 	if base == noCore {
 		t.Error("presence of core hash must change combined hash")
+	}
+}
+
+// coreSourceHash 는 runner 바이너리를 구성하는 모든 모듈의 변경을 감지해야 한다.
+// pipeline-batch-job 이 빠져 있어 그 모듈만 바뀐 배포가 "identical source hash" 로
+// 스킵되고 옛 바이너리가 계속 나갔다(라이브 모니터링 배포 때 실측).
+func TestCoreSourceHash_DetectsAllRunnerModules(t *testing.T) {
+	root := t.TempDir()
+	rb := &RunnerBuilder{
+		config: &RunnerBuilderConfig{SourceRoot: root},
+		logger: slog.Default(),
+	}
+
+	// 빌드가 복사하는 모듈 전부에 최소 .go 파일을 만든다.
+	for _, mod := range runnerSourceModules {
+		dir := filepath.Join(root, mod)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", mod, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", mod, err)
+		}
+	}
+
+	base := rb.coreSourceHash()
+	if base == "" {
+		t.Fatal("coreSourceHash 가 빈 문자열 — walk 실패")
+	}
+
+	// 각 모듈을 하나씩 수정했을 때 해시가 바뀌어야 한다.
+	for _, mod := range runnerSourceModules {
+		p := filepath.Join(root, mod, "a.go")
+		if err := os.WriteFile(p, []byte("package a\n\nvar Changed = 1\n"), 0o644); err != nil {
+			t.Fatalf("modify %s: %v", mod, err)
+		}
+		if got := rb.coreSourceHash(); got == base {
+			t.Errorf("모듈 %s 변경이 해시에 반영되지 않음 — 빌드가 스킵돼 옛 바이너리가 배포된다", mod)
+		}
+		if err := os.WriteFile(p, []byte("package a\n"), 0o644); err != nil {
+			t.Fatalf("restore %s: %v", mod, err)
+		}
 	}
 }

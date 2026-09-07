@@ -740,3 +740,48 @@ func TestCreateBatchJob_NoEnvFromByDefault(t *testing.T) {
 		t.Errorf("expected no envFrom by default")
 	}
 }
+
+// 가변 태그(:latest/:main)를 쓰므로 기본값은 Always 여야 한다. IfNotPresent 가 기본이면
+// 노드 캐시의 옛 이미지가 재사용돼 방금 배포한 수정이 실행 pod 에 반영되지 않는다.
+func TestResolvePullPolicy(t *testing.T) {
+	cases := map[string]corev1.PullPolicy{
+		"":             corev1.PullAlways,
+		"Always":       corev1.PullAlways,
+		"IfNotPresent": corev1.PullIfNotPresent,
+		"Never":        corev1.PullNever,
+		"바보같은값":        corev1.PullAlways,
+	}
+	for in, want := range cases {
+		if got := resolvePullPolicy(in); got != want {
+			t.Errorf("resolvePullPolicy(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// batch Job / streaming Deployment 양쪽 컨테이너에 실제로 반영돼야 한다.
+func TestPullPolicyAppliedToPods(t *testing.T) {
+	jm, _ := newTestJobManager()
+	ctx := context.Background()
+
+	job, err := jm.CreateBatchJob(ctx, &JobSpec{
+		ExecutionID: "pp-1", WorkflowID: "w1",
+		PipelinesConfig: `[{"id":"p1"}]`, JobConfig: types.DefaultJobConfig(),
+	})
+	if err != nil {
+		t.Fatalf("CreateBatchJob: %v", err)
+	}
+	if got := job.Spec.Template.Spec.Containers[0].ImagePullPolicy; got != corev1.PullAlways {
+		t.Errorf("batch Job pullPolicy = %q, want Always", got)
+	}
+
+	dep, err := jm.CreateStreamingDeployment(ctx, &StreamingSpec{
+		ExecutionID: "pp-2", WorkflowID: "w1",
+		PipelinesConfig: `[{"id":"p1"}]`, JobConfig: types.DefaultJobConfig(),
+	})
+	if err != nil {
+		t.Fatalf("CreateStreamingDeployment: %v", err)
+	}
+	if got := dep.Spec.Template.Spec.Containers[0].ImagePullPolicy; got != corev1.PullAlways {
+		t.Errorf("streaming Deployment pullPolicy = %q, want Always", got)
+	}
+}

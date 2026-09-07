@@ -378,10 +378,10 @@ func (m *JobManager) DeleteJob(ctx context.Context, namespace, name string) erro
 // URL 은 versionID 로만 달라지므로 rolling 시 이 명령만 교체하면 새 바이너리로 재기동된다.
 func (m *JobManager) fetchRunnerCommand(runnerVersionID, binMount string) []string {
 	binURL := fmt.Sprintf("%s/api/v1/internal/runner/versions/%s/binary", m.controlPlaneURL, runnerVersionID)
+	dest := binMount + "/" + types.RunnerBinaryName
 	return []string{
 		"sh", "-c",
-		fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s/pipeline-batch-job && chmod +x %s/pipeline-batch-job",
-			binURL, binMount, binMount),
+		fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s && chmod +x %s", binURL, dest, dest),
 	}
 }
 
@@ -405,7 +405,7 @@ func (m *JobManager) injectRunnerBinary(ps *corev1.PodSpec, runnerVersionID, ima
 		Command:         m.fetchRunnerCommand(runnerVersionID, binMount),
 		VolumeMounts:    []corev1.VolumeMount{{Name: "runner-bin", MountPath: binMount}},
 	})
-	ps.Containers[0].Command = []string{binMount + "/pipeline-batch-job"}
+	ps.Containers[0].Command = []string{binMount + "/" + types.RunnerBinaryName}
 	ps.Containers[0].Args = nil // base 이미지 ENTRYPOINT/CMD 잔여 인자 제거
 	ps.Containers[0].VolumeMounts = append(ps.Containers[0].VolumeMounts,
 		corev1.VolumeMount{Name: "runner-bin", MountPath: binMount})

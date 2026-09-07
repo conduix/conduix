@@ -24,6 +24,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/conduix/conduix/control-plane/pkg/models"
+	"github.com/conduix/conduix/shared/types"
 )
 
 // RunnerBuilderConfig Runner 빌드 설정
@@ -401,7 +402,7 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	buildOut, err := rb.runCommand(buildCtx, batchJobDir, []string{
 		"GOOS=" + goos,
 		"GOARCH=" + goarch,
-	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", "pipeline-batch-job", "./cmd/runner")
+	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", types.RunnerBinaryName, "./cmd/runner")
 	logBuf.WriteString(buildOut)
 	if err != nil {
 		return fmt.Errorf("go build: %w", err)
@@ -410,7 +411,7 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 
 	// 빌드 바이너리를 gzip 압축해 RunnerVersion 에 저장 — 레지스트리 push 없이 Job initContainer 가
 	// 받아 실행하는 경로(선택지 2). tmpDir 은 곧 삭제되므로 여기서 읽어 둔다.
-	binPath := filepath.Join(batchJobDir, "pipeline-batch-job")
+	binPath := filepath.Join(batchJobDir, types.RunnerBinaryName)
 	rawBin, err := os.ReadFile(binPath)
 	if err != nil {
 		return fmt.Errorf("read built binary: %w", err)
@@ -742,12 +743,13 @@ func copyDir(src, dst string) error {
 
 // generateDockerfile Runner Docker 이미지용 Dockerfile(DockerPush 옵션 전용).
 func generateDockerfile() string {
-	return `FROM alpine:3.21
+	bin := types.RunnerBinaryName
+	return fmt.Sprintf(`FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
-COPY pipeline-batch-job /usr/local/bin/pipeline-batch-job
-RUN chmod +x /usr/local/bin/pipeline-batch-job
-ENTRYPOINT ["/usr/local/bin/pipeline-batch-job"]
-`
+COPY %[1]s /usr/local/bin/%[1]s
+RUN chmod +x /usr/local/bin/%[1]s
+ENTRYPOINT ["/usr/local/bin/%[1]s"]
+`, bin)
 }
 
 // extractPluginIDs Plugin 목록에서 ID만 추출

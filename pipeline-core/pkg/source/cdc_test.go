@@ -3,6 +3,8 @@ package source
 import (
 	"testing"
 
+	"github.com/go-mysql-org/go-mysql/mysql"
+
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
 
@@ -527,5 +529,83 @@ func TestCDCSource_EnvVarExpansion(t *testing.T) {
 	}
 	if source.tlsConfig.CACert != "${CDC_CA_CERT}" {
 		t.Errorf("expected CACert '${CDC_CA_CERT}', got '%s'", source.tlsConfig.CACert)
+	}
+}
+
+// binlog 파일이 로테이트돼도(크기 초과·서버 재시작) PartitionKey 는 고정이어야 한다.
+// 파일명을 키에 넣으면 로테이트마다 새 체크포인트 행이 생겨 죽은 행이 쌓이고,
+// UI 에 현재 위치가 아닌 행이 함께 보이며, 복원 시 어느 행이 유효한지 모호해진다.
+func TestCDCSource_CheckpointPartitionKeyStableAcrossRotation(t *testing.T) {
+	src, err := NewCDCSource(config.SourceV2{
+		Type: "cdc", Driver: "mysql", Host: "localhost",
+		Username: "user", Password: "pass", Database: "testdb",
+	})
+	if err != nil {
+		t.Fatalf("NewCDCSource: %v", err)
+	}
+
+	keys := make(map[string]bool)
+	for _, file := range []string{"mysql-bin.000012", "mysql-bin.000013", "mysql-bin.000014"} {
+		if err := src.SetCheckpoint(map[string]any{
+			"binlog_file": file, "binlog_pos": uint32(4),
+		}); err != nil {
+			t.Fatalf("SetCheckpoint(%s): %v", file, err)
+		}
+		cps := src.GetSourceCheckpoints()
+		if len(cps) != 1 {
+			t.Fatalf("expected 1 checkpoint, got %d", len(cps))
+		}
+		keys[cps[0].PartitionKey] = true
+
+		// 파일명은 OffsetValue 로 계속 전달돼야 한다(복원이 여기서 파싱한다).
+		if want := file + ":4"; cps[0].OffsetValue != want {
+			t.Errorf("OffsetValue = %q, want %q", cps[0].OffsetValue, want)
+		}
+	}
+
+	if len(keys) != 1 {
+		t.Errorf("PartitionKey 가 파일마다 달라짐(%v) — 로테이트마다 죽은 행이 쌓인다", keys)
+	}
+	if _, ok := keys["testdb:binlog"]; !ok {
+		t.Errorf("PartitionKey = %v, want testdb:binlog", keys)
+	}
+}
+
+// RecordCount 는 "처리된 레코드 수"다. binlog position/LSN 을 넣으면 UI 에
+// 레코드 수가 바이트 오프셋(수천만)으로 표시된다.
+func TestCDCSource_CheckpointRecordCountIsRecordCount(t *testing.T) {
+	src, err := NewCDCSource(config.SourceV2{
+		Type: "cdc", Driver: "mysql", Host: "localhost",
+		Username: "user", Password: "pass", Database: "testdb",
+	})
+	if err != nil {
+		t.Fatalf("NewCDCSource: %v", err)
+	}
+
+	// position 은 큰 값이지만 아직 ack 된 레코드는 없다.
+	if err := src.SetCheckpoint(map[string]any{
+		"binlog_file": "mysql-bin.000013", "binlog_pos": uint32(9506516),
+	}); err != nil {
+		t.Fatalf("SetCheckpoint: %v", err)
+	}
+	if got := src.GetSourceCheckpoints()[0].RecordCount; got != 0 {
+		t.Errorf("ack 없이 RecordCount = %d, want 0 (position 이 새는지 확인)", got)
+	}
+
+	// ack 된 레코드 수만큼 증가해야 한다.
+	src.ackMu.Lock()
+	src.pendingP[1] = cdcAckOffset{pos: mysql.Position{Name: "mysql-bin.000013", Pos: 100}}
+	src.pendingP[2] = cdcAckOffset{pos: mysql.Position{Name: "mysql-bin.000013", Pos: 200}}
+	src.ackMu.Unlock()
+	src.Ack([]RecordOffset{{Offset: "2"}})
+
+	if got := src.GetSourceCheckpoints()[0].RecordCount; got != 2 {
+		t.Errorf("RecordCount = %d, want 2", got)
+	}
+
+	// 같은 ack 를 다시 받아도 중복 집계되지 않아야 한다(pending 이 이미 비었다).
+	src.Ack([]RecordOffset{{Offset: "2"}})
+	if got := src.GetSourceCheckpoints()[0].RecordCount; got != 2 {
+		t.Errorf("중복 ack 후 RecordCount = %d, want 2", got)
 	}
 }

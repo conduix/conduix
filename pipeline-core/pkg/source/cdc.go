@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-mysql-org/go-mysql/canal"
@@ -83,6 +84,11 @@ type CDCSource struct {
 	ackMu    sync.Mutex
 	ackSeq   uint64                  // 다음 부여할 seq
 	pendingP map[uint64]cdcAckOffset // seq → 위치
+
+	// acked 는 sink 적재까지 성공한 누적 레코드 수(체크포인트의 RecordCount).
+	// 예전엔 binlog position/LSN 을 그대로 넣어, UI 에 "처리 레코드 수"가 바이트
+	// 오프셋(수천만)으로 표시됐다. GetSourceCheckpoints 가 락 밖에서도 읽으므로 atomic.
+	acked atomic.Int64
 }
 
 // cdcAckOffset 은 한 CDC 이벤트의 커밋 위치(ack 시 committed 로 반영).
@@ -590,12 +596,18 @@ func (s *CDCSource) Ack(offsets []RecordOffset) {
 	s.ackMu.Lock()
 	// ack 된 최대 seq 의 위치를 찾고, 그 이하 pending 정리.
 	off, ok := s.pendingP[maxSeq]
+	cleared := 0
 	for seq := range s.pendingP {
 		if seq <= maxSeq {
 			delete(s.pendingP, seq)
+			cleared++
 		}
 	}
 	s.ackMu.Unlock()
+	// 정리된 pending 수 = 이번에 적재 완료된 레코드 수(중복 ack 는 이미 삭제돼 세지 않는다).
+	if cleared > 0 {
+		s.acked.Add(int64(cleared))
+	}
 	if !ok {
 		return
 	}
@@ -631,7 +643,7 @@ func (s *CDCSource) GetSourceCheckpoints() []*SourceCheckpoint {
 				PartitionKey: fmt.Sprintf("%s:lsn", s.database),
 				OffsetValue:  s.committedLSN.String(),
 				OffsetType:   "lsn",
-				RecordCount:  int64(s.committedLSN),
+				RecordCount:  s.acked.Load(), // LSN 은 위치값이므로 레코드 수로 쓰면 안 된다
 				UpdatedAt:    time.Now(),
 			},
 		}
@@ -644,15 +656,16 @@ func (s *CDCSource) GetSourceCheckpoints() []*SourceCheckpoint {
 		// 아직 아무것도 소비 안 함 → 시작 position 을 그대로(재시작 시 같은 지점부터).
 		cp = s.position
 	}
-	partitionKey := fmt.Sprintf("%s:%s", s.database, cp.Name)
-	offsetValue := fmt.Sprintf("%s:%d", cp.Name, cp.Pos)
-
+	// PartitionKey 에 binlog 파일명을 넣으면 파일이 로테이트될 때마다(크기 초과·서버 재시작)
+	// 새 체크포인트 행이 생겨, 죽은 행이 무한히 쌓이고 UI 에도 현재 위치가 아닌 행이 함께 보인다.
+	// 복원 시에도 어느 행이 유효한지 모호해진다(SetSourceCheckpoints 는 마지막 행이 이긴다).
+	// binlog 는 단일 순서 스트림이라 논리 파티션이 하나이므로 키를 고정한다. 파일명은 OffsetValue 에 있다.
 	cps := []*SourceCheckpoint{
 		{
-			PartitionKey: partitionKey,
-			OffsetValue:  offsetValue,
+			PartitionKey: fmt.Sprintf("%s:binlog", s.database),
+			OffsetValue:  fmt.Sprintf("%s:%d", cp.Name, cp.Pos),
 			OffsetType:   "string", // binlog position은 문자열 형식
-			RecordCount:  int64(cp.Pos),
+			RecordCount:  s.acked.Load(),
 			UpdatedAt:    time.Now(),
 		},
 	}

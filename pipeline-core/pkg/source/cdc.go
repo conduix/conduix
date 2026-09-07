@@ -219,6 +219,11 @@ func (s *CDCSource) openMySQL() error {
 	cfg.Password = s.password
 	cfg.ServerID = s.serverID
 	cfg.Flavor = "mysql"
+	// canal 기본값은 초기 스냅샷을 위해 mysqldump 를 실행한다. 우리 실행 이미지엔
+	// mysqldump 바이너리가 없고(canal 생성 자체가 실패), CDC 는 "현재 위치부터의 변경분"만
+	// 필요하다(초기 전량은 별도 bulk 파이프라인 담당). ExecutionPath 를 비워 dump 를 끄고
+	// binlog 구독만 한다 — 없으면 mysqldump 부재 컨테이너에서 CDC 가 아예 안 뜬다.
+	cfg.Dump.ExecutionPath = ""
 
 	// 감시할 테이블 설정
 	if len(s.tables) > 0 {

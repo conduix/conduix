@@ -205,6 +205,16 @@ func (s *Stage) resolve(norm, lotnoRaw string) *geoResult {
 		return r
 	}
 	if isUnfixableAddress(norm) {
+		// road 가 파손·근사불가여도 lotno(지번주소)가 온전하면 그걸로 구제한다.
+		// road 만 보고 unfixable 로 확정하면, 도로명이 깨진 레코드가 지번주소를 놔두고 버려진다.
+		if ln := normalizeAddress(lotnoRaw); ln != "" && ln != norm && !isUnfixableAddress(ln) && s.apiKey != "" {
+			if r, _ := s.query(ln); r != nil {
+				s.cachePut(norm, r)
+				s.memSet(norm, r)
+				f.res = r
+				return r
+			}
+		}
 		r := &geoResult{Status: statusUnfixable}
 		s.cachePut(norm, r)
 		s.memSet(norm, r)
@@ -451,27 +461,35 @@ var (
 	reMultiLot     = regexp.MustCompile(`외\s*\d*\s*필지`)
 	reNoSpaceLong  = regexp.MustCompile(`^\S{10,}$`)
 	reSidoPrefix   = regexp.MustCompile(`^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|전라|전북|전남|경상|경북|경남|제주)`)
+	// 도로명(로/길 뒤 번호) 또는 지번(동/리/가 뒤 번지) 형태 — sido 접두가 없어도 주소로 보고 시도.
+	reAddressShape = regexp.MustCompile(`[가-힣][가-힣0-9]*(로|길)\s*\d|[가-힣][가-힣0-9]*(동|리|가)\d*\s+\d|\d+번지`)
 )
 
-// normalizeAddress 지오코더를 방해하는 표기만 제거 (쉼표 절단·괄호쌍 제거·번길 분리·공백 정리)
+// normalizeAddress 지오코더를 방해하는 표기만 제거 (괄호쌍 제거·쉼표 절단·서술어 제거·번길 분리·공백 정리)
+// 순서 중요: 괄호쌍을 쉼표 절단보다 먼저 지운다. '(소태동, 무등산골드클래스)' 처럼 괄호 안에
+// 쉼표가 있으면, 쉼표를 먼저 자를 경우 '(소태동' 만 남아 안 닫힌 괄호로 파손 판정된다.
 func normalizeAddress(addr string) string {
 	a := strings.TrimSpace(addr)
 	if a == "" {
 		return ""
 	}
-	if i := strings.Index(a, ","); i >= 0 {
+	a = reParenPair.ReplaceAllString(a, " ") // 괄호쌍(안의 쉼표 포함) 먼저 — 안 닫힌 괄호만 파손으로 남는다
+	if i := strings.Index(a, ","); i >= 0 {   // 괄호 밖 최상위 쉼표에서 절단(건물명·부가설명 제거)
 		a = a[:i]
 	}
-	a = reParenPair.ReplaceAllString(a, " ") // 안 닫힌 괄호는 파손 판정으로 넘긴다
+	a = reDescriptive.ReplaceAllString(a, "") // '인근/부근/일대…' 서술 접미어는 통째로 버리지 말고 떼어 재시도
 	a = reBungilDetach.ReplaceAllString(a, "$1 $2")
 	a = reMultiSpace.ReplaceAllString(a, " ")
 	return strings.TrimSpace(a)
 }
 
-// isUnfixableAddress 지오코더를 바꿔도 실패하는 주소 (보수적으로 — 애매하면 시도한다)
+// isUnfixableAddress 지오코더를 바꿔도 실패하는 주소 — normalize 를 거친 norm 을 받는 전제.
+// 판정 기준은 "구체적 위치(번지/도로+번호)가 있는가" 하나로 통일한다. 서술어(reDescriptive)는
+// normalizeAddress 가 이미 떼어내므로, 떼고도 도로/동/번지 형태가 남으면 시도, 남지 않으면
+// (건물명·서술만 남음 = '태평인라인장', '조사리') 근사밖에 안 되므로 불가. sido 접두 유무는
+// 판단 기준이 아니다 — 접두가 없는 지번주소('가좌4동 399')도 형태만 맞으면 시도한다.
 func isUnfixableAddress(norm string) bool {
-	return reDescriptive.MatchString(norm) ||
-		!reSidoPrefix.MatchString(norm) ||
+	return !reAddressShape.MatchString(norm) ||
 		reNoSpaceLong.MatchString(norm) ||
 		reMultiLot.MatchString(norm) ||
 		(strings.Contains(norm, "(") && !strings.Contains(norm, ")"))

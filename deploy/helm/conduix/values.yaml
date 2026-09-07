@@ -30,6 +30,8 @@ env:
   # Application Settings
   AUTO_MIGRATE: "true"
   MAX_DATATYPE_DEPTH: "10"
+  # native 커스텀 stage 첫 빌드는 콜드 캐시로 5분 기본값을 넘겨 timeout(signal: killed) 된다.
+  CONDUIX_BUILD_TIMEOUT: "20m"
   USERS_CONFIG_PATH: ""
   FRONTEND_URL: "http://localhost:3000"
 

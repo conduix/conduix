@@ -29,6 +29,11 @@ data:
   # Application Settings
   AUTO_MIGRATE: "{{ .Values.env.AUTO_MIGRATE }}"
   MAX_DATATYPE_DEPTH: "{{ .Values.env.MAX_DATATYPE_DEPTH }}"
+  {{- if .Values.env.CONDUIX_BUILD_TIMEOUT }}
+  # native 커스텀 stage 빌드 타임아웃. 첫 빌드는 콜드 캐시(모듈 전체 다운로드)로 5분 기본값을
+  # 넘겨 'go build: signal: killed' 로 죽는다. 상향 필요.
+  CONDUIX_BUILD_TIMEOUT: "{{ .Values.env.CONDUIX_BUILD_TIMEOUT }}"
+  {{- end }}
   {{- if .Values.env.ASSIGNMENT_STRATEGY }}
   # partition sub-execution 배정 전략: broadcast(기본) | round_robin | load_aware
   ASSIGNMENT_STRATEGY: "{{ .Values.env.ASSIGNMENT_STRATEGY }}"

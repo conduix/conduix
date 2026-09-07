@@ -76,6 +76,14 @@ export async function getStageSchema(stageType: string): Promise<StageSchemaResp
   return resp.data.data
 }
 
+// getStageSchemaRaw: raw types.StageSchema(fields 배열, secret/ShowWhen 보존)를 반환.
+// StageSchemaForm 이 소비하는 형태. /stages/schemas/:type 는 SuccessResponse 래핑 없이
+// raw JSON 을 직접 반환하므로 resp.data 를 그대로 쓴다.
+export async function getStageSchemaRaw(stageType: string): Promise<Record<string, unknown>> {
+  const resp = await api.get<Record<string, unknown>>(`/stages/schemas/${stageType}`)
+  return resp.data
+}
+
 // Runner API
 
 export interface RunnerPluginStatus {

@@ -747,7 +747,12 @@
     "fileFormat": "File Format",
     "saveSuccess": "Stages saved successfully",
     "saveError": "Failed to save stages",
-    "yamlParseError": "Invalid YAML format"
+    "yamlParseError": "Invalid YAML format",
+    "customSection": "Custom (plugins)",
+    "customNoSchema": "No config schema registered — edit as raw JSON",
+    "viewSource": "View source",
+    "sourceOf": "Source of {{type}} (read-only)",
+    "sourceUnavailable": "Source unavailable"
   },
   "rateLimit": {
     "title": "Rate Limit",

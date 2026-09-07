@@ -22,13 +22,24 @@ export interface Plugin {
 
 export interface StageListResponse {
   builtin: StageInfo[]
+  custom: CustomStageInfo[]
 }
 
+// 백엔드 응답은 snake_case (BuiltinStageInfo). display_name 그대로 받는다.
 export interface StageInfo {
   type: string
-  displayName: string
+  display_name: string
   category: string
   description?: string
+}
+
+// 커스텀(플러그인) stage. has_schema 로 폼/JSON폴백을 가른다.
+export interface CustomStageInfo {
+  type: string
+  display_name: string
+  category?: string
+  description?: string
+  has_schema: boolean
 }
 
 export interface StageSchemaResponse {

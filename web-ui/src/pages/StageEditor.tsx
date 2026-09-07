@@ -21,12 +21,14 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  ListSubheader,
   Chip,
   FormHelperText,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import SaveIcon from '@mui/icons-material/Save'
 import AddIcon from '@mui/icons-material/Add'
+import ExtensionIcon from '@mui/icons-material/Extension'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import DragHandleIcon from '@mui/icons-material/DragHandle'
@@ -52,6 +54,10 @@ import { useTranslation } from 'react-i18next'
 import Editor from '@monaco-editor/react'
 import yaml from 'js-yaml'
 import { api } from '../services/api'
+import { getStages, getStageSchemaRaw } from '../services/pluginApi'
+import type { CustomStageInfo } from '../types/plugin'
+import type { StageSchema } from '../types/stage-schema'
+import { StageSchemaForm } from '../components/StageSchemaForm/StageSchemaForm'
 import type { Stage, StageType, OutputType, WorkflowPipeline } from '../types/pipeline'
 
 // Stage 또는 Output 타입 (편집기에서 사용)
@@ -255,7 +261,9 @@ const getOutputConfigDefault = (outputType: OutputType): Record<string, unknown>
 // Stage form state interface
 interface StageFormState {
   name: string
-  type: StageOrOutputType | ''
+  // 커스텀 stage type(플러그인 이름)도 담기 위해 string 으로 넓힌다.
+  // 빌트인은 StageOrOutputType 값, 커스텀은 플러그인 이름 문자열.
+  type: StageOrOutputType | string | ''
   // Filter
   condition: string
   // Remap
@@ -309,6 +317,8 @@ interface StageFormState {
   drop_on_fail: boolean
   // Contract
   contractConfig: Record<string, unknown>
+  // 커스텀(플러그인) stage 의 config — contractConfig 와 동일한 map 기반 패턴.
+  customConfig: Record<string, unknown>
   // SQL Output
   sql_connection_string: string
   sql_table: string
@@ -390,6 +400,7 @@ const initialStageFormState: StageFormState = {
   schema: '',
   drop_on_fail: false,
   contractConfig: {},
+  customConfig: {},
   sql_connection_string: '',
   sql_table: '',
   sql_batch_size: 100,
@@ -434,6 +445,10 @@ export default function StageEditorPage() {
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [pipeline, setPipeline] = useState<WorkflowPipeline | null>(null)
   const [stages, setStages] = useState<Stage[]>([])
+  // 커스텀(플러그인) stage: 목록 + 선택 시 로드한 raw StageSchema 캐시(type→schema|null).
+  // null = 스키마 미등록(JSON 폴백). 실행은 되지만 폼을 못 그리는 경우.
+  const [customStages, setCustomStages] = useState<CustomStageInfo[]>([])
+  const [customSchemas, setCustomSchemas] = useState<Record<string, StageSchema | null>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
@@ -545,6 +560,46 @@ export default function StageEditorPage() {
       fetchData()
     }
   }, [workflowId, pipelineId, fetchData])
+
+  // 커스텀 stage 목록 로드(마운트 1회). 실패해도 빌트인 편집은 계속 동작해야 하므로 조용히 무시.
+  useEffect(() => {
+    getStages()
+      .then((res) => setCustomStages(res.custom || []))
+      .catch(() => setCustomStages([]))
+  }, [])
+
+  // 주어진 stage type 이 커스텀(플러그인)인지 판별.
+  const isCustomType = useCallback(
+    (type: string) => customStages.some((cs) => cs.type === type),
+    [customStages],
+  )
+
+  // stage 카드 Chip 표시용 설정. 빌트인은 하드코딩 맵, 커스텀은 플러그인 DisplayName + 기본 아이콘.
+  const stageChipConfig = (type: string): { icon: React.ReactNode; label: string; color: string } => {
+    const builtin = stageTypeConfig[type as StageOrOutputType]
+    if (builtin) return builtin
+    const custom = customStages.find((cs) => cs.type === type)
+    return {
+      icon: <ExtensionIcon fontSize="small" />,
+      label: custom?.display_name || type,
+      color: '#009688',
+    }
+  }
+
+  // 커스텀 stage 선택 시 raw StageSchema 를 지연 로드해 캐시한다.
+  const ensureCustomSchema = useCallback(
+    async (stageType: string) => {
+      if (stageType in customSchemas) return
+      try {
+        const raw = (await getStageSchemaRaw(stageType)) as unknown as StageSchema
+        // fields 가 있으면 폼, 없으면(스키마 미등록) JSON 폴백.
+        setCustomSchemas((prev) => ({ ...prev, [stageType]: raw?.fields?.length ? raw : null }))
+      } catch {
+        setCustomSchemas((prev) => ({ ...prev, [stageType]: null }))
+      }
+    },
+    [customSchemas],
+  )
 
   const syncYamlToStages = useCallback(() => {
     try {
@@ -679,11 +734,18 @@ export default function StageEditorPage() {
   }
 
   // 타입 변경 시 기본값 설정
-  const handleStageTypeChange = (type: StageOrOutputType) => {
+  const handleStageTypeChange = (type: StageOrOutputType | string) => {
     updateStageFormField('type', type)
 
+    // 커스텀(플러그인) stage: 스키마 지연 로드 + customConfig 초기화. 빌트인 switch 는 건너뜀.
+    if (isCustomType(type)) {
+      void ensureCustomSchema(type)
+      setStageForm((prev) => ({ ...prev, type, customConfig: {} }))
+      return
+    }
+
     // Output 타입인 경우 기본값 설정
-    const defaultConfig = isOutputType(type) ? getOutputConfigDefault(type) : {}
+    const defaultConfig = isOutputType(type as StageOrOutputType) ? getOutputConfigDefault(type as OutputType) : {}
 
     switch (type) {
       case 'sql':
@@ -819,6 +881,8 @@ export default function StageEditorPage() {
       drop_on_fail: stage.config?.drop_on_fail as boolean || false,
       // contract
       contractConfig: stage.type === 'contract' ? (stage.config || {}) : {},
+      // custom(플러그인): config 를 통째로 map 으로 보관
+      customConfig: isCustomType(stage.type) ? (stage.config || {}) : {},
       // SQL output
       sql_connection_string: stage.config?.connection_string as string || '',
       sql_table: stage.config?.table as string || '',
@@ -1394,6 +1458,12 @@ export default function StageEditorPage() {
         config = {
           path: stageForm.file_path || '',
           format: stageForm.file_format || 'json',
+        }
+        break
+      default:
+        // 커스텀(플러그인) stage: customConfig 를 그대로 config 로. 빌트인 아닌 타입만 여기 온다.
+        if (isCustomType(stageForm.type)) {
+          config = stageForm.customConfig || {}
         }
         break
     }
@@ -2540,6 +2610,43 @@ export default function StageEditorPage() {
           </Stack>
         )
       default:
+        // 커스텀(플러그인) stage: 스키마 있으면 자동 폼, 없으면 JSON 편집기 폴백.
+        if (isCustomType(stageForm.type)) {
+          const schema = customSchemas[stageForm.type]
+          if (schema === undefined) {
+            return <CircularProgress size={24} />
+          }
+          if (schema) {
+            return (
+              <StageSchemaForm
+                schema={schema}
+                value={stageForm.customConfig}
+                onChange={(v) => updateStageFormField('customConfig', v)}
+              />
+            )
+          }
+          // 스키마 미등록: raw JSON 편집기 폴백
+          return (
+            <Stack spacing={1}>
+              <Typography variant="caption" color="text.secondary">
+                {t('stage.customNoSchema')}
+              </Typography>
+              <Editor
+                height="240px"
+                defaultLanguage="json"
+                value={JSON.stringify(stageForm.customConfig, null, 2)}
+                onChange={(val) => {
+                  try {
+                    updateStageFormField('customConfig', JSON.parse(val || '{}'))
+                  } catch {
+                    /* 편집 중 파싱 실패는 무시 */
+                  }
+                }}
+                options={{ minimap: { enabled: false } }}
+              />
+            </Stack>
+          )
+        }
         return null
     }
   }
@@ -2639,10 +2746,10 @@ export default function StageEditorPage() {
                         <Box className="stage-card-header">
                           <Typography variant="subtitle2" className="stage-card-name">{stage.name}</Typography>
                           <Chip
-                            icon={stageTypeConfig[stage.type]?.icon as React.ReactElement}
-                            label={stageTypeConfig[stage.type]?.label}
+                            icon={stageChipConfig(stage.type).icon as React.ReactElement}
+                            label={stageChipConfig(stage.type).label}
                             size="small"
-                            sx={{ bgcolor: stageTypeConfig[stage.type]?.color, color: 'white' }}
+                            sx={{ bgcolor: stageChipConfig(stage.type).color, color: 'white' }}
                           />
                         </Box>
                         <Box className="stage-card-description">
@@ -2830,6 +2937,21 @@ export default function StageEditorPage() {
                     <span>{t('stage.types.validate')}</span>
                   </Stack>
                 </MenuItem>
+                {/* Custom(플러그인) Stage Types — 등록된 커스텀 stage 를 동적으로 나열 */}
+                {customStages.length > 0 && (
+                  <ListSubheader>{t('stage.customSection')}</ListSubheader>
+                )}
+                {customStages.map((cs) => (
+                  <MenuItem key={cs.type} value={cs.type}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                      <ExtensionIcon sx={{ color: '#009688' }} />
+                      <span>{cs.display_name}</span>
+                      {!cs.has_schema && (
+                        <Chip size="small" label="JSON" sx={{ height: 18, fontSize: 10 }} />
+                      )}
+                    </Stack>
+                  </MenuItem>
+                ))}
                 {/* Output Stage Types */}
                 <MenuItem value="sql">
                   <Stack direction="row" spacing={1} sx={{

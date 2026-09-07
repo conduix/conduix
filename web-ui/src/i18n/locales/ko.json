@@ -750,7 +750,12 @@
     "fileFormat": "파일 포맷",
     "saveSuccess": "Stage가 저장되었습니다",
     "saveError": "Stage 저장에 실패했습니다",
-    "yamlParseError": "잘못된 YAML 형식입니다"
+    "yamlParseError": "잘못된 YAML 형식입니다",
+    "customSection": "커스텀 (플러그인)",
+    "customNoSchema": "설정 스키마가 등록되지 않았습니다 — JSON 으로 직접 입력하세요",
+    "viewSource": "소스 보기",
+    "sourceOf": "{{type}} 소스 (읽기 전용)",
+    "sourceUnavailable": "소스를 불러올 수 없습니다"
   },
   "rateLimit": {
     "title": "처리량 제한",

@@ -388,6 +388,35 @@ func TestSanitizeLabel(t *testing.T) {
 	}
 }
 
+// realtime 재위임(claim 조기 만료)은 동일 이름 Deployment Create 가 AlreadyExists 로 실패한다.
+// batch 와 동일하게 이미 도는 Deployment 를 채택(adopt)해야 execution 이 error 로 뒤집히지 않는다.
+func TestCreateStreamingDeployment_AdoptOnAlreadyExists(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+	spec := &StreamingSpec{
+		ExecutionID:     "rt-dup",
+		WorkflowID:      "wf-rt-dup",
+		PipelinesConfig: `[{"id":"p1"}]`,
+		JobConfig:       types.DefaultJobConfig(),
+		RunnerVersionID: "rv-1",
+	}
+	first, err := jm.CreateStreamingDeployment(ctx, spec)
+	if err != nil {
+		t.Fatalf("first CreateStreamingDeployment failed: %v", err)
+	}
+	second, err := jm.CreateStreamingDeployment(ctx, spec)
+	if err != nil {
+		t.Fatalf("재위임은 adopt 로 성공해야 하는데 error: %v", err)
+	}
+	if second.Name != first.Name {
+		t.Fatalf("adopt 된 Deployment 이름이 다르다: first=%s second=%s", first.Name, second.Name)
+	}
+	deps, _ := fakeClient.AppsV1().Deployments("conduix").List(ctx, metav1.ListOptions{})
+	if len(deps.Items) != 1 {
+		t.Fatalf("expected 1 deployment after re-delegation, got %d", len(deps.Items))
+	}
+}
+
 func TestCreateStreamingDeployment(t *testing.T) {
 	jm, fakeClient := newTestJobManager()
 	ctx := context.Background()

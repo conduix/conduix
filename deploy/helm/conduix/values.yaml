@@ -77,13 +77,16 @@ controlPlane:
   service:
     type: ClusterIP
     port: 8080
+  # native 커스텀 stage 빌드 시 CP 컨테이너 안에서 pipeline-batch-job 전체를 go build 한다.
+  # 512Mi 로는 go build 가 OOM(signal: killed)으로 죽는다 → 커스텀 stage 등록/빌드 불가.
+  # 빌드는 일시적이므로 limit 만 넉넉히(2Gi), request 는 낮게 유지.
   resources:
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: "2"
+      memory: 2Gi
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
   autoscaling:
     enabled: false
     minReplicas: 2
@@ -121,6 +124,11 @@ agent:
   # 배치 워크플로우를 K8s Job 으로 실행할 때 쓰는 pipeline-batch-job 이미지.
   # 비우면 agent 가 RUNNER_IMAGE 없이 떠서 batch 실행 시 "runner image is required" 로 실패.
   runnerImage: "ghcr.io/conduix/pipeline-batch-job:latest"
+  # 실행 파드(batch Job/streaming pod)에 envFrom 으로 붙일 Secret 이름들.
+  # 파이프라인 config 의 ${KAKAO_REST_KEY}/${NAVER_MAP_*} 등을 실행 파드에서 해소한다.
+  # 이 이름의 Secret 은 pipelineSecrets(아래) 또는 외부에서 미리 생성해야 한다.
+  runnerEnvFromSecrets:
+    - conduix-pipeline-secrets
   image:
     repository: ghcr.io/conduix/agent
     tag: "latest"

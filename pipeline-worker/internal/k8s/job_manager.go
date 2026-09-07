@@ -539,6 +539,17 @@ func (m *JobManager) CreateStreamingDeployment(ctx context.Context, spec *Stream
 
 	created, err := m.client.Clientset().AppsV1().Deployments(namespace).Create(ctx, dep, metav1.CreateOptions{})
 	if err != nil {
+		// realtime 위임도 claim 조기 만료·재배정으로 같은 execution 이 재위임되면 동일 이름
+		// Deployment Create 가 AlreadyExists 로 실패한다. 기존 Deployment 는 이미 그 execution 을
+		// 스트리밍 중이므로 새로 만들 필요 없이 채택(adopt)한다. 에러로 올리면 정상 실행 중인
+		// streaming pod 를 "생성 실패 error" 로 보고해 execution 상태가 뒤집힌다(batch 와 동일 정책).
+		if errors.IsAlreadyExists(err) {
+			existing, getErr := m.client.Clientset().AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+			if getErr == nil {
+				return existing, nil
+			}
+			return nil, fmt.Errorf("streaming deployment %s already exists but fetch failed: %w", name, getErr)
+		}
 		return nil, fmt.Errorf("failed to create streaming deployment %s: %w", name, err)
 	}
 	return created, nil

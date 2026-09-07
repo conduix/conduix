@@ -1391,12 +1391,14 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 	})
 }
 
-// GetExecutionMonitoring GET /api/v1/workflows/:id/executions/:executionId/monitoring
-// 실행 중인 워크플로우의 실시간 모니터링 정보 조회 (Agent에 프록시)
+// GetExecutionMonitoring GET /api/v1/workflows/:id/executions/:execId/monitoring
+// 실행 중인 워크플로우의 실시간 모니터링 정보 조회 (Agent에 프록시).
+// route param 은 :execId — c.Param("executionId") 로 읽으면 빈 문자열이 되어 항상 404 가 나서
+// 라이브 모니터링 UI 가 비었었다(batch/realtime 공통). GetWorkflowExecution 과 동일하게 execId 로 읽는다.
 func (h *WorkflowHandler) GetExecutionMonitoring(c *gin.Context) {
 	requestID := middleware.GetRequestID(c)
 	workflowID := c.Param("id")
-	executionID := c.Param("executionId")
+	executionID := c.Param("execId")
 
 	// 실행 정보 조회
 	var execution models.WorkflowExecution

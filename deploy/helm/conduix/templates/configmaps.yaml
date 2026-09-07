@@ -105,6 +105,11 @@ data:
 
   HEARTBEAT_INTERVAL: "{{ .Values.agent.env.HEARTBEAT_INTERVAL | default "10s" }}"
   CONFIG_DIR: "/etc/conduix/configs"
+  {{- range $k, $v := .Values.agent.env }}
+  {{- if ne $k "HEARTBEAT_INTERVAL" }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- end }}
 
 ---
 # Agent Config ConfigMap (파이프라인 설정)

@@ -207,8 +207,7 @@ func (h *WorkflowHandler) aggregateSubExecutionResult(parentID string, result *t
 	if parent.ErrorMessage != "" {
 		finalStatus = string(types.PipelineGroupStatusError)
 	}
-	h.db.Model(&models.WorkflowExecution{}).Where("id = ?", parentID).
-		Updates(map[string]any{"status": finalStatus, "completed_at": now})
+	h.updateExecutionStatus(parentID, finalStatus, map[string]any{"status": finalStatus, "completed_at": now})
 
 	wfStatus := "idle"
 	if finalStatus == string(types.PipelineGroupStatusError) {

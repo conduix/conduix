@@ -946,6 +946,7 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 			CompletedAt:  &completedAt,
 			ErrorMessage: "batch delegation requires a Kubernetes cluster, but no K8s client is available on this worker",
 		})
+		a.releaseClaim(cmd.ExecutionID)
 		return
 	}
 
@@ -968,6 +969,7 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 			CompletedAt:  &completedAt,
 			ErrorMessage: fmt.Sprintf("failed to serialize pipelines: %v", err),
 		})
+		a.releaseClaim(cmd.ExecutionID)
 		return
 	}
 
@@ -990,6 +992,7 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 			CompletedAt:  &completedAt,
 			ErrorMessage: fmt.Sprintf("failed to create batch job: %v", err),
 		})
+		a.releaseClaim(cmd.ExecutionID)
 		return
 	}
 

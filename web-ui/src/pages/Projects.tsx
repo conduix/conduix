@@ -391,7 +391,7 @@ export default function ProjectsPage() {
       width: 100,
       align: 'center',
       headerAlign: 'center',
-      valueFormatter: ({ value }) => value || 0,
+      valueFormatter: (value) => value || 0,
     },
     {
       field: 'status',
@@ -406,7 +406,7 @@ export default function ProjectsPage() {
       field: 'created_at',
       headerName: t('common.createdAt'),
       width: 120,
-      valueFormatter: ({ value }) => new Date(value).toLocaleDateString(),
+      valueFormatter: (value) => new Date(value).toLocaleDateString(),
     },
     {
       field: 'actions',

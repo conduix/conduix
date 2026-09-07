@@ -276,13 +276,13 @@ export default function AgentsPage() {
       field: 'uptime',
       headerName: t('agent.uptime'),
       width: 100,
-      valueFormatter: ({ value }) => value || '-',
+      valueFormatter: (value) => value || '-',
     },
     {
       field: 'last_heartbeat',
       headerName: t('agent.lastHeartbeat'),
       width: 150,
-      valueFormatter: ({ value }) => formatLastHeartbeat(value),
+      valueFormatter: (value) => formatLastHeartbeat(value),
     },
   ]
 

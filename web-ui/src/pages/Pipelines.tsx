@@ -183,7 +183,7 @@ export default function PipelinesPage() {
       field: 'created_at',
       headerName: '생성일',
       width: 120,
-      valueFormatter: ({ value }) => new Date(value).toLocaleDateString(),
+      valueFormatter: (value) => new Date(value).toLocaleDateString(),
     },
     {
       field: 'actions',

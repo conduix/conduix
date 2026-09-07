@@ -191,7 +191,7 @@ export default function DashboardPage() {
       field: 'created_at',
       headerName: t('common.createdAt'),
       width: 120,
-      valueFormatter: ({ value }) => new Date(value).toLocaleDateString(),
+      valueFormatter: (value) => new Date(value).toLocaleDateString(),
     },
     {
       field: 'actions',

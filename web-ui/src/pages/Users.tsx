@@ -298,19 +298,19 @@ export default function UsersPage() {
       field: 'permission_count',
       headerName: '권한 수',
       width: 100,
-      valueFormatter: ({ value }) => value || 0,
+      valueFormatter: (value) => value || 0,
     },
     {
       field: 'created_at',
       headerName: '가입일',
       width: 120,
-      valueFormatter: ({ value }) => dayjs(value).format('YYYY-MM-DD'),
+      valueFormatter: (value) => dayjs(value).format('YYYY-MM-DD'),
     },
     {
       field: 'last_login',
       headerName: '마지막 로그인',
       width: 150,
-      valueFormatter: ({ value }) =>
+      valueFormatter: (value) =>
         value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-',
     },
     {
@@ -389,7 +389,7 @@ export default function UsersPage() {
       field: 'created_at',
       headerName: '생성일',
       width: 120,
-      valueFormatter: ({ value }) => dayjs(value).format('YYYY-MM-DD'),
+      valueFormatter: (value) => dayjs(value).format('YYYY-MM-DD'),
     },
     {
       field: 'delete_action',

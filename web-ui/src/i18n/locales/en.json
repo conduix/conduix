@@ -52,7 +52,7 @@
     "schedules": "Schedules",
     "settings": "Settings",
     "users": "Users",
-    "plugins": "Plugins"
+    "plugins": "Stages"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -758,7 +758,7 @@
     "saveSuccess": "Stages saved successfully",
     "saveError": "Failed to save stages",
     "yamlParseError": "Invalid YAML format",
-    "customSection": "Custom (plugins)",
+    "customSection": "Custom Stages",
     "customNoSchema": "No config schema registered — edit as raw JSON",
     "viewSource": "View source",
     "sourceOf": "Source of {{type}} (read-only)",
@@ -1246,28 +1246,28 @@
     "httpHeadersHelp": "Headers to include in HTTP requests (JSON format)"
   },
   "plugin": {
-    "title": "Plugins",
-    "name": "Plugin Name",
+    "title": "Stages",
+    "name": "Stage Name",
     "version": "Version",
     "sourceRepo": "Source Repository",
-    "register": "Register Plugin",
-    "edit": "Edit Plugin",
-    "totalPlugins": "Total Plugins",
-    "activePlugins": "Active Plugins",
+    "register": "Register Stage",
+    "edit": "Edit Stage",
+    "totalPlugins": "Total Stages",
+    "activePlugins": "Active Stages",
     "status": {
       "active": "Active",
       "inactive": "Inactive",
       "deprecated": "Deprecated"
     },
-    "loadError": "Failed to load plugins",
-    "createSuccess": "Plugin registered successfully",
-    "createError": "Failed to register plugin",
-    "updateSuccess": "Plugin updated successfully",
-    "updateError": "Failed to update plugin",
-    "deleteSuccess": "Plugin deleted successfully",
-    "deleteError": "Failed to delete plugin",
-    "deleteConfirm": "Delete Plugin",
-    "deleteMessage": "Are you sure you want to delete plugin '{{name}}'?",
+    "loadError": "Failed to load stages",
+    "createSuccess": "Stage registered successfully",
+    "createError": "Failed to register stage",
+    "updateSuccess": "Stage updated successfully",
+    "updateError": "Failed to update stage",
+    "deleteSuccess": "Stage deleted successfully",
+    "deleteError": "Failed to delete stage",
+    "deleteConfirm": "Delete Stage",
+    "deleteMessage": "Are you sure you want to delete stage '{{name}}'?",
     "type": "Type",
     "nativeMode": "Native Go Stage (Code Editor)",
     "nativeTest": "Build & Test",
@@ -1290,9 +1290,9 @@
     "buildError": "Failed to start build",
     "buildTriggering": "Starting...",
     "buildNow": "Build Now",
-    "buildNeededBanner": "Runner build needed — {{count}} plugin(s) have pending changes",
+    "buildNeededBanner": "Runner build needed — {{count}} stage(s) have pending changes",
     "lastBuild": "Latest ready build",
-    "buildUpToDate": "Runner is up to date — all native plugins deployed",
+    "buildUpToDate": "Runner is up to date — all native stages deployed",
     "autoBuildTriggered": "auto-build triggered",
     "viewLogs": "Logs",
     "buildHistory": "Runner Build History",
@@ -1307,7 +1307,7 @@
     "arrayFieldHelp": "Separate values with commas"
   },
   "pluginBuilder": {
-    "title": "Plugin Builder",
+    "title": "Stage Builder",
     "validate": "Validate",
     "buildAndRegister": "Build & Register",
     "building": "Building...",
@@ -1317,8 +1317,8 @@
     "buildFailed": "Build failed. Check the build log.",
     "validationPassed": "Source code validation passed. Imports:",
     "validationFailed": "Source code validation failed.",
-    "nameRequired": "Plugin name is required.",
-    "buildPlugin": "Build Plugin"
+    "nameRequired": "Stage name is required.",
+    "buildPlugin": "Build Stage"
   },
   "executionMode": {
     "title": "Execution Mode",

@@ -398,7 +398,15 @@
   "status": {
     "active": "Active",
     "inactive": "Inactive",
-    "archived": "Archived"
+    "archived": "Archived",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+    "error": "Error",
+    "stopped": "Stopped",
+    "idle": "Idle",
+    "pending": "Pending",
+    "paused": "Paused"
   },
   "profile": {
     "title": "My Profile",
@@ -1320,5 +1328,35 @@
     "batchDesc": "One-time or scheduled batch processing via K8s Job/CronJob",
     "streamingDesc": "Continuous real-time processing via K8s Deployment",
     "hybridDesc": "Combination of scheduled batch and real-time streaming"
+  },
+  "history": {
+    "title": "Execution History",
+    "workflow": "Workflow",
+    "triggeredBy": "Triggered By",
+    "allStatuses": "All statuses",
+    "subExecution": "sub-execution",
+    "openWorkflow": "Open workflow",
+    "loadError": "Failed to load execution history",
+    "hasErrors": "Some executions failed. Open the workflow detail to see the error."
+  },
+  "schedules": {
+    "title": "Schedules",
+    "workflow": "Workflow",
+    "type": "Type",
+    "expression": "Schedule",
+    "timezone": "Timezone",
+    "onlyEnabled": "Enabled only",
+    "unset": "Not set",
+    "type_cron": "Cron",
+    "type_interval": "Interval",
+    "type_manual": "Manual",
+    "triggerNow": "Run now",
+    "openWorkflow": "Open workflow",
+    "batchOnlyNotice": "Scheduling applies to batch workflows only. Realtime workflows run continuously and have no schedule.",
+    "loadError": "Failed to load schedules",
+    "toggleSuccess": "Schedule updated",
+    "toggleError": "Failed to update schedule",
+    "triggerSuccess": "Execution started",
+    "triggerError": "Failed to start execution"
   }
 }

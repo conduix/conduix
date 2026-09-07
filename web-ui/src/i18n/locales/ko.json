@@ -398,7 +398,15 @@
   "status": {
     "active": "활성",
     "inactive": "비활성",
-    "archived": "보관됨"
+    "archived": "보관됨",
+    "running": "실행 중",
+    "completed": "완료",
+    "failed": "실패",
+    "error": "오류",
+    "stopped": "중지",
+    "idle": "대기",
+    "pending": "대기 중",
+    "paused": "일시정지"
   },
   "profile": {
     "title": "내 프로필",
@@ -1323,5 +1331,35 @@
     "batchDesc": "K8s Job/CronJob으로 일회성 또는 스케줄 배치 처리",
     "streamingDesc": "K8s Deployment로 지속적인 실시간 처리",
     "hybridDesc": "스케줄 배치와 실시간 스트리밍의 조합"
+  },
+  "history": {
+    "title": "실행 이력",
+    "workflow": "워크플로우",
+    "triggeredBy": "실행 주체",
+    "allStatuses": "전체 상태",
+    "subExecution": "하위 실행",
+    "openWorkflow": "워크플로우 열기",
+    "loadError": "실행 이력을 불러오지 못했습니다",
+    "hasErrors": "오류가 발생한 실행이 있습니다. 워크플로우 상세에서 오류 내용을 확인하세요."
+  },
+  "schedules": {
+    "title": "스케줄",
+    "workflow": "워크플로우",
+    "type": "방식",
+    "expression": "스케줄",
+    "timezone": "시간대",
+    "onlyEnabled": "활성만 보기",
+    "unset": "미설정",
+    "type_cron": "Cron",
+    "type_interval": "주기",
+    "type_manual": "수동",
+    "triggerNow": "지금 실행",
+    "openWorkflow": "워크플로우 열기",
+    "batchOnlyNotice": "스케줄은 batch 워크플로우만 지원합니다. realtime 워크플로우는 상시 실행되므로 스케줄이 없습니다.",
+    "loadError": "스케줄을 불러오지 못했습니다",
+    "toggleSuccess": "스케줄 상태를 변경했습니다",
+    "toggleError": "스케줄 상태를 변경하지 못했습니다",
+    "triggerSuccess": "실행을 시작했습니다",
+    "triggerError": "실행을 시작하지 못했습니다"
   }
 }

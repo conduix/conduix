@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -1391,6 +1392,18 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 	})
 }
 
+// defaultAgentBaseURL 은 in-cluster agent Service 주소다. agent 는 N개로 스케일될 수 있고
+// pod IP/이름으로는 DNS 가 풀리지 않으므로 Service 를 경유한다.
+const defaultAgentBaseURL = "http://conduix-agent:8081"
+
+// agentBaseURL 은 CP→agent 호출 기준 주소. 로컬 개발이나 다른 네임스페이스면 AGENT_BASE_URL 로 바꾼다.
+func agentBaseURL() string {
+	if v := os.Getenv("AGENT_BASE_URL"); v != "" {
+		return strings.TrimSuffix(v, "/")
+	}
+	return defaultAgentBaseURL
+}
+
 // GetExecutionMonitoring GET /api/v1/workflows/:id/executions/:execId/monitoring
 // 실행 중인 워크플로우의 실시간 모니터링 정보 조회 (Agent에 프록시).
 // route param 은 :execId — c.Param("executionId") 로 읽으면 빈 문자열이 되어 항상 404 가 나서
@@ -1454,15 +1467,11 @@ func (h *WorkflowHandler) GetExecutionMonitoring(c *gin.Context) {
 		return
 	}
 
-	// 첫 번째 온라인 Agent에게 모니터링 정보 요청
-	agent := agents[0]
-	// Agent 포트는 기본값 8081 사용 (또는 Redis 하트비트에서 가져올 수 있음)
-	agentHost := agent.IPAddress
-	if agentHost == "" {
-		agentHost = agent.Hostname
-	}
-	agentPort := 8081 // 기본 포트
-	monitoringURL := fmt.Sprintf("http://%s:%d/api/v1/monitoring/%s", agentHost, agentPort, executionID)
+	// agents 조회는 "이 클러스터에 agent 가 살아있는가" 확인용이고, 실제 호출은 Service 로 보낸다.
+	// agents.ip_address 는 비어있고 hostname 은 pod 이름이라 DNS 로 안 풀려서 라이브 모니터링이
+	// AGENT_ERROR(no such host)로 항상 실패했다. Service 라운드로빈으로 어느 agent 에 걸려도
+	// 위임 실행 pod 는 label 로 찾으므로(agent 개수 무관) 결과가 같다.
+	monitoringURL := fmt.Sprintf("%s/api/v1/monitoring/%s", agentBaseURL(), executionID)
 
 	resp, err := http.Get(monitoringURL)
 	if err != nil {

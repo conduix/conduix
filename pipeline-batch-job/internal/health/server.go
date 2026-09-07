@@ -31,6 +31,17 @@ type Server struct {
 	// commandFn 은 POST /commands 로 받은 제어명령(stop/pause/resume)을 처리한다.
 	// executor 의존을 피하려 콜백으로 주입한다(runStreaming 이 GroupExecutor 를 연결).
 	commandFn func(cmd string) error
+	// monitoringFn 은 GET /monitoring 응답 본문을 만든다. 위임 실행(batch Job/streaming pod)은
+	// agent 프로세스 밖에서 도므로 agent 의 GroupExecutor 가 nil 이고, agent 는 이 엔드포인트로
+	// pod 에 직접 물어봐야 실시간 진행률을 알 수 있다. executor 의존을 피해 콜백으로 주입한다.
+	monitoringFn func() any
+}
+
+// SetMonitoringHandler 모니터링 정보 제공자 주입. batch/streaming 공통으로 GroupExecutor 를 연결한다.
+func (s *Server) SetMonitoringHandler(fn func() any) {
+	s.mu.Lock()
+	s.monitoringFn = fn
+	s.mu.Unlock()
 }
 
 // SetCommandHandler 제어명령 핸들러 주입. streaming 모드에서 GroupExecutor 제어를 연결한다.
@@ -56,6 +67,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/ready", s.readyHandler)
 	mux.HandleFunc("/commands", s.commandHandler)
+	mux.HandleFunc("/monitoring", s.monitoringHandler)
 
 	s.server = &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.port),
@@ -137,6 +149,33 @@ func (s *Server) commandHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{"success":true}`)
+}
+
+// monitoringHandler GET /monitoring — 이 pod 가 실행 중인 파이프라인의 실시간 진행 정보.
+// agent 가 label(conduix.io/execution-id)로 이 pod 를 찾아 1회 pull 한다(주기 polling 아님).
+func (s *Server) monitoringHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.RLock()
+	fn := s.monitoringFn
+	s.mu.RUnlock()
+	if fn == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":"monitoring provider not set"}`)
+		return
+	}
+	info := fn()
+	if info == nil {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":"no monitoring info"}`)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(info); err != nil {
+		slog.Error("monitoring encode failed", "error", err)
+	}
 }
 
 // readyHandler readiness probe

@@ -905,7 +905,7 @@ export default function WorkflowDetailPage() {
   const tabList = [
     { label: t('project.overview'), icon: <SettingsIcon /> },
     { label: `${t('pipeline.title')} (${pipelines.length})`, icon: <BranchesIcon /> },
-    { label: `${t('workflow.executions')} (${executions.length})`, icon: <HistoryIcon /> },
+    { label: `${workflow?.type === 'realtime' ? t('workflow.streamingSessions') : t('workflow.executions')} (${executions.length})`, icon: <HistoryIcon /> },
   ]
 
   if (runningExecutionId) {
@@ -1193,7 +1193,8 @@ export default function WorkflowDetailPage() {
         {/* Executions Tab */}
         <TabPanel value={tabValue} index={2}>
           <Card>
-            <CardHeader title={t('workflow.executionHistory')} />
+            {/* realtime 은 트리거마다 쌓이는 "이력"이 아니라 stop/start 로 갈리는 상주 세션이라 라벨을 구분한다 */}
+            <CardHeader title={workflow?.type === 'realtime' ? t('workflow.streamingSessions') : t('workflow.executionHistory')} />
             <CardContent>
               {executions.length > 0 ? (
                 <TableContainer component={Paper} variant="outlined">
@@ -1297,7 +1298,7 @@ export default function WorkflowDetailPage() {
                 <Box sx={{ textAlign: 'center', py: 6 }}>
                   <Typography sx={{
                     color: "text.secondary"
-                  }}>{t('workflow.noExecutions')}</Typography>
+                  }}>{workflow?.type === 'realtime' ? t('workflow.noStreamingSessions') : t('workflow.noExecutions')}</Typography>
                 </Box>
               )}
             </CardContent>

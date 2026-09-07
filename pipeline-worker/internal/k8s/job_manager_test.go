@@ -609,6 +609,83 @@ func TestStreamingCommandURL(t *testing.T) {
 	}
 }
 
+// batch Job pod 도 execution-id 라벨을 달기 때문에 같은 조회로 /monitoring 을 pull 할 수 있어야 한다.
+// 이 경로가 없으면 batch 실행 중 라이브 모니터링이 항상 비었다.
+func TestExecutionPodURL_MonitoringPath(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	_, err := fakeClient.CoreV1().Pods("conduix").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "batch-pod-1",
+			Namespace: "conduix",
+			Labels:    map[string]string{"conduix.io/execution-id": "batch-exec-1"},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.4.5.6"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create pod failed: %v", err)
+	}
+
+	url, err := jm.ExecutionPodURL(ctx, "conduix", "batch-exec-1", "/monitoring")
+	if err != nil {
+		t.Fatalf("ExecutionPodURL failed: %v", err)
+	}
+	want := fmt.Sprintf("http://10.4.5.6:%d/monitoring", streamingHealthPort)
+	if url != want {
+		t.Errorf("url = %q, want %q", url, want)
+	}
+}
+
+// namespace 를 비우면 JobManager 기본 namespace 로 조회해야 한다.
+// batch 는 runningExecs 에 등록되지 않아 agent 가 namespace 를 모른 채 호출한다.
+func TestExecutionPodURL_DefaultNamespace(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	_, err := fakeClient.CoreV1().Pods("conduix").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "batch-pod-2",
+			Namespace: "conduix",
+			Labels:    map[string]string{"conduix.io/execution-id": "batch-exec-2"},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.7.8.9"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create pod failed: %v", err)
+	}
+
+	url, err := jm.ExecutionPodURL(ctx, "", "batch-exec-2", "/monitoring")
+	if err != nil {
+		t.Fatalf("ExecutionPodURL with empty namespace failed: %v", err)
+	}
+	if want := fmt.Sprintf("http://10.7.8.9:%d/monitoring", streamingHealthPort); url != want {
+		t.Errorf("url = %q, want %q", url, want)
+	}
+}
+
+// Pending pod(IP 미배정)는 대상이 아니어야 한다 — 붙어도 연결이 실패한다.
+func TestExecutionPodURL_SkipsPendingPod(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	_, err := fakeClient.CoreV1().Pods("conduix").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pending-pod",
+			Namespace: "conduix",
+			Labels:    map[string]string{"conduix.io/execution-id": "exec-pending"},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create pod failed: %v", err)
+	}
+
+	if _, err := jm.ExecutionPodURL(ctx, "conduix", "exec-pending", "/monitoring"); err == nil {
+		t.Error("expected error for pending pod without IP")
+	}
+}
+
 // envToMap 환경변수 슬라이스를 맵으로 변환 (테스트 헬퍼)
 func envToMap(envs []corev1.EnvVar) map[string]string {
 	m := make(map[string]string)

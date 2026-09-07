@@ -97,3 +97,50 @@ func TestSetStatus(t *testing.T) {
 		t.Errorf("expected running, got %s", status)
 	}
 }
+
+// 위임 실행 pod 는 이 엔드포인트로만 진행률을 노출한다. 핸들러 미주입/정보 없음/정상 3가지를
+// 구분해야 agent 가 "아직 시작 안 함"과 "실패"를 혼동하지 않는다.
+func TestMonitoringHandler(t *testing.T) {
+	s := NewServer(0, "batch")
+
+	// 주입 전: 503
+	w := httptest.NewRecorder()
+	s.monitoringHandler(w, httptest.NewRequest(http.MethodGet, "/monitoring", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("no provider: code = %d, want 503", w.Code)
+	}
+
+	// nil 반환: 404
+	s.SetMonitoringHandler(func() any { return nil })
+	w = httptest.NewRecorder()
+	s.monitoringHandler(w, httptest.NewRequest(http.MethodGet, "/monitoring", nil))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("nil info: code = %d, want 404", w.Code)
+	}
+
+	// 정상: 200 + JSON 본문
+	s.SetMonitoringHandler(func() any {
+		return map[string]any{"execution_id": "e1", "total_records": 42}
+	})
+	w = httptest.NewRecorder()
+	s.monitoringHandler(w, httptest.NewRequest(http.MethodGet, "/monitoring", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", w.Code)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["execution_id"] != "e1" {
+		t.Errorf("execution_id = %v, want e1", body["execution_id"])
+	}
+}
+
+func TestMonitoringHandlerMethodNotAllowed(t *testing.T) {
+	s := NewServer(0, "batch")
+	w := httptest.NewRecorder()
+	s.monitoringHandler(w, httptest.NewRequest(http.MethodPost, "/monitoring", nil))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("code = %d, want 405", w.Code)
+	}
+}

@@ -626,24 +626,29 @@ func (m *JobManager) UpdateStreamingDeployment(ctx context.Context, namespace, n
 	return nil
 }
 
-// StreamingCommandURL 은 execution-id 라벨로 streaming pod 를 찾아 command REST 엔드포인트 URL 을 만든다.
-// pod IP 는 in-cluster 에서 직접 접근 가능하므로 service 없이 pod IP:health-port 로 명령을 보낸다(Q2).
-// running·IP 배정된 pod 만 대상으로 한다. 없으면 에러(아직 스케줄 중이거나 rolling 교체 중일 수 있음).
-func (m *JobManager) StreamingCommandURL(ctx context.Context, namespace, executionID string) (string, error) {
+// ExecutionPodURL 은 execution-id 라벨로 위임 실행 pod(batch Job / streaming Deployment 공통)를 찾아
+// 지정 경로의 REST URL 을 만든다. pod IP 는 in-cluster 에서 직접 접근 가능하므로 service 없이
+// pod IP:health-port 로 붙는다(Q2). running·IP 배정된 pod 만 대상 — 없으면 에러(스케줄 중/rolling 교체 중).
+func (m *JobManager) ExecutionPodURL(ctx context.Context, namespace, executionID, path string) (string, error) {
 	if namespace == "" {
 		namespace = m.client.Namespace()
 	}
 	selector := "conduix.io/execution-id=" + sanitizeLabel(executionID)
 	pods, err := m.client.Clientset().CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return "", fmt.Errorf("failed to list streaming pods (execution=%s): %w", executionID, err)
+		return "", fmt.Errorf("failed to list execution pods (execution=%s): %w", executionID, err)
 	}
 	for _, pod := range pods.Items {
 		if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
-			return fmt.Sprintf("http://%s:%d/commands", pod.Status.PodIP, streamingHealthPort), nil
+			return fmt.Sprintf("http://%s:%d%s", pod.Status.PodIP, streamingHealthPort, path), nil
 		}
 	}
-	return "", fmt.Errorf("no running streaming pod with IP for execution=%s", executionID)
+	return "", fmt.Errorf("no running pod with IP for execution=%s", executionID)
+}
+
+// StreamingCommandURL 은 streaming pod 의 command REST 엔드포인트 URL 이다.
+func (m *JobManager) StreamingCommandURL(ctx context.Context, namespace, executionID string) (string, error) {
+	return m.ExecutionPodURL(ctx, namespace, executionID, "/commands")
 }
 
 // DeleteCronJob CronJob 삭제

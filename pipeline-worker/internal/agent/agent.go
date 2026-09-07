@@ -32,6 +32,10 @@ const (
 	ModeHybrid                          // 둘 다 사용
 )
 
+// delegatedMonitoringTimeout 은 위임 실행 pod 에서 진행률을 pull 할 때의 상한이다.
+// UI 요청 경로(CP→agent→pod)에 동기로 걸리므로 짧게 잡는다.
+const delegatedMonitoringTimeout = 3 * time.Second
+
 // RunningExecution 실행 중인 워크플로우 실행 정보
 type RunningExecution struct {
 	ExecutionID   string
@@ -1460,17 +1464,63 @@ func (a *Agent) GetRedisMetrics() *redisclient.Metrics {
 	return &metrics
 }
 
-// GetExecutionMonitoring 특정 실행의 모니터링 정보 조회
+// GetExecutionMonitoring 특정 실행의 모니터링 정보 조회.
+// in-process 실행이면 GroupExecutor 에서 직접 읽고, 위임 실행(batch Job / streaming pod)이면
+// GroupExecutor 가 agent 프로세스 밖에 있으므로 execution-id 라벨로 pod 를 찾아 1회 pull 한다.
 func (a *Agent) GetExecutionMonitoring(executionID string) *types.ExecutionMonitoringInfo {
 	a.execMu.RLock()
 	exec, ok := a.runningExecs[executionID]
 	a.execMu.RUnlock()
 
-	if !ok || exec.GroupExecutor == nil {
+	if ok && exec.GroupExecutor != nil {
+		return exec.GroupExecutor.GetMonitoringInfo()
+	}
+
+	// batch 는 runningExecs 에 등록되지 않으므로 !ok 도 위임 실행일 수 있다.
+	namespace := ""
+	if ok {
+		namespace = exec.StreamingNamespace
+	}
+	return a.pullDelegatedMonitoring(executionID, namespace)
+}
+
+// pullDelegatedMonitoring 은 위임 실행 pod 의 GET /monitoring 을 1회 호출한다.
+// 주기 polling 이 아니라 UI 요청 시점의 pull 이므로 agent 수와 무관하게 중복 조회가 생기지 않는다.
+func (a *Agent) pullDelegatedMonitoring(executionID, namespace string) *types.ExecutionMonitoringInfo {
+	jm := a.getJobManager()
+	if jm == nil {
 		return nil
 	}
 
-	return exec.GroupExecutor.GetMonitoringInfo()
+	ctx, cancel := context.WithTimeout(a.ctx, delegatedMonitoringTimeout)
+	defer cancel()
+
+	url, err := jm.ExecutionPodURL(ctx, namespace, executionID, "/monitoring")
+	if err != nil {
+		slog.Debug("delegated monitoring pod not found", "execution_id", executionID, "error", err)
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		slog.Debug("delegated monitoring pull failed", "execution_id", executionID, "url", url, "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	var info types.ExecutionMonitoringInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		slog.Debug("delegated monitoring decode failed", "execution_id", executionID, "error", err)
+		return nil
+	}
+	return &info
 }
 
 // GetAllExecutionMonitoring 모든 실행의 모니터링 정보 조회

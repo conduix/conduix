@@ -125,7 +125,8 @@ export type OutputType =
 export interface Stage {
   id: string           // 프론트엔드용 고유 ID
   name: string
-  type: StageType | OutputType  // 레거시 호환: Output 타입도 허용
+  // StageType|OutputType(빌트인) + 커스텀 stage type(플러그인 이름, 임의 문자열).
+  type: StageType | OutputType | string
   config: Record<string, unknown>
 }
 

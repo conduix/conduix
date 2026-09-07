@@ -7,7 +7,7 @@
  * - Stage 타입별 설정 폼
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   Accordion,
   AccordionSummary,
@@ -51,9 +51,16 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import GavelIcon from '@mui/icons-material/Gavel'
 import ForkRightIcon from '@mui/icons-material/ForkRight'
 import BlockIcon from '@mui/icons-material/Block'
+import ExtensionIcon from '@mui/icons-material/Extension'
+import { CircularProgress, ListSubheader } from '@mui/material'
+import Editor from '@monaco-editor/react'
 import { useTranslation } from 'react-i18next'
 import { usePipelineEditor } from './PipelineEditorContext'
 import { ConfirmDialog } from '../common/ConfirmDialog'
+import { getStages, getStageSchemaRaw } from '../../services/pluginApi'
+import type { CustomStageInfo } from '../../types/plugin'
+import type { StageSchema } from '../../types/stage-schema'
+import { StageSchemaForm } from '../StageSchemaForm/StageSchemaForm'
 import type { Stage, StageType } from '../../types/pipeline'
 
 // Stage 타입별 설정
@@ -78,7 +85,8 @@ const stageTypeConfig: Record<StageType, { color: string; icon: React.ReactNode;
 // Stage form 상태 타입
 interface StageFormState {
   name: string
-  type: StageType | ''
+  // 커스텀 stage type(플러그인 이름)도 담기 위해 string 으로 넓힘.
+  type: StageType | string | ''
   config: Record<string, unknown>
 }
 
@@ -106,6 +114,35 @@ export function StageSection() {
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
 
+  // 커스텀(플러그인) stage: 목록 + 선택 시 로드한 raw StageSchema 캐시(null = 스키마 없음).
+  const [customStages, setCustomStages] = useState<CustomStageInfo[]>([])
+  const [customSchemas, setCustomSchemas] = useState<Record<string, StageSchema | null>>({})
+
+  useEffect(() => {
+    getStages()
+      .then((res) => setCustomStages(res.custom || []))
+      .catch(() => setCustomStages([]))
+  }, [])
+
+  const isCustomType = useCallback(
+    (type: string) => customStages.some((cs) => cs.type === type),
+    [customStages],
+  )
+
+  // 커스텀 stage 선택/편집 시 raw StageSchema 지연 로드.
+  const ensureCustomSchema = useCallback(
+    async (stageType: string) => {
+      if (stageType in customSchemas) return
+      try {
+        const raw = (await getStageSchemaRaw(stageType)) as unknown as StageSchema
+        setCustomSchemas((prev) => ({ ...prev, [stageType]: raw?.fields?.length ? raw : null }))
+      } catch {
+        setCustomSchemas((prev) => ({ ...prev, [stageType]: null }))
+      }
+    },
+    [customSchemas],
+  )
+
   const stages = pipeline.stages || []
 
   // Stage 추가 버튼 핸들러
@@ -124,9 +161,13 @@ export function StageSection() {
     setEditingStage(stage)
     setStageForm({
       name: stage.name,
-      type: stage.type as StageType,
+      type: stage.type,
       config: { ...stage.config },
     })
+    // 커스텀 stage 면 스키마 로드(폼 렌더용). config 는 이미 위에서 통째로 담김.
+    if (isCustomType(stage.type)) {
+      void ensureCustomSchema(stage.type)
+    }
     setModalOpen(true)
   }
 
@@ -170,7 +211,13 @@ export function StageSection() {
   }
 
   // Stage 타입 변경 핸들러
-  const handleTypeChange = (type: StageType | '') => {
+  const handleTypeChange = (type: StageType | string | '') => {
+    // 커스텀(플러그인) stage: 스키마 로드 + config 초기화. 빌트인 defaultConfigs 는 건너뜀.
+    if (type && isCustomType(type)) {
+      void ensureCustomSchema(type)
+      setStageForm((prev) => ({ ...prev, type, config: {} }))
+      return
+    }
     const defaultConfigs: Record<StageType, Record<string, unknown>> = {
       filter: { condition: '' },
       remap: { mappings: {} },
@@ -189,10 +236,11 @@ export function StageSection() {
       delete: { mode: 'physical' },
     }
 
+    // 여기 도달하는 type 은 빌트인(위에서 커스텀은 early return). 안전 인덱싱.
     setStageForm((prev) => ({
       ...prev,
       type,
-      config: type ? defaultConfigs[type] || {} : {},
+      config: type ? defaultConfigs[type as StageType] || {} : {},
     }))
   }
 
@@ -573,6 +621,42 @@ export function StageSection() {
         )
 
       default:
+        // 커스텀(플러그인) stage: 스키마 있으면 자동 폼, 없으면 JSON 편집기 폴백.
+        if (stageForm.type && isCustomType(stageForm.type)) {
+          const schema = customSchemas[stageForm.type]
+          if (schema === undefined) {
+            return <CircularProgress size={24} />
+          }
+          if (schema) {
+            return (
+              <StageSchemaForm
+                schema={schema}
+                value={stageForm.config}
+                onChange={(v) => setStageForm((prev) => ({ ...prev, config: v }))}
+              />
+            )
+          }
+          return (
+            <Stack spacing={1}>
+              <Typography variant="caption" color="text.secondary">
+                {t('stage.customNoSchema')}
+              </Typography>
+              <Editor
+                height="240px"
+                defaultLanguage="json"
+                value={JSON.stringify(stageForm.config, null, 2)}
+                onChange={(val) => {
+                  try {
+                    setStageForm((prev) => ({ ...prev, config: JSON.parse(val || '{}') }))
+                  } catch {
+                    /* 편집 중 파싱 실패 무시 */
+                  }
+                }}
+                options={{ minimap: { enabled: false } }}
+              />
+            </Stack>
+          )
+        }
         return (
           <Typography sx={{
             color: "text.secondary"
@@ -630,7 +714,7 @@ export function StageSection() {
                   }}>
                   {index + 1}
                 </Typography>
-                {stageTypeConfig[stage.type as StageType] && (
+                {stageTypeConfig[stage.type as StageType] ? (
                   <Chip
                     icon={stageTypeConfig[stage.type as StageType].icon as React.ReactElement}
                     label={stageTypeConfig[stage.type as StageType].label}
@@ -639,6 +723,14 @@ export function StageSection() {
                       bgcolor: stageTypeConfig[stage.type as StageType].color,
                       color: 'white',
                     }}
+                  />
+                ) : (
+                  // 커스텀(플러그인) stage: 하드코딩 맵에 없으므로 플러그인 라벨로 폴백.
+                  <Chip
+                    icon={<ExtensionIcon fontSize="small" />}
+                    label={customStages.find((cs) => cs.type === stage.type)?.display_name || stage.type}
+                    size="small"
+                    sx={{ bgcolor: '#009688', color: 'white' }}
                   />
                 )}
                 <Typography variant="body2" sx={{ flex: 1 }}>
@@ -678,7 +770,7 @@ export function StageSection() {
               <InputLabel>{t('pipelineEditor.stage.type')}</InputLabel>
               <Select
                 value={stageForm.type}
-                onChange={(e) => handleTypeChange(e.target.value as StageType | '')}
+                onChange={(e) => handleTypeChange(e.target.value)}
                 label={t('pipelineEditor.stage.type')}
               >
                 {(Object.keys(stageTypeConfig) as StageType[]).map((type) => {
@@ -698,6 +790,20 @@ export function StageSection() {
                     </MenuItem>
                   );
                 })}
+                {customStages.length > 0 && (
+                  <ListSubheader>{t('stage.customSection')}</ListSubheader>
+                )}
+                {customStages.map((cs) => (
+                  <MenuItem key={cs.type} value={cs.type}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                      <ExtensionIcon fontSize="small" sx={{ color: '#009688' }} />
+                      <span>{cs.display_name}</span>
+                      {!cs.has_schema && (
+                        <Chip size="small" label="JSON" sx={{ height: 18, fontSize: 10 }} />
+                      )}
+                    </Stack>
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
 

@@ -234,13 +234,34 @@ class ApiService {
   }
 
   // 스케줄
-  async getSchedules() {
-    const response = await this.client.get('/schedules')
+  // 스케줄은 워크플로우에 종속돼 있어 생성 API 가 없다(POST /schedules 라우트 없음).
+  // 워크플로우 하위 경로로 조회·수정·활성화만 한다.
+  async getSchedules(params?: { enabled?: boolean; project_id?: string }) {
+    const response = await this.client.get('/schedules', { params })
     return response.data
   }
 
-  async createSchedule(data: { pipeline_id: string; cron_expression: string; enabled: boolean }) {
-    const response = await this.client.post('/schedules', data)
+  async getWorkflowSchedule(workflowId: string) {
+    const response = await this.client.get(`/workflows/${workflowId}/schedule`)
+    return response.data
+  }
+
+  async updateWorkflowSchedule(
+    workflowId: string,
+    data: { type?: string; cron?: string; interval?: string; timezone?: string; enabled?: boolean },
+  ) {
+    const response = await this.client.put(`/workflows/${workflowId}/schedule`, data)
+    return response.data
+  }
+
+  async setWorkflowScheduleEnabled(workflowId: string, enabled: boolean) {
+    const action = enabled ? 'enable' : 'disable'
+    const response = await this.client.post(`/workflows/${workflowId}/schedule/${action}`)
+    return response.data
+  }
+
+  async triggerWorkflowNow(workflowId: string) {
+    const response = await this.client.post(`/workflows/${workflowId}/trigger`)
     return response.data
   }
 
@@ -584,6 +605,18 @@ class ApiService {
 
   async getWorkflowExecutions(id: string) {
     const response = await this.client.get(`/workflows/${id}/executions`)
+    return response.data
+  }
+
+  // 전역 실행 이력(History 화면). 워크플로우별과 달리 Workflow 를 preload 해 이름을 함께 주고
+  // total/limit/offset 페이징 메타를 반환한다.
+  async getAllExecutions(params?: {
+    status?: string
+    workflow_id?: string
+    limit?: number
+    offset?: number
+  }) {
+    const response = await this.client.get('/executions', { params })
     return response.data
   }
 

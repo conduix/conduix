@@ -52,7 +52,7 @@
     "schedules": "스케줄",
     "settings": "설정",
     "users": "사용자",
-    "plugins": "플러그인"
+    "plugins": "Stage"
   },
   "dashboard": {
     "title": "대시보드",
@@ -761,7 +761,7 @@
     "saveSuccess": "Stage가 저장되었습니다",
     "saveError": "Stage 저장에 실패했습니다",
     "yamlParseError": "잘못된 YAML 형식입니다",
-    "customSection": "커스텀 (플러그인)",
+    "customSection": "커스텀 Stage",
     "customNoSchema": "설정 스키마가 등록되지 않았습니다 — JSON 으로 직접 입력하세요",
     "viewSource": "소스 보기",
     "sourceOf": "{{type}} 소스 (읽기 전용)",
@@ -1249,28 +1249,28 @@
     "httpHeadersHelp": "HTTP 요청에 포함할 헤더 (JSON 형식)"
   },
   "plugin": {
-    "title": "플러그인",
-    "name": "플러그인명",
+    "title": "Stage",
+    "name": "Stage 이름",
     "version": "버전",
     "sourceRepo": "소스 저장소",
-    "register": "플러그인 등록",
-    "edit": "플러그인 수정",
-    "totalPlugins": "전체 플러그인",
-    "activePlugins": "활성 플러그인",
+    "register": "Stage 등록",
+    "edit": "Stage 수정",
+    "totalPlugins": "전체 Stage",
+    "activePlugins": "활성 Stage",
     "status": {
       "active": "활성",
       "inactive": "비활성",
       "deprecated": "폐기됨"
     },
-    "loadError": "플러그인 목록을 불러오는데 실패했습니다",
-    "createSuccess": "플러그인이 등록되었습니다",
-    "createError": "플러그인 등록에 실패했습니다",
-    "updateSuccess": "플러그인이 수정되었습니다",
-    "updateError": "플러그인 수정에 실패했습니다",
-    "deleteSuccess": "플러그인이 삭제되었습니다",
-    "deleteError": "플러그인 삭제에 실패했습니다",
-    "deleteConfirm": "플러그인 삭제",
-    "deleteMessage": "'{{name}}' 플러그인을 삭제하시겠습니까?",
+    "loadError": "Stage 목록을 불러오는데 실패했습니다",
+    "createSuccess": "Stage가 등록되었습니다",
+    "createError": "Stage 등록에 실패했습니다",
+    "updateSuccess": "Stage가 수정되었습니다",
+    "updateError": "Stage 수정에 실패했습니다",
+    "deleteSuccess": "Stage가 삭제되었습니다",
+    "deleteError": "Stage 삭제에 실패했습니다",
+    "deleteConfirm": "Stage 삭제",
+    "deleteMessage": "'{{name}}' Stage를 삭제하시겠습니까?",
     "type": "유형",
     "nativeMode": "Native Go Stage (코드 에디터)",
     "nativeTest": "빌드 & 테스트",
@@ -1293,9 +1293,9 @@
     "buildError": "빌드 시작에 실패했습니다",
     "buildTriggering": "시작 중...",
     "buildNow": "빌드 실행",
-    "buildNeededBanner": "Runner 빌드 필요 — {{count}}개 플러그인에 미반영 변경사항이 있습니다",
+    "buildNeededBanner": "Runner 빌드 필요 — {{count}}개 Stage에 미반영 변경사항이 있습니다",
     "lastBuild": "최근 Ready 빌드",
-    "buildUpToDate": "Runner가 최신 상태입니다 — 모든 Native 플러그인이 배포됨",
+    "buildUpToDate": "Runner가 최신 상태입니다 — 모든 Native Stage가 배포됨",
     "autoBuildTriggered": "자동 빌드 시작됨",
     "viewLogs": "로그",
     "buildHistory": "Runner 빌드 이력",
@@ -1310,7 +1310,7 @@
     "arrayFieldHelp": "쉼표로 구분하여 입력"
   },
   "pluginBuilder": {
-    "title": "플러그인 빌더",
+    "title": "Stage 빌더",
     "validate": "검증",
     "buildAndRegister": "빌드 & 등록",
     "building": "빌드 중...",
@@ -1320,8 +1320,8 @@
     "buildFailed": "빌드에 실패했습니다. 빌드 로그를 확인하세요.",
     "validationPassed": "소스코드 검증 통과. Import 목록:",
     "validationFailed": "소스코드 검증에 실패했습니다.",
-    "nameRequired": "플러그인 이름은 필수입니다.",
-    "buildPlugin": "플러그인 빌드"
+    "nameRequired": "Stage 이름은 필수입니다.",
+    "buildPlugin": "Stage 빌드"
   },
   "executionMode": {
     "title": "실행 모드",

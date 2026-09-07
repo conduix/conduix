@@ -116,6 +116,79 @@ func newTestStage(t *testing.T, baseURL, apiKey string) *Stage {
 	return s
 }
 
+// mockNaver NCP Maps Geocoding 모의 서버. found=true 면 addresses[] 에 좌표 1건 반환.
+func mockNaver(t *testing.T, handler func(q string) (lat, lon string, road, found bool)) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	calls := &atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("x-ncp-apigw-api-key-id") != "nid" || r.Header.Get("x-ncp-apigw-api-key") != "nsecret" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		lat, lon, road, found := handler(r.URL.Query().Get("query"))
+		addrs := []any{}
+		if found {
+			a := map[string]any{"x": lon, "y": lat, "jibunAddress": "지번"}
+			if road {
+				a["roadAddress"] = "도로명"
+			}
+			addrs = append(addrs, a)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "addresses": addrs})
+	}))
+	return srv, calls
+}
+
+// 카카오가 못 찾은 주소를 네이버 폴백이 찾는다.
+func TestProcess_NaverFallbackFindsWhatKakaoMissed(t *testing.T) {
+	ksrv, kcalls := mockKakao(t, func(q string) (string, string, bool, bool) {
+		return "", "", false, false // 카카오는 전부 not_found
+	})
+	defer ksrv.Close()
+	nsrv, ncalls := mockNaver(t, func(q string) (string, string, bool, bool) {
+		return "37.8668522", "127.7211905", true, true // 네이버는 찾음(한반도 범위 내)
+	})
+	defer nsrv.Close()
+
+	s := &Stage{}
+	if err := s.Init(map[string]any{
+		"api_key": "test-key", "api_base_url": ksrv.URL,
+		"address_field": "road_addr", "lotno_field": "lotno_addr", "rps": 1000.0,
+		"naver_client_id": "nid", "naver_client_secret": "nsecret", "naver_base_url": nsrv.URL,
+	}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	rec, _ := s.Process(map[string]any{"road_addr": "강원특별자치도 춘천시 춘천로 22"})
+	if kcalls.Load() == 0 {
+		t.Error("카카오를 먼저 시도해야 함")
+	}
+	if ncalls.Load() == 0 {
+		t.Error("카카오 실패 후 네이버 폴백을 호출해야 함")
+	}
+	if rec["geo_status"] != "ok" || rec["geo_source"] != "naver" {
+		t.Errorf("네이버가 찾은 좌표로 채워져야 함: status=%v source=%v", rec["geo_status"], rec["geo_source"])
+	}
+	if rec["lat"] != 37.8668522 {
+		t.Errorf("네이버 좌표: %v", rec["lat"])
+	}
+}
+
+// 네이버 키가 없으면 폴백을 건너뛴다(기존 카카오 전용 동작 보존).
+func TestProcess_NaverSkippedWithoutKey(t *testing.T) {
+	ksrv, _ := mockKakao(t, func(q string) (string, string, bool, bool) {
+		return "", "", false, false
+	})
+	defer ksrv.Close()
+	s := newTestStage(t, ksrv.URL, "test-key") // 네이버 키 미설정
+
+	rec, _ := s.Process(map[string]any{"road_addr": "강원특별자치도 춘천시 춘천로 22"})
+	if rec["geo_status"] != statusNotFound {
+		t.Errorf("네이버 키 없으면 카카오 not_found 로 끝나야 함: %v", rec["geo_status"])
+	}
+}
+
 func TestProcess_SuccessCacheHitAndAddressChange(t *testing.T) {
 	srv, calls := mockKakao(t, func(q string) (string, string, bool, bool) {
 		return "37.5665", "126.9780", true, true
@@ -142,6 +215,97 @@ func TestProcess_SuccessCacheHitAndAddressChange(t *testing.T) {
 	_, _ = s.Process(map[string]any{"road_addr": "서울특별시 중구 세종대로 999"})
 	if calls.Load() == before {
 		t.Errorf("expected new API call for changed address")
+	}
+}
+
+// skip_if_geocoded 게이트: CDC 재처리 시 이미 이 주소로 좌표가 채워진 레코드는
+// 재지오코딩하지 않는다("주소 안 바뀜 AND 좌표 있음"). 무변경 UPDATE·자기write 루프 차단.
+func TestProcess_SkipWhenAlreadyGeocoded(t *testing.T) {
+	srv, calls := mockKakao(t, func(q string) (string, string, bool, bool) {
+		return "37.5665", "126.9780", true, true
+	})
+	defer srv.Close()
+	s := newTestStage(t, srv.URL, "test-key")
+
+	// CDC after: 주소가 이미 geo_addr(같은 주소의 정규화값)로 지오코딩돼 lat 이 차 있음.
+	// normalizeAddress("서울특별시 중구 세종대로 110") == "서울특별시 중구 세종대로 110"
+	rec, _ := s.Process(map[string]any{
+		"_cdc_type": "update",
+		"road_addr": "서울특별시 중구 세종대로 110",
+		"geo_addr":  "서울특별시 중구 세종대로 110",
+		"lat":       37.5665, "lon": 126.9780,
+	})
+	if calls.Load() != 0 {
+		t.Errorf("이미 지오코딩된 무변경 레코드는 API 를 부르면 안 됨: calls=%d", calls.Load())
+	}
+	if rec["lat"] != 37.5665 {
+		t.Errorf("기존 좌표가 보존돼야 함: %v", rec["lat"])
+	}
+}
+
+// 주소는 그대로여도 좌표가 비어(lat 없음/nil) 들어오면 재지오코딩해 채운다.
+// (이전 지오코딩 실패분, batch 가 좌표 없이 수집한 신규분 복구)
+func TestProcess_GeocodeWhenCoordEmptyEvenIfAddressSame(t *testing.T) {
+	srv, calls := mockKakao(t, func(q string) (string, string, bool, bool) {
+		return "37.5665", "126.9780", true, true
+	})
+	defer srv.Close()
+	s := newTestStage(t, srv.URL, "test-key")
+
+	// geo_addr 은 같지만 lat 이 nil(빈 좌표) → 게이트 통과, 지오코딩 수행.
+	rec, _ := s.Process(map[string]any{
+		"_cdc_type": "update",
+		"road_addr": "서울특별시 중구 세종대로 110",
+		"geo_addr":  "서울특별시 중구 세종대로 110",
+		"lat":       nil, "lon": nil,
+	})
+	if calls.Load() == 0 {
+		t.Error("좌표가 비어 있으면 주소가 같아도 지오코딩해야 함")
+	}
+	if rec["lat"] != 37.5665 {
+		t.Errorf("새 좌표로 채워져야 함: %v", rec["lat"])
+	}
+}
+
+// 주소가 바뀌면(geo_addr != 현재 주소) 좌표가 있어도 재지오코딩한다.
+func TestProcess_GeocodeWhenAddressChanged(t *testing.T) {
+	srv, calls := mockKakao(t, func(q string) (string, string, bool, bool) {
+		return "35.1796", "129.0756", true, true
+	})
+	defer srv.Close()
+	s := newTestStage(t, srv.URL, "test-key")
+
+	rec, _ := s.Process(map[string]any{
+		"_cdc_type": "update",
+		"road_addr": "부산광역시 중구 중앙대로 2", // 바뀐 주소
+		"geo_addr":  "서울특별시 중구 세종대로 110", // 예전 주소로 지오코딩됨
+		"lat":       37.5665, "lon": 126.9780,
+	})
+	if calls.Load() == 0 {
+		t.Error("주소가 바뀌면 재지오코딩해야 함")
+	}
+	if rec["lat"] != 35.1796 {
+		t.Errorf("새 좌표로 갱신돼야 함: %v", rec["lat"])
+	}
+}
+
+// _cdc_type=delete 는 좌표 계산 없이 통과.
+func TestProcess_DeletePassthrough(t *testing.T) {
+	srv, calls := mockKakao(t, func(q string) (string, string, bool, bool) {
+		return "37.5", "127.0", true, true
+	})
+	defer srv.Close()
+	s := newTestStage(t, srv.URL, "test-key")
+
+	rec, _ := s.Process(map[string]any{
+		"_cdc_type": "delete",
+		"road_addr": "서울특별시 중구 세종대로 110",
+	})
+	if calls.Load() != 0 {
+		t.Errorf("delete 는 API 를 부르면 안 됨: calls=%d", calls.Load())
+	}
+	if _, ok := rec["lat"]; ok {
+		t.Error("delete 는 좌표를 세팅하지 않아야 함")
 	}
 }
 

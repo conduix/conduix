@@ -120,8 +120,8 @@ metadata:
     app.kubernetes.io/component: mock-mysql
 data:
   init.sql: |
-    -- control-plane 저장소 DB(별도 MySQL 대신 mock-mysql 재사용) + 소스/타깃 DB
-    CREATE DATABASE IF NOT EXISTS conduix CHARACTER SET utf8mb4;
+    -- 파이프라인 mock 소스/타깃 DB 전용 (비영속 — 리셋돼도 무방).
+    -- control-plane 저장소 DB(conduix)는 별도 영속 컴포넌트 conduix-appdb 로 분리됐다.
     CREATE DATABASE IF NOT EXISTS sourcedb CHARACTER SET utf8mb4;
     CREATE DATABASE IF NOT EXISTS targetdb CHARACTER SET utf8mb4;
 

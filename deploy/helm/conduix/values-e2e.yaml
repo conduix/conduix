@@ -24,6 +24,13 @@ redis:
       size: 1Gi
 
 # --- Mock 데이터 소스/싱크 (E2E 핵심) ---
+# control-plane 저장소 DB (영속). mock 소스/타깃과 분리 — 재배포에도 데이터 유지.
+appdb:
+  enabled: true
+  storageClassName: local-path  # colima 기본 provisioner
+  storage: 2Gi
+  rootPassword: rootpassword
+
 mocks:
   enabled: true
   kafka:
@@ -91,7 +98,8 @@ ingress:
   enabled: false
 
 env:
-  DB_HOST: "conduix-mock-mysql"
+  # control-plane 저장소는 영속 appdb(PVC) 사용 — mock 소스/타깃(비영속)과 분리.
+  DB_HOST: "conduix-appdb"
   DB_PORT: "3306"
   DB_USER: "root"
   DB_NAME: "conduix"

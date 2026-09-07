@@ -236,6 +236,14 @@ redis:
 # Mock 데이터 소스/싱크 (로컬 E2E 전용 — 프로덕션은 항상 false)
 # templates/mocks.yaml 가 이 게이트로 배포 여부를 결정한다.
 # =============================================================================
+# control-plane 저장소 DB(영속, PVC). 프로덕션은 보통 외부 관리형 DB 를 쓰므로
+# 기본 비활성 — 이 경우 env.DB_HOST 를 외부 DB 로 지정한다. 로컬/자립 배포는 enabled: true.
+appdb:
+  enabled: false
+  storageClassName: ""  # 비우면 클러스터 기본 StorageClass
+  storage: 5Gi
+  rootPassword: changeme
+
 mocks:
   enabled: false
   kafka:

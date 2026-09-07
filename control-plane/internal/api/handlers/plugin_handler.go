@@ -55,17 +55,20 @@ type CreatePluginRequest struct {
 	SourceCode string `json:"source_code,omitempty"`
 	GoMod      string `json:"go_mod,omitempty"`
 	Type       string `json:"type,omitempty"` // native | script (기본 native)
+	// ConfigSchema: types.StageSchema JSON. GUI 설정 폼 자동생성용(선택). 비면 폼은 JSON 폴백.
+	ConfigSchema string `json:"config_schema,omitempty"`
 }
 
 // UpdatePluginRequest 플러그인 수정 요청
 type UpdatePluginRequest struct {
-	Version     string `json:"version,omitempty"`
-	Image       string `json:"image,omitempty"`
-	Description string `json:"description,omitempty"`
-	SourceRepo  string `json:"source_repo,omitempty"`
-	Status      string `json:"status,omitempty"` // active, inactive, deprecated
-	SourceCode  string `json:"source_code,omitempty"`
-	GoMod       string `json:"go_mod,omitempty"`
+	Version      string `json:"version,omitempty"`
+	Image        string `json:"image,omitempty"`
+	Description  string `json:"description,omitempty"`
+	SourceRepo   string `json:"source_repo,omitempty"`
+	Status       string `json:"status,omitempty"` // active, inactive, deprecated
+	SourceCode   string `json:"source_code,omitempty"`
+	GoMod        string `json:"go_mod,omitempty"`
+	ConfigSchema string `json:"config_schema,omitempty"`
 }
 
 // ListPlugins GET /api/v1/plugins
@@ -145,6 +148,20 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 		return
 	}
 
+	// 빌트인 stage 와 이름 충돌 거부: stage type = plugin.Name 이므로 겹치면 GUI/실행에서
+	// 빌트인이 우선돼 커스텀이 가려진다. 등록 단계에서 막는다.
+	if _, isBuiltin := stream.StageRegistry.Get(req.Name); isBuiltin {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed,
+			fmt.Sprintf("플러그인 이름 %q 이 빌트인 stage 와 충돌합니다 — 다른 이름을 쓰세요", req.Name))
+		return
+	}
+
+	// config_schema 검증(GUI 폼 안전성). 잘못된 스키마가 저장되면 폼이 깨진다.
+	if err := validateConfigSchema(req.ConfigSchema); err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+
 	// 이름 중복 확인
 	var existing models.Plugin
 	if err := h.db.First(&existing, "name = ?", req.Name).Error; err == nil {
@@ -170,17 +187,18 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 	}
 
 	plugin := &models.Plugin{
-		ID:          uuid.New().String(),
-		Name:        req.Name,
-		Version:     version,
-		Image:       req.Image,
-		Description: req.Description,
-		SourceRepo:  req.SourceRepo,
-		Type:        pluginType,
-		Status:      "active",
-		CreatedBy:   userIDStr,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:           uuid.New().String(),
+		Name:         req.Name,
+		Version:      version,
+		Image:        req.Image,
+		Description:  req.Description,
+		SourceRepo:   req.SourceRepo,
+		Type:         pluginType,
+		ConfigSchema: req.ConfigSchema,
+		Status:       "active",
+		CreatedBy:    userIDStr,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 
 	// 소스 함께 전송 시 저장(BUG#8: 없으면 빈 소스 plugin → 빌드 조용히 실패).
@@ -240,6 +258,7 @@ func (h *PluginHandler) updateExistingPlugin(c *gin.Context, existing *models.Pl
 	existing.Image = req.Image
 	existing.Description = req.Description
 	existing.SourceRepo = req.SourceRepo
+	existing.ConfigSchema = req.ConfigSchema // CreatePlugin(upsert 진입)에서 이미 검증됨
 	existing.UpdatedAt = time.Now()
 
 	// 소스 함께 오면 반영(BUG#8: upsert 경로도 소스 무시했었음). native 는 검증+해시.
@@ -347,6 +366,15 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 	}
 	if req.GoMod != "" {
 		plugin.GoMod = req.GoMod
+	}
+	// config_schema: 요청에 있으면 검증 후 반영. 빈 문자열도 명시적 초기화로 허용해야 하나,
+	// omitempty 특성상 미포함과 구분이 안 되므로 "값이 오면 반영"으로 둔다(빈 스키마 삭제는 별도).
+	if req.ConfigSchema != "" {
+		if err := validateConfigSchema(req.ConfigSchema); err != nil {
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+			return
+		}
+		plugin.ConfigSchema = req.ConfigSchema
 	}
 
 	plugin.UpdatedAt = time.Now()

@@ -603,6 +603,7 @@ type Plugin struct {
 	Image           string         `gorm:"size:500" json:"image,omitempty"`              // 컨테이너 이미지 (V2 호환, V3에서는 optional)
 	Description     string         `gorm:"type:text" json:"description,omitempty"`       // 플러그인 설명
 	SourceCode      string         `gorm:"type:mediumtext" json:"source_code,omitempty"` // Go 소스 또는 Starlark 스크립트
+	ConfigSchema    string         `gorm:"type:json" json:"config_schema,omitempty"`     // types.StageSchema JSON 직렬화 (GUI 설정 폼 자동생성용, nullable)
 	GoMod           string         `gorm:"type:text" json:"go_mod,omitempty"`            // native만: go.mod 내용
 	SourceHash      string         `gorm:"size:64" json:"source_hash,omitempty"`         // 현재 소스의 SHA256
 	DeployedHash    string         `gorm:"size:64" json:"deployed_hash,omitempty"`       // 최신 ready 이미지에 포함된 소스 해시

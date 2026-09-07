@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/pkg/database"
+	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/pipeline-core/pkg/stream"
 	"github.com/conduix/conduix/shared/types"
 )
@@ -42,9 +44,19 @@ type BuiltinStageInfo struct {
 	Description string `json:"description"`
 }
 
+// CustomStageInfo 커스텀(플러그인) Stage 정보. HasSchema 로 GUI 가 폼/JSON폴백을 가른다.
+type CustomStageInfo struct {
+	Type        string `json:"type"` // = plugin.Name (등록 시 이 이름이 곧 stage type)
+	DisplayName string `json:"display_name"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+	HasSchema   bool   `json:"has_schema"` // config_schema 유무 — 없으면 프론트가 JSON 폴백
+}
+
 // AllStagesResponse 모든 Stage 목록 응답
 type AllStagesResponse struct {
 	Builtin []BuiltinStageInfo `json:"builtin"`
+	Custom  []CustomStageInfo  `json:"custom"`
 }
 
 // ListAllStages GET /api/v1/stages
@@ -69,32 +81,117 @@ func (h *StageHandler) ListAllStages(c *gin.Context) {
 
 	response := AllStagesResponse{
 		Builtin: builtinStages,
+		Custom:  h.listCustomStages(),
 	}
 
 	middleware.SuccessResponse(c, response)
 }
 
-// GetAllSchemas 모든 Stage 스키마 조회 (빌트인만)
-// GET /api/v1/stages/schemas
+// listCustomStages 는 활성 플러그인을 커스텀 stage 목록으로 변환한다.
+// config_schema 가 있으면 DisplayName/Category 를 스키마에서 채우고, 없어도 목록엔 포함한다
+// (타입·설명은 보여야 한다). DB 오류 시 빈 목록(빌트인 목록은 계속 반환되게).
+func (h *StageHandler) listCustomStages() []CustomStageInfo {
+	var plugins []models.Plugin
+	if err := h.db.Where("status = ? AND type = ?", "active", "native").Find(&plugins).Error; err != nil {
+		h.logger.Error("failed to list custom stages", "error", err)
+		return []CustomStageInfo{}
+	}
+	out := make([]CustomStageInfo, 0, len(plugins))
+	for _, p := range plugins {
+		info := CustomStageInfo{
+			Type:        p.Name,
+			DisplayName: p.Name,
+			Description: p.Description,
+		}
+		if schema, ok := parsePluginSchema(p.ConfigSchema); ok {
+			info.HasSchema = true
+			if schema.DisplayName != "" {
+				info.DisplayName = schema.DisplayName
+			}
+			info.Category = string(schema.Category)
+			if info.Description == "" {
+				info.Description = schema.Description
+			}
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+// parsePluginSchema config_schema 문자열을 types.StageSchema 로 파싱한다.
+// 비었거나 파싱 실패면 (zero, false) — 등록 시 검증되지만 방어적으로 처리.
+func parsePluginSchema(raw string) (types.StageSchema, bool) {
+	if raw == "" {
+		return types.StageSchema{}, false
+	}
+	var schema types.StageSchema
+	if err := json.Unmarshal([]byte(raw), &schema); err != nil {
+		return types.StageSchema{}, false
+	}
+	return schema, true
+}
+
+// GetAllSchemas 모든 Stage 스키마 조회 (빌트인 + 커스텀)
+// GET /api/v1/stages/schemas — raw types.StageSchema[] 반환(secret/ShowWhen 보존).
 func (h *StageHandler) GetAllSchemas(c *gin.Context) {
 	schemas := stream.StageRegistry.All()
+	schemas = append(schemas, h.customSchemas()...)
 	c.JSON(http.StatusOK, schemas)
 }
 
-// GetSchema 특정 Stage 스키마 조회 (빌트인만)
-// GET /api/v1/stages/schemas/:type
+// customSchemas config_schema 가 등록된 활성 플러그인의 raw StageSchema 목록.
+// 스키마 없는 플러그인은 여기 포함되지 않는다(GUI 는 목록 API 의 has_schema 로 JSON 폴백).
+func (h *StageHandler) customSchemas() []types.StageSchema {
+	var plugins []models.Plugin
+	if err := h.db.Where("status = ? AND type = ? AND config_schema IS NOT NULL AND config_schema != ''",
+		"active", "native").Find(&plugins).Error; err != nil {
+		h.logger.Error("failed to load custom schemas", "error", err)
+		return nil
+	}
+	out := make([]types.StageSchema, 0, len(plugins))
+	for _, p := range plugins {
+		if schema, ok := parsePluginSchema(p.ConfigSchema); ok {
+			if schema.Type == "" {
+				schema.Type = p.Name // 스키마에 type 누락 시 plugin 이름으로 보정
+			}
+			out = append(out, schema)
+		}
+	}
+	return out
+}
+
+// GetSchema 특정 Stage 스키마 조회 (빌트인 + 커스텀)
+// GET /api/v1/stages/schemas/:type — raw types.StageSchema 반환.
 func (h *StageHandler) GetSchema(c *gin.Context) {
 	stageType := c.Param("type")
 
-	schema, ok := stream.StageRegistry.Get(stageType)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Stage type not found: " + stageType,
+	if schema, ok := stream.StageRegistry.Get(stageType); ok {
+		c.JSON(http.StatusOK, schema)
+		return
+	}
+
+	// 커스텀 플러그인 조회
+	var plugin models.Plugin
+	if err := h.db.Where("name = ? AND status = ?", stageType, "active").First(&plugin).Error; err == nil {
+		if schema, ok := parsePluginSchema(plugin.ConfigSchema); ok {
+			if schema.Type == "" {
+				schema.Type = plugin.Name
+			}
+			c.JSON(http.StatusOK, schema)
+			return
+		}
+		// 스키마 미등록 커스텀: 최소 정보만(404 아님) → 프론트 JSON 폴백
+		c.JSON(http.StatusOK, types.StageSchema{
+			Type:        plugin.Name,
+			DisplayName: plugin.Name,
+			Description: plugin.Description,
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, schema)
+	c.JSON(http.StatusNotFound, gin.H{
+		"error": "Stage type not found: " + stageType,
+	})
 }
 
 // GetStageSchema GET /api/v1/stages/:type/schema
@@ -119,6 +216,21 @@ func (h *StageHandler) GetStageSchema(c *gin.Context) {
 			ConfigSchema: configSchema,
 		}
 		middleware.SuccessResponse(c, response)
+		return
+	}
+
+	// 2. 커스텀 플러그인에서 찾기. config_schema 있으면 JSON Schema 로 변환, 없으면
+	//    빈 스키마(프론트 JSON 폴백). 어느 쪽이든 404 는 아니다.
+	var plugin models.Plugin
+	if err := h.db.Where("name = ? AND status = ?", stageType, "active").First(&plugin).Error; err == nil {
+		resp := StageSchemaResponse{Type: plugin.Name, DisplayName: plugin.Name}
+		if schema, ok := parsePluginSchema(plugin.ConfigSchema); ok {
+			if schema.DisplayName != "" {
+				resp.DisplayName = schema.DisplayName
+			}
+			resp.ConfigSchema = convertFieldsToJSONSchema(schema.Fields)
+		}
+		middleware.SuccessResponse(c, resp)
 		return
 	}
 

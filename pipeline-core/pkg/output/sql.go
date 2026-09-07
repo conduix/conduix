@@ -132,13 +132,25 @@ func (o *SQLOutput) Open(ctx context.Context) error {
 
 	o.db = db
 
-	// CREATE TABLE 실행 (설정된 경우)
+	// CREATE TABLE 실행 (설정된 경우, 테이블이 없을 때만).
+	// MySQL 은 CREATE TABLE IF NOT EXISTS 를 "테이블이 이미 있어 아무것도 하지 않은" 경우에도
+	// binlog 에 기록한다(실측: 246 bytes). 같은 DB 를 CDC 로 보는 realtime 파이프라인은 그
+	// DDL 이벤트를 스키마 변경으로 판정해 on_ddl=stop 정책에 따라 멈춘다 — 배치를 돌릴 때마다
+	// realtime 이 죽는 결함이 이것 때문이었다. 존재 확인을 먼저 해 불필요한 DDL 을 아예 보내지 않는다.
 	if o.createTable != "" {
-		log.Printf("[sql] Executing CREATE TABLE: %s", o.createTable)
-		if _, err := o.db.ExecContext(ctx, o.createTable); err != nil {
-			return fmt.Errorf("failed to execute CREATE TABLE: %w", err)
+		exists, err := o.tableExists(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check table existence: %w", err)
 		}
-		log.Printf("[sql] CREATE TABLE executed successfully")
+		if exists {
+			log.Printf("[sql] table %s already exists — skip CREATE TABLE (avoids binlog DDL event)", o.table)
+		} else {
+			log.Printf("[sql] Executing CREATE TABLE: %s", o.createTable)
+			if _, err := o.db.ExecContext(ctx, o.createTable); err != nil {
+				return fmt.Errorf("failed to execute CREATE TABLE: %w", err)
+			}
+			log.Printf("[sql] CREATE TABLE executed successfully")
+		}
 	}
 
 	log.Printf("[sql] Output opened (driver=%s, table=%s, batch_size=%d)",
@@ -468,6 +480,50 @@ func (o *SQLOutput) batchInsert(ctx context.Context, records []source.Record, co
 	}
 
 	return nil
+}
+
+// tableExists 는 create_table 을 실제로 보낼지 판정한다.
+// information_schema 조회는 DML 이라 binlog 를 건드리지 않는다 — CREATE TABLE IF NOT EXISTS 가
+// 무동작이어도 DDL 이벤트를 남겨 CDC 를 깨우는 문제를 피하려 존재 확인을 분리했다.
+// 스키마 한정자가 붙은 이름("db.tbl")과 그냥 이름 둘 다 지원한다.
+func (o *SQLOutput) tableExists(ctx context.Context) (bool, error) {
+	q, args := o.tableExistsQuery()
+	var n int
+	if err := o.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// tableExistsQuery 는 존재 확인 쿼리를 만든다(DB 접근과 분리 — 단위 테스트 가능하게).
+// "db.tbl" 처럼 스키마가 붙으면 분리해 조건에 넣는다. 안 그러면 다른 DB 의 동명 테이블을
+// 있다고 오판해 신규 환경에서 테이블이 생성되지 않는다.
+func (o *SQLOutput) tableExistsQuery() (string, []any) {
+	schema, table := "", o.table
+	if i := strings.LastIndex(o.table, "."); i >= 0 {
+		schema, table = o.table[:i], o.table[i+1:]
+	}
+	table = strings.Trim(table, "`\"")
+	schema = strings.Trim(schema, "`\"")
+
+	args := []any{table}
+	if o.driver == "postgres" {
+		q := "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = $1"
+		if schema != "" {
+			q += " AND table_schema = $2"
+			args = append(args, schema)
+		}
+		return q, args
+	}
+
+	q := "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?"
+	if schema != "" {
+		q += " AND table_schema = ?"
+		args = append(args, schema)
+	} else {
+		q += " AND table_schema = DATABASE()"
+	}
+	return q, args
 }
 
 func (o *SQLOutput) quoteIdentifier(name string) string {

@@ -21,7 +21,7 @@
 | `plugin-sdk/` | 네이티브 stage 인터페이스 (`NativeStage`) | 없음 |
 | `pipeline-core/` | 실행 엔진 (GroupExecutor, source/stage/output, 체크포인트) | shared, plugin-sdk |
 | `pipeline-worker/` | **cluster 소속 상주 워커(오케스트레이터)**: Redis로 실행 명령 수신 후 자기 cluster에 위임 생성 — batch=K8s Job, realtime+native=streaming Deployment. non-native realtime만 in-process. reconcile 백스톱으로 유실 명령 복구. | shared, pipeline-core |
-| `pipeline-batch-job/` | **일회성 K8s Job 바이너리**: worker가 만든 Job이 실행하는 배치 실행 이미지. 환경변수로 config 받아 GroupExecutor 한 번 구동 후 종료. | shared, pipeline-core |
+| `pipeline-runner/` | **위임 실행 바이너리(batch·realtime 공용)**: worker가 만든 K8s 워크로드가 실행한다. 환경변수로 config 받아 GroupExecutor를 구동 — `EXECUTION_MODE=batch`는 한 번 돌고 종료(Job), `streaming`은 상주(Deployment). | shared, pipeline-core |
 | `control-plane/` | 운영 백엔드 (Gin+GORM+MySQL, 스케줄러, Redis pub/sub) | shared, pipeline-core |
 | `web-ui/` | 프론트엔드 (React+TS+MUI) | control-plane REST |
 
@@ -32,7 +32,7 @@ graph TD
     webui["web-ui (React)"] -->|REST| cp["control-plane<br/>(API·스케줄러·pub/sub)"]
     cp -->|"실행 명령: Redis pub/sub<br/>(cluster:&lt;id&gt;:*, 폴백 REST 폴링)"| worker["pipeline-worker<br/>(cluster 소속, realtime 실행 + Job 위임)"]
     worker -->|"REST: 등록·하트비트·결과보고"| cp
-    worker -->|"batch: in-cluster로 K8s Job 생성(위임)"| runner["pipeline-batch-job<br/>(일회성 Job 바이너리)"]
+    worker -->|"batch: in-cluster로 K8s Job 생성(위임)"| runner["pipeline-runner<br/>(batch·realtime 공용 실행 바이너리)"]
     runner -->|"REST: job-result 콜백"| cp
     worker --> core["pipeline-core<br/>(GroupExecutor)"]
     runner --> core
@@ -81,9 +81,9 @@ flowchart LR
 
 > 상세 의도·가치·설계 결정은 [EXECUTION_TOPOLOGY_INTENT.md](EXECUTION_TOPOLOGY_INTENT.md).
 
-멀티 K8s를 지원한다. **control-plane은 K8s Job/Deployment를 직접 만들지 않는다.** 워크플로우의 대상 cluster에 소속된 `pipeline-worker`에게 실행을 **위임**하고, worker가 자기 cluster에 in-cluster 권한으로 `pipeline-batch-job` 바이너리를 K8s에 띄운다 — batch=Job(일회성), realtime+native=Deployment(상주).
+멀티 K8s를 지원한다. **control-plane은 K8s Job/Deployment를 직접 만들지 않는다.** 워크플로우의 대상 cluster에 소속된 `pipeline-worker`에게 실행을 **위임**하고, worker가 자기 cluster에 in-cluster 권한으로 `pipeline-runner` 바이너리를 K8s에 띄운다 — batch=Job(일회성), realtime+native=Deployment(상주).
 
-| | `pipeline-worker` | `pipeline-batch-job` |
+| | `pipeline-worker` | `pipeline-runner` |
 |---|---|---|
 | 정체 | cluster 소속 상주 워커(오케스트레이터: Job/Deployment 위임생성 + non-native realtime in-process) | worker가 K8s에 띄운 실행 바이너리 |
 | 생명주기 | **상주** (항상 떠 있음) | batch=**일회성**(Pod 종료), realtime=**상주**(Deployment) |
@@ -135,7 +135,7 @@ sequenceDiagram
     participant CP as control-plane
     participant R as Redis
     participant W as pipeline-worker (1..N in cluster)
-    participant J as K8s Job (pipeline-batch-job)
+    participant J as K8s Job (pipeline-runner)
 
     U->>CP: POST /workflows/:id/start
     CP->>CP: cluster 확정(cluster_id→default→거부) + execution 스냅샷
@@ -165,7 +165,7 @@ flowchart TD
     CP[control-plane] -->|"cluster:&lt;id&gt;:execute (위임)"| W{pipeline-worker<br/>claim 획득 1대<br/>type?}
     W -->|realtime + native| SD["streaming Deployment 위임<br/>→ 상주 Pod (최신 stage 바이너리 주입)<br/>pause/resume/roll"]
     W -->|realtime + non-native| AG["in-process 상주 실행<br/>(비-K8s 폴백)"]
-    W -->|batch| KJ["in-cluster K8s Job 생성<br/>→ pipeline-batch-job Pod<br/>소스 소진 시 종료"]
+    W -->|batch| KJ["in-cluster K8s Job 생성<br/>→ pipeline-runner Pod<br/>소스 소진 시 종료"]
     SD --> GE[GroupExecutor]
     AG --> GE
     KJ --> GE

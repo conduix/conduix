@@ -310,7 +310,7 @@ e2e-images: ## E2E 이미지 빌드 (colima docker 데몬에 직접 로드됨)
 	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.control-plane -t $(DOCKER_REGISTRY)/control-plane:$(E2E_TAG) .
 	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.agent -t $(DOCKER_REGISTRY)/agent:$(E2E_TAG) .
 	docker build --platform linux/$(E2E_ARCH) -f deploy/docker/Dockerfile.web-ui -t $(DOCKER_REGISTRY)/web-ui:$(E2E_TAG) .
-	docker build --platform linux/$(E2E_ARCH) -f pipeline-batch-job/Dockerfile -t $(DOCKER_REGISTRY)/pipeline-batch-job:$(E2E_TAG) .
+	docker build --platform linux/$(E2E_ARCH) -f pipeline-runner/Dockerfile -t $(DOCKER_REGISTRY)/pipeline-runner:$(E2E_TAG) .
 	@echo "==> E2E 이미지 빌드 완료"
 
 e2e-up: e2e-images ## E2E 환경 기동 (이미지 빌드 → helm install → 안내)

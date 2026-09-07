@@ -10,7 +10,7 @@ import "time"
 //   - main container 의 command (같은 파일)
 //
 // 모듈이 달라 상수를 공유할 곳이 shared 뿐이므로 여기 둔다.
-const RunnerBinaryName = "pipeline-batch-job"
+const RunnerBinaryName = "pipeline-runner"
 
 // JobConfig Kubernetes Job 설정
 // Batch 워크플로우 실행 시 Job Pod 리소스 및 동작 설정

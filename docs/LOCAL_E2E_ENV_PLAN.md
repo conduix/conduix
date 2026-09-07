@@ -16,7 +16,7 @@
 4. **orphan 처리 시 `workflow.status="running"` 미정리** → 재트리거 영구 차단. idle 복구 추가.
 5. **migration Job `command` 경로/플래그 불일치**(`/app/control-plane -migrate` vs 실제 `control-plane-server --migrate`) → exec 실패. ENTRYPOINT + `args: [--migrate]` 로 수정.
 6. **`--migrate` 가 exit 안 함**(서버로 진행) → migration Job 무한 대기. migrate-only 모드 exit 추가.
-7. **pipeline-batch-job Dockerfile `plugin-sdk` 미복사** → `go mod download` 실패. 복사 + arm64 크로스컴파일 추가.
+7. **pipeline-runner Dockerfile `plugin-sdk` 미복사** → `go mod download` 실패. 복사 + arm64 크로스컴파일 추가.
 8. **agent `RUNNER_IMAGE` 미주입** → batch 실행 시 "runner image is required". helm values+deployment 로 주입.
 9. **runtime cgroup limit 미인식** → 3개 서버 바이너리에 `automaxprocs`/`automemlimit` blank import. (control-plane 로그로 GOMAXPROCS/GOMEMLIMIT 적용 확인)
 
@@ -39,7 +39,7 @@
 | docker-compose 로컬 스택 | `docker-compose.yml` (mysql:8.0@3307, redis:7@6379, control-plane@8080, agent, web-ui@3000:80; profile `with-kafka`/`with-elk`) | 완전 |
 | Helm 차트 | `deploy/helm/conduix/` (templates 17개, values.yaml) | 완전 |
 | 로컬 values | `deploy/helm/conduix/values-local.yaml`, `values-local-kafka.yaml` | 완전 |
-| 4개 모듈 Dockerfile | `deploy/docker/Dockerfile.control-plane`(8080), `Dockerfile.agent`(8081), `Dockerfile.web-ui`(80/nginx), `pipeline-batch-job/Dockerfile`(8082) | 완전 |
+| 4개 모듈 Dockerfile | `deploy/docker/Dockerfile.control-plane`(8080), `Dockerfile.agent`(8081), `Dockerfile.web-ui`(80/nginx), `pipeline-runner/Dockerfile`(8082) | 완전 |
 | K8s migration Job | `deploy/helm/conduix/templates/migration-job.yaml` (post-install hook, wait-for-mysql, `--migrate`) | 완전 |
 | DB 스키마 | GORM auto-migrate (`control-plane cmd/server`, `--migrate`) | 완전 |
 | MySQL init | `deploy/docker/mysql/init.sql` (DB 생성만; 테이블은 GORM) | 부분 |

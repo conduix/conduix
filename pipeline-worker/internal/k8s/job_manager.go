@@ -27,7 +27,7 @@ const (
 )
 
 // streamingHealthPort 는 streaming pod 의 health/command REST 포트다.
-// pipeline-batch-job config 기본값(HEALTH_PORT=8082)과 일치해야 한다 — probe·명령 전송 대상 포트.
+// pipeline-runner config 기본값(HEALTH_PORT=8082)과 일치해야 한다 — probe·명령 전송 대상 포트.
 const streamingHealthPort = 8082
 
 // defaultJobTimeoutSeconds 는 워크플로우 JobConfig 에 timeout 이 없을 때 batch Job 에 적용하는
@@ -210,7 +210,7 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
-							Name:            "pipeline-batch-job",
+							Name:            "pipeline-runner",
 							Image:           image,
 							ImagePullPolicy: pullPolicy,
 							Env:             envVars,
@@ -329,7 +329,7 @@ func (m *JobManager) CreateCronJob(ctx context.Context, spec *CronJobSpec) (*bat
 							RestartPolicy: corev1.RestartPolicyNever,
 							Containers: []corev1.Container{
 								{
-									Name:      "pipeline-batch-job",
+									Name:      "pipeline-runner",
 									Image:     image,
 									Env:       envVars,
 									EnvFrom:   m.runnerEnvFrom,

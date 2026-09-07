@@ -11,7 +11,7 @@ metadata:
   labels:
     {{- include "conduix.labels" . | nindent 4 }}
 rules:
-  # worker가 자기 cluster에 배치 실행 Job(pipeline-batch-job)을 생성/조회/삭제
+  # worker가 자기 cluster에 배치 실행 Job(pipeline-runner)을 생성/조회/삭제
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]

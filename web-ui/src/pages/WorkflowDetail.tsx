@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -222,10 +222,12 @@ interface MonitoringPipeline {
   statistics?: MonitoringStatistics
 }
 
+// api.getWorkflowExecutionMonitoring 은 envelope({success,data})를 벗긴 data 를 저장하므로
+// 여기서 pipelines 가 최상위다. data.pipelines 로 한 겹 더 들어가면 항상 undefined 가 되어
+// 라이브 모니터링이 "No monitoring data available" 로만 보인다.
 interface MonitoringResponse {
-  data?: {
-    pipelines?: MonitoringPipeline[]
-  }
+  status?: string
+  pipelines?: MonitoringPipeline[]
 }
 
 export default function WorkflowDetailPage() {
@@ -301,8 +303,9 @@ export default function WorkflowDetailPage() {
   // Monitoring states
   const [monitoringData, setMonitoringData] = useState<MonitoringResponse | null>(null)
   const [monitoringLoading, setMonitoringLoading] = useState(false)
-  const [monitoringInterval, setMonitoringInterval] = useState<ReturnType<typeof setInterval> | null>(null)
   const [runningExecutionId, setRunningExecutionId] = useState<string | null>(null)
+  const monitoringTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const monitoredIdRef = useRef<string | null>(null)
 
   const fetchMonitoringData = useCallback(async (executionId: string) => {
     if (!effectiveId) return
@@ -366,28 +369,46 @@ export default function WorkflowDetailPage() {
       .catch(() => {})
   }, [])
 
-  // 실행 중인 execution 찾기 및 모니터링 시작
+  // 실행 목록 주기 갱신: 이게 없으면 페이지를 열어둔 채 실행이 시작돼도 executions 에
+  // 그 실행이 없어 아래의 모니터링 폴링이 시작되지 않는다(새로고침해야 보였다).
+  useEffect(() => {
+    if (!effectiveId) return
+    const timer = setInterval(() => {
+      api.getWorkflowExecutions(effectiveId)
+        .then((res) => { if (res.success) setExecutions(res.data || []) })
+        .catch(() => {})
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [effectiveId])
+
+  // 실행 중인 execution 의 모니터링 폴링.
+  // interval 을 state 로 두면 setInterval → 리렌더 → cleanup(clearInterval) 로 방금 만든
+  // 타이머가 즉시 죽는다(의존성에 monitoringInterval 이 있어 매 렌더 cleanup 이 돈다). ref 로 관리한다.
   useEffect(() => {
     const runningExec = executions.find(e => e.status === 'running')
-    if (runningExec && runningExec.id !== runningExecutionId) {
-      setRunningExecutionId(runningExec.id)
-      fetchMonitoringData(runningExec.id)
-      const interval = setInterval(() => {
-        fetchMonitoringData(runningExec.id)
-      }, 5000)
-      setMonitoringInterval(interval)
-    } else if (!runningExec && monitoringInterval) {
-      clearInterval(monitoringInterval)
-      setMonitoringInterval(null)
-      setRunningExecutionId(null)
+    const runningId = runningExec?.id ?? null
+
+    if (runningId === monitoredIdRef.current) return
+    monitoredIdRef.current = runningId
+
+    if (monitoringTimerRef.current) {
+      clearInterval(monitoringTimerRef.current)
+      monitoringTimerRef.current = null
+    }
+
+    setRunningExecutionId(runningId)
+    if (!runningId) {
       setMonitoringData(null)
+      return
     }
-    return () => {
-      if (monitoringInterval) {
-        clearInterval(monitoringInterval)
-      }
-    }
-  }, [executions, runningExecutionId, fetchMonitoringData, monitoringInterval])
+
+    fetchMonitoringData(runningId)
+    monitoringTimerRef.current = setInterval(() => fetchMonitoringData(runningId), 5000)
+  }, [executions, fetchMonitoringData])
+
+  useEffect(() => () => {
+    if (monitoringTimerRef.current) clearInterval(monitoringTimerRef.current)
+  }, [])
 
   const fetchCheckpoints = async () => {
     if (!effectiveId) return
@@ -1326,8 +1347,8 @@ export default function WorkflowDetailPage() {
                   <Box sx={{ textAlign: 'center', py: 5 }}>
                     <CircularProgress />
                   </Box>
-                ) : (monitoringData?.data?.pipelines?.length ?? 0) > 0 ? (
-                  monitoringData?.data?.pipelines?.map((pipeline: MonitoringPipeline) => (
+                ) : (monitoringData?.pipelines?.length ?? 0) > 0 ? (
+                  monitoringData?.pipelines?.map((pipeline: MonitoringPipeline) => (
                     <Card key={pipeline.pipeline_id} variant="outlined" sx={{ mb: 2 }}>
                       <CardHeader
                         title={

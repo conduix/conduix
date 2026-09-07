@@ -238,8 +238,9 @@ func TestProcess_SkipWhenAlreadyGeocoded(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Errorf("이미 지오코딩된 무변경 레코드는 API 를 부르면 안 됨: calls=%d", calls.Load())
 	}
-	if rec["lat"] != 37.5665 {
-		t.Errorf("기존 좌표가 보존돼야 함: %v", rec["lat"])
+	// 무변경 → 드롭(nil). sink 로 통과시키면 CDC after 의 옛 lat 이 되쓰여 race 가 난다.
+	if rec != nil {
+		t.Errorf("무변경 레코드는 드롭(nil)돼야 함: %v", rec)
 	}
 }
 

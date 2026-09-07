@@ -200,16 +200,18 @@ func (s *Stage) Process(record map[string]any) (map[string]any, error) {
 		return record, nil
 	}
 
-	// 게이트: 이미 이 주소(geo_addr)로 좌표가 채워진 레코드면 재지오코딩하지 않는다.
-	// "주소 안 바뀜 AND 좌표 있음" 둘 다여야 skip — 주소는 그대로여도 좌표가 비어 들어오면
+	// 게이트: 이미 이 주소(geo_addr)로 좌표가 채워진 레코드면 재지오코딩하지 않고 드롭한다.
+	// "주소 안 바뀜 AND 좌표 있음" 둘 다여야 드롭 — 주소는 그대로여도 좌표가 비어 들어오면
 	// (이전 지오코딩 실패분, 또는 batch 가 좌표 없이 수집한 신규분) 다시 지오코딩해 채운다.
-	// 이 게이트가 곧 무한루프 차단: 지오코딩이 lat/lon 을 채워 UPDATE→그 CDC 이벤트는
-	// geo_addr==norm 이고 lat 이 차 있어 즉시 통과(재지오코딩 없음).
+	// nil 반환 = 레코드 드롭(sink 미전송). record 를 통과시키면 CDC after 의 (그 시점) lat 이
+	// sink 로 되쓰여 방금 지오코딩한 좌표를 옛값으로 되돌리는 race 가 생긴다. 무변경이므로 드롭이 옳다.
+	// 이 게이트가 곧 무한루프 차단: 지오코딩→lat/lon UPDATE→그 CDC 이벤트는 geo_addr==norm 이고
+	// lat 이 차 있어 여기서 드롭되어 재지오코딩·재기록이 없다.
 	if s.skipIfGeocoded {
 		lat, hasLat := record["lat"]
 		prev, _ := record["geo_addr"].(string)
 		if hasLat && lat != nil && prev == norm {
-			return record, nil
+			return nil, nil
 		}
 	}
 

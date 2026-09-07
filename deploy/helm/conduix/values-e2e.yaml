@@ -84,6 +84,10 @@ agent:
     - conduix-pipeline-secrets
   # 부하 분산 배정 백오프(ms). e2e 단일 Redis 의 pub/sub 전달 지연(~300ms 관측)보다 크게.
   preferredBackoffMs: 1000
+  # batch Job 기본 timeout(초). 대량 지오코딩(restrooms 53K, rate-limit 로 ~75분)이 1시간
+  # 기본값에 걸려 timeout 되지 않게 상향. 워크플로우 JobConfig 에 timeout 이 있으면 그게 우선.
+  env:
+    DEFAULT_JOB_TIMEOUT_SECONDS: "7200"
 
 webUI:
   replicaCount: 1

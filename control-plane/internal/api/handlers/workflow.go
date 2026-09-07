@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -572,9 +573,7 @@ func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 		updates["agent_id"] = result.AgentID
 	}
 
-	h.db.Model(&models.WorkflowExecution{}).
-		Where("id = ?", result.ExecutionID).
-		Updates(updates)
+	h.updateExecutionStatus(result.ExecutionID, result.Status, updates)
 
 	// 파티션 분산: sub-execution 이면 부모에 결과를 취합한다(부모 완료·워크플로우 전이는 취합기가 확정).
 	// realtime 경로(ReceiveExecutionResult)와 동일 취합기를 재사용해 정합성을 일원화한다.
@@ -589,6 +588,20 @@ func (h *WorkflowHandler) handleJobResult(result *types.JobExecutionResult) {
 	}
 
 	h.logger.Info("Updated workflow status", "workflow_id", result.WorkflowID, "status", newStatus)
+}
+
+// updateExecutionStatus 는 execution 상태를 terminal-state 가드와 함께 갱신한다.
+// completed 는 최종 상태 — 한번 completed 가 되면 이후 error/timeout 보고가 덮어쓰지 못한다.
+// batch Job 은 fire-and-forget 위임이라 (a) 위임 실패 error 보고와 (b) Job 완주 completed
+// 콜백이 서로 다른 경로로 같은 row 를 쓴다. 가드 없이 무조건 UPDATE 하면 도착 순서(race)에
+// 따라 완주 결과가 error 로 덮여 "Job 은 성공했는데 status=error" 가 된다.
+// completed 로의 전이는 항상 허용, 그 외 상태로의 전이는 아직 completed 가 아닐 때만 허용.
+func (h *WorkflowHandler) updateExecutionStatus(executionID, newStatus string, updates map[string]any) {
+	q := h.db.Model(&models.WorkflowExecution{}).Where("id = ?", executionID)
+	if newStatus != string(types.WorkflowStatusCompleted) {
+		q = q.Where("status != ?", string(types.WorkflowStatusCompleted))
+	}
+	q.Updates(updates)
 }
 
 // jobStatusToGroupStatus 는 batch Job 상태(completed/failed/timeout)를 워크플로우 그룹 상태로 매핑한다.
@@ -926,6 +939,53 @@ func (h *WorkflowHandler) GetWorkflowExecutions(c *gin.Context) {
 	c.JSON(http.StatusOK, types.APIResponse[[]models.WorkflowExecution]{
 		Success: true,
 		Data:    executions,
+	})
+}
+
+// ListAllExecutions GET /api/v1/executions
+// 전역 실행 이력 — 모든 워크플로우 대상. History 화면용.
+// 워크플로우별(GetWorkflowExecutions)과 달리 workflow_id 필터가 없고 Workflow 를
+// preload 해 이름을 함께 준다. status/workflow_id/limit/offset 필터 지원.
+func (h *WorkflowHandler) ListAllExecutions(c *gin.Context) {
+	query := h.db.Model(&models.WorkflowExecution{}).
+		Preload("Workflow").
+		Order("started_at DESC")
+
+	if status := c.Query("status"); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if wfID := c.Query("workflow_id"); wfID != "" {
+		query = query.Where("workflow_id = ?", wfID)
+	}
+
+	// 총 개수(페이지네이션용) — 필터 적용 후
+	var total int64
+	query.Count(&total)
+
+	limit := 50
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	offset := 0
+	if v := c.Query("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	var executions []models.WorkflowExecution
+	if err := query.Limit(limit).Offset(offset).Find(&executions).Error; err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to fetch executions")
+		return
+	}
+
+	middleware.SuccessResponse(c, gin.H{
+		"executions": executions,
+		"total":      total,
+		"limit":      limit,
+		"offset":     offset,
 	})
 }
 
@@ -1315,11 +1375,7 @@ func (h *WorkflowHandler) ReceiveExecutionResult(c *gin.Context) {
 		updates["agent_id"] = result.AgentID
 	}
 
-	if err := h.db.Model(&models.WorkflowExecution{}).
-		Where("id = ?", executionID).
-		Updates(updates).Error; err != nil {
-		h.logger.Error("Failed to update execution", "workflow_id", workflowID, "execution_id", executionID, "error", err)
-	}
+	h.updateExecutionStatus(executionID, string(result.Status), updates)
 
 	// 파티션 분산 실행: sub-execution 이면 부모에 결과를 취합한다(부모 완료·워크플로우 전이는 취합기가 확정).
 	if isSubExecution {

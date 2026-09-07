@@ -70,6 +70,20 @@ type Stage struct {
 	dailyQuota   int64
 	cacheTable   string
 
+	// skipIfGeocoded: 이미 이 주소로 좌표가 채워진 레코드는 재지오코딩하지 않는다.
+	// realtime CDC 재사용 시 (1) 무변경 UPDATE 재처리 방지 (2) 지오코딩→lat/lon UPDATE 가
+	// 다시 CDC 이벤트로 돌아와도 재지오코딩 안 함(무한루프 차단). 기본 켜짐.
+	skipIfGeocoded bool
+
+	// 네이버(NCP Maps) 폴백 — 카카오가 못 찾은 주소만 재시도(문서 알고리즘 S4).
+	// 키(id/secret) 둘 다 있어야 활성. 카카오 실패 후에만 호출해 쿼터를 아낀다.
+	naverID     string
+	naverSecret string
+	naverURL    string
+	naverQuota  int64
+	naverUsed   atomic.Int64
+	naverCalls  atomic.Int64
+
 	client  *http.Client
 	db      *sql.DB
 	minGap  time.Duration // 호출 간 최소 간격 (rps 의 역수)
@@ -109,6 +123,18 @@ func cfgNum(c map[string]any, key string, def float64) float64 {
 	return def
 }
 
+func cfgBool(c map[string]any, key string, def bool) bool {
+	switch v := c[key].(type) {
+	case bool:
+		return v
+	case string:
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
+}
+
 func (s *Stage) Init(config map[string]any) error {
 	s.apiKey = cfgStr(config, "api_key", "") // 비우면 캐시 전용 모드 (API 미호출)
 	s.apiBaseURL = strings.TrimRight(cfgStr(config, "api_base_url", "https://dapi.kakao.com"), "/")
@@ -117,6 +143,12 @@ func (s *Stage) Init(config map[string]any) error {
 		return fmt.Errorf("geocode_kakao: address_field is required")
 	}
 	s.lotnoField = cfgStr(config, "lotno_field", "")
+	s.skipIfGeocoded = cfgBool(config, "skip_if_geocoded", true)
+	// 네이버 폴백: id/secret 둘 다 있어야 켜짐. 검증된 신형 엔드포인트가 기본값.
+	s.naverID = cfgStr(config, "naver_client_id", "")
+	s.naverSecret = cfgStr(config, "naver_client_secret", "")
+	s.naverURL = strings.TrimRight(cfgStr(config, "naver_base_url", "https://maps.apigw.ntruss.com"), "/")
+	s.naverQuota = int64(cfgNum(config, "naver_daily_quota", 3000))
 	s.maxRetries = int(cfgNum(config, "max_retries", 3))
 	s.dailyQuota = int64(cfgNum(config, "daily_quota", 100000))
 	rps := cfgNum(config, "rps", 20)
@@ -141,7 +173,7 @@ func (s *Stage) Init(config map[string]any) error {
 }
 
 func (s *Stage) Close() error {
-	slog.Default().Info("[geocode_kakao] closed", "api_calls", s.calls.Load())
+	slog.Default().Info("[geocode_kakao] closed", "kakao_calls", s.calls.Load(), "naver_calls", s.naverCalls.Load())
 	if s.db != nil {
 		return s.db.Close()
 	}
@@ -161,6 +193,26 @@ func (s *Stage) Process(record map[string]any) (map[string]any, error) {
 	if norm == "" {
 		record["geo_status"] = "no_address"
 		return record, nil
+	}
+
+	// CDC delete 는 좌표 계산 없이 통과(sink 가 PK 로 삭제 처리).
+	if t, _ := record["_cdc_type"].(string); t == "delete" {
+		return record, nil
+	}
+
+	// 게이트: 이미 이 주소(geo_addr)로 좌표가 채워진 레코드면 재지오코딩하지 않고 드롭한다.
+	// "주소 안 바뀜 AND 좌표 있음" 둘 다여야 드롭 — 주소는 그대로여도 좌표가 비어 들어오면
+	// (이전 지오코딩 실패분, 또는 batch 가 좌표 없이 수집한 신규분) 다시 지오코딩해 채운다.
+	// nil 반환 = 레코드 드롭(sink 미전송). record 를 통과시키면 CDC after 의 (그 시점) lat 이
+	// sink 로 되쓰여 방금 지오코딩한 좌표를 옛값으로 되돌리는 race 가 생긴다. 무변경이므로 드롭이 옳다.
+	// 이 게이트가 곧 무한루프 차단: 지오코딩→lat/lon UPDATE→그 CDC 이벤트는 geo_addr==norm 이고
+	// lat 이 차 있어 여기서 드롭되어 재지오코딩·재기록이 없다.
+	if s.skipIfGeocoded {
+		lat, hasLat := record["lat"]
+		prev, _ := record["geo_addr"].(string)
+		if hasLat && lat != nil && prev == norm {
+			return nil, nil
+		}
 	}
 
 	res := s.resolve(norm, lotnoRaw)
@@ -205,6 +257,16 @@ func (s *Stage) resolve(norm, lotnoRaw string) *geoResult {
 		return r
 	}
 	if isUnfixableAddress(norm) {
+		// road 가 파손·근사불가여도 lotno(지번주소)가 온전하면 그걸로 구제한다.
+		// road 만 보고 unfixable 로 확정하면, 도로명이 깨진 레코드가 지번주소를 놔두고 버려진다.
+		if ln := normalizeAddress(lotnoRaw); ln != "" && ln != norm && !isUnfixableAddress(ln) && s.apiKey != "" {
+			if r, _ := s.query(ln); r != nil {
+				s.cachePut(norm, r)
+				s.memSet(norm, r)
+				f.res = r
+				return r
+			}
+		}
 		r := &geoResult{Status: statusUnfixable}
 		s.cachePut(norm, r)
 		s.memSet(norm, r)
@@ -260,7 +322,71 @@ func (s *Stage) geocodeWithFallbacks(norm, lotnoRaw string) *geoResult {
 			return r
 		}
 	}
+
+	// 네이버 폴백(S4): 카카오가 모든 후보로 못 찾은 주소만 네이버로 재시도.
+	// 카카오 DB 에만 없는 주소를 보강한다(실측: 카카오 not_found 를 네이버가 다수 복구).
+	if r := s.naverGeocode(norm); r != nil {
+		return r
+	}
+
 	return &geoResult{Status: statusNotFound}
+}
+
+// naverGeocode NCP Maps Geocoding 폴백. 키 없으면 nil(스킵), 쿼터 소진 시 nil.
+// 카카오와 응답 스키마가 다르다(addresses[].roadAddress/jibunAddress/x/y).
+func (s *Stage) naverGeocode(q string) *geoResult {
+	if s.naverID == "" || s.naverSecret == "" {
+		return nil
+	}
+	if s.naverUsed.Load() >= s.naverQuota {
+		slog.Default().Warn("[geocode_kakao] naver quota exhausted")
+		return nil
+	}
+	s.pace()
+	s.naverUsed.Add(1)
+	s.naverCalls.Add(1)
+
+	u := s.naverURL + "/map-geocode/v2/geocode?query=" + url.QueryEscape(q)
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("x-ncp-apigw-api-key-id", s.naverID)
+	req.Header.Set("x-ncp-apigw-api-key", s.naverSecret)
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			slog.Default().Error("[geocode_kakao] naver key rejected", "status", resp.StatusCode)
+		}
+		return nil
+	}
+	var body struct {
+		Addresses []struct {
+			RoadAddress  string `json:"roadAddress"`
+			JibunAddress string `json:"jibunAddress"`
+			X            string `json:"x"` // 경도
+			Y            string `json:"y"` // 위도
+		} `json:"addresses"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || len(body.Addresses) == 0 {
+		return nil
+	}
+	a := body.Addresses[0]
+	lon, _ := strconv.ParseFloat(a.X, 64)
+	lat, _ := strconv.ParseFloat(a.Y, 64)
+	if lat < koreaLatMin || lat > koreaLatMax || lon < koreaLonMin || lon > koreaLonMax {
+		return nil // 범위 밖 = 오매칭
+	}
+	matchType := "region"
+	if a.RoadAddress != "" {
+		matchType = "road"
+	}
+	return &geoResult{Status: statusOK, Lat: lat, Lon: lon, Provider: "naver", MatchType: matchType}
 }
 
 // query 카카오 주소검색 1회 (간격 제한·429 백오프·쿼터·범위 검증).
@@ -451,27 +577,35 @@ var (
 	reMultiLot     = regexp.MustCompile(`외\s*\d*\s*필지`)
 	reNoSpaceLong  = regexp.MustCompile(`^\S{10,}$`)
 	reSidoPrefix   = regexp.MustCompile(`^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|전라|전북|전남|경상|경북|경남|제주)`)
+	// 도로명(로/길 뒤 번호) 또는 지번(동/리/가 뒤 번지) 형태 — sido 접두가 없어도 주소로 보고 시도.
+	reAddressShape = regexp.MustCompile(`[가-힣][가-힣0-9]*(로|길)\s*\d|[가-힣][가-힣0-9]*(동|리|가)\d*\s+\d|\d+번지`)
 )
 
-// normalizeAddress 지오코더를 방해하는 표기만 제거 (쉼표 절단·괄호쌍 제거·번길 분리·공백 정리)
+// normalizeAddress 지오코더를 방해하는 표기만 제거 (괄호쌍 제거·쉼표 절단·서술어 제거·번길 분리·공백 정리)
+// 순서 중요: 괄호쌍을 쉼표 절단보다 먼저 지운다. '(소태동, 무등산골드클래스)' 처럼 괄호 안에
+// 쉼표가 있으면, 쉼표를 먼저 자를 경우 '(소태동' 만 남아 안 닫힌 괄호로 파손 판정된다.
 func normalizeAddress(addr string) string {
 	a := strings.TrimSpace(addr)
 	if a == "" {
 		return ""
 	}
-	if i := strings.Index(a, ","); i >= 0 {
+	a = reParenPair.ReplaceAllString(a, " ") // 괄호쌍(안의 쉼표 포함) 먼저 — 안 닫힌 괄호만 파손으로 남는다
+	if i := strings.Index(a, ","); i >= 0 {   // 괄호 밖 최상위 쉼표에서 절단(건물명·부가설명 제거)
 		a = a[:i]
 	}
-	a = reParenPair.ReplaceAllString(a, " ") // 안 닫힌 괄호는 파손 판정으로 넘긴다
+	a = reDescriptive.ReplaceAllString(a, "") // '인근/부근/일대…' 서술 접미어는 통째로 버리지 말고 떼어 재시도
 	a = reBungilDetach.ReplaceAllString(a, "$1 $2")
 	a = reMultiSpace.ReplaceAllString(a, " ")
 	return strings.TrimSpace(a)
 }
 
-// isUnfixableAddress 지오코더를 바꿔도 실패하는 주소 (보수적으로 — 애매하면 시도한다)
+// isUnfixableAddress 지오코더를 바꿔도 실패하는 주소 — normalize 를 거친 norm 을 받는 전제.
+// 판정 기준은 "구체적 위치(번지/도로+번호)가 있는가" 하나로 통일한다. 서술어(reDescriptive)는
+// normalizeAddress 가 이미 떼어내므로, 떼고도 도로/동/번지 형태가 남으면 시도, 남지 않으면
+// (건물명·서술만 남음 = '태평인라인장', '조사리') 근사밖에 안 되므로 불가. sido 접두 유무는
+// 판단 기준이 아니다 — 접두가 없는 지번주소('가좌4동 399')도 형태만 맞으면 시도한다.
 func isUnfixableAddress(norm string) bool {
-	return reDescriptive.MatchString(norm) ||
-		!reSidoPrefix.MatchString(norm) ||
+	return !reAddressShape.MatchString(norm) ||
 		reNoSpaceLong.MatchString(norm) ||
 		reMultiLot.MatchString(norm) ||
 		(strings.Contains(norm, "(") && !strings.Contains(norm, ")"))

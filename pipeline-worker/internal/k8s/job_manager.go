@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,6 +29,20 @@ const (
 // streamingHealthPort 는 streaming pod 의 health/command REST 포트다.
 // pipeline-batch-job config 기본값(HEALTH_PORT=8082)과 일치해야 한다 — probe·명령 전송 대상 포트.
 const streamingHealthPort = 8082
+
+// defaultJobTimeoutSeconds 는 워크플로우 JobConfig 에 timeout 이 없을 때 batch Job 에 적용하는
+// 기본 실행 제한(1시간)이다. 환경변수 DEFAULT_JOB_TIMEOUT_SECONDS 로 배포별 오버라이드 가능
+// (대량 수집처럼 1시간을 넘는 워크플로우가 워크플로우별 설정 없이도 timeout 되지 않게).
+const defaultJobTimeoutSeconds int64 = 3600
+
+func envDefaultTimeoutSeconds() int64 {
+	if v := os.Getenv("DEFAULT_JOB_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultJobTimeoutSeconds
+}
 
 // fetchRunnerContainerName 은 바이너리 주입 initContainer 이름이다.
 // rolling(UpdateStreamingDeployment)에서 이 이름으로 initContainer 를 찾아 fetch URL 을 교체한다.
@@ -126,7 +142,7 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 
 	timeoutSeconds := cfg.TimeoutSeconds
 	if timeoutSeconds == 0 {
-		timeoutSeconds = 3600
+		timeoutSeconds = envDefaultTimeoutSeconds()
 	}
 
 	labels := map[string]string{
@@ -214,6 +230,17 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 
 	created, err := m.client.Clientset().BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
+		// batch 위임은 fire-and-forget 이라 claim(30s TTL)이 Job 수명보다 짧게 만료된다.
+		// 그 사이 같은 execution 이 재배정되면 동일 이름 Job Create 가 AlreadyExists 로 실패한다.
+		// 이때 기존 Job 은 이미 그 execution 을 돌고 있으므로 새로 만들 필요 없이 그걸 채택(adopt)한다.
+		// 에러로 올리면 완주 직전인 Job 을 "생성 실패 error" 로 보고해 상태가 뒤집힌다.
+		if errors.IsAlreadyExists(err) {
+			existing, getErr := m.client.Clientset().BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+			if getErr == nil {
+				return existing, nil
+			}
+			return nil, fmt.Errorf("job %s already exists but fetch failed: %w", jobName, getErr)
+		}
 		return nil, fmt.Errorf("failed to create job %s: %w", jobName, err)
 	}
 

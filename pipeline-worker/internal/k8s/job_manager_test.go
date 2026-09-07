@@ -83,6 +83,64 @@ func TestCreateBatchJob(t *testing.T) {
 }
 
 // 파티션 분산: AssignedPartitions 지정 시 Job env 로 콤마 결합돼 전달된다.
+// 같은 execution 의 재위임(claim 조기 만료로 발생)은 동일 이름 Job Create 가 AlreadyExists
+// 로 실패한다. 이때 새로 만들지 않고 이미 도는 Job 을 채택(adopt)해 반환해야 한다 — 아니면
+// 완주 중인 Job 이 "생성 실패" error 로 보고되어 status 가 뒤집힌다.
+func TestCreateBatchJob_AdoptOnAlreadyExists(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	spec := &JobSpec{
+		ExecutionID:     "exec-dup",
+		WorkflowID:      "wf-dup",
+		PipelinesConfig: `[{"id":"p1","name":"test"}]`,
+		JobConfig:       types.DefaultJobConfig(),
+	}
+
+	first, err := jm.CreateBatchJob(ctx, spec)
+	if err != nil {
+		t.Fatalf("first CreateBatchJob failed: %v", err)
+	}
+
+	// 재위임: 같은 spec → 같은 Job 이름 → AlreadyExists → adopt.
+	second, err := jm.CreateBatchJob(ctx, spec)
+	if err != nil {
+		t.Fatalf("재위임은 adopt 로 성공해야 하는데 error: %v", err)
+	}
+	if second.Name != first.Name {
+		t.Fatalf("adopt 된 Job 이름이 다르다: first=%s second=%s", first.Name, second.Name)
+	}
+
+	// Job 은 여전히 하나뿐이어야 한다(중복 생성 없음).
+	jobs, _ := fakeClient.BatchV1().Jobs("conduix").List(ctx, metav1.ListOptions{})
+	if len(jobs.Items) != 1 {
+		t.Fatalf("expected 1 job after re-delegation, got %d", len(jobs.Items))
+	}
+}
+
+// JobConfig 에 timeout 이 없으면 env DEFAULT_JOB_TIMEOUT_SECONDS 를, 그것도 없으면 1시간을 쓴다.
+func TestEnvDefaultTimeoutSeconds(t *testing.T) {
+	t.Setenv("DEFAULT_JOB_TIMEOUT_SECONDS", "")
+	if got := envDefaultTimeoutSeconds(); got != defaultJobTimeoutSeconds {
+		t.Errorf("빈 env: want %d, got %d", defaultJobTimeoutSeconds, got)
+	}
+
+	t.Setenv("DEFAULT_JOB_TIMEOUT_SECONDS", "7200")
+	if got := envDefaultTimeoutSeconds(); got != 7200 {
+		t.Errorf("env=7200: want 7200, got %d", got)
+	}
+
+	// 잘못된 값(음수/비숫자)은 무시하고 기본값 폴백.
+	t.Setenv("DEFAULT_JOB_TIMEOUT_SECONDS", "-5")
+	if got := envDefaultTimeoutSeconds(); got != defaultJobTimeoutSeconds {
+		t.Errorf("음수 env: want %d(fallback), got %d", defaultJobTimeoutSeconds, got)
+	}
+	t.Setenv("DEFAULT_JOB_TIMEOUT_SECONDS", "abc")
+	if got := envDefaultTimeoutSeconds(); got != defaultJobTimeoutSeconds {
+		t.Errorf("비숫자 env: want %d(fallback), got %d", defaultJobTimeoutSeconds, got)
+	}
+}
+
 func TestCreateBatchJob_AssignedPartitions(t *testing.T) {
 	jm, fakeClient := newTestJobManager()
 	ctx := context.Background()

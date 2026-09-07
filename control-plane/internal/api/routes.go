@@ -273,6 +273,9 @@ func (s *Server) setupRoutes() {
 				workflows.GET("/:id/checkpoints", s.checkpointHandler.GetCheckpointsByWorkflow)
 			}
 
+			// 전역 실행 이력 (History 화면) — 모든 워크플로우 대상, workflow_id/status 필터 지원.
+			authenticated.GET("/executions", s.workflowHandler.ListAllExecutions)
+
 			// 통계
 			stats := authenticated.Group("/stats")
 			{

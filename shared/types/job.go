@@ -19,11 +19,11 @@ type JobConfig struct {
 	TTLAfterFinished int32 `json:"ttl_after_finished,omitempty"` // 완료 후 삭제 대기(초, 기본: 300)
 
 	// Pod Configuration
-	NodeSelector   map[string]string `json:"node_selector,omitempty"`
-	ServiceAccount string            `json:"service_account,omitempty"`
-	Namespace      string            `json:"namespace,omitempty"` // 기본: conduix
-	Image          string            `json:"image,omitempty"`     // 기본: 현재 Agent 이미지
-	ImagePullPolicy string           `json:"image_pull_policy,omitempty"` // Always, IfNotPresent, Never
+	NodeSelector    map[string]string `json:"node_selector,omitempty"`
+	ServiceAccount  string            `json:"service_account,omitempty"`
+	Namespace       string            `json:"namespace,omitempty"`         // 기본: conduix
+	Image           string            `json:"image,omitempty"`             // 기본: 현재 Agent 이미지
+	ImagePullPolicy string            `json:"image_pull_policy,omitempty"` // Always, IfNotPresent, Never
 }
 
 // DefaultJobConfig 기본 Job 설정 반환
@@ -37,7 +37,10 @@ func DefaultJobConfig() JobConfig {
 		BackoffLimit:     3,
 		TTLAfterFinished: 300,
 		Namespace:        "conduix",
-		ImagePullPolicy:  "IfNotPresent",
+		// RUNNER_IMAGE 는 :latest/:main 처럼 같은 태그에 새 이미지가 덮이는 가변 태그다.
+		// IfNotPresent 면 노드 캐시의 옛 이미지가 재사용돼 방금 배포한 stage 수정이
+		// 실행 pod 에 반영되지 않는다(라이브 모니터링 배포 때 실측).
+		ImagePullPolicy: "Always",
 	}
 }
 

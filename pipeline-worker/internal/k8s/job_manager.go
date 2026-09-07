@@ -44,6 +44,21 @@ func envDefaultTimeoutSeconds() int64 {
 	return defaultJobTimeoutSeconds
 }
 
+// resolvePullPolicy 는 워크플로우 JobConfig 의 문자열을 K8s PullPolicy 로 옮긴다.
+// 기본값이 Always 인 이유: RUNNER_IMAGE 는 :latest/:main 처럼 같은 태그에 새 이미지가
+// 덮이는 가변 태그를 쓴다. IfNotPresent 면 노드에 캐시된 옛 이미지가 계속 재사용돼
+// 방금 배포한 stage 수정이 실행 pod 에 반영되지 않는다(라이브 모니터링 배포 때 실측).
+func resolvePullPolicy(policy string) corev1.PullPolicy {
+	switch policy {
+	case "IfNotPresent":
+		return corev1.PullIfNotPresent
+	case "Never":
+		return corev1.PullNever
+	default:
+		return corev1.PullAlways
+	}
+}
+
 // fetchRunnerContainerName 은 바이너리 주입 initContainer 이름이다.
 // rolling(UpdateStreamingDeployment)에서 이 이름으로 initContainer 를 찾아 fetch URL 을 교체한다.
 const fetchRunnerContainerName = "fetch-runner"
@@ -176,14 +191,7 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 	// 리소스 설정
 	resources := buildResourceRequirements(cfg)
 
-	// ImagePullPolicy 설정
-	pullPolicy := corev1.PullIfNotPresent
-	switch cfg.ImagePullPolicy {
-	case "Always":
-		pullPolicy = corev1.PullAlways
-	case "Never":
-		pullPolicy = corev1.PullNever
-	}
+	pullPolicy := resolvePullPolicy(cfg.ImagePullPolicy)
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -465,13 +473,7 @@ func (m *JobManager) CreateStreamingDeployment(ctx context.Context, spec *Stream
 		envVars = append(envVars, corev1.EnvVar{Name: "ASSIGNED_PARTITIONS", Value: strings.Join(spec.AssignedPartitions, ",")})
 	}
 
-	pullPolicy := corev1.PullIfNotPresent
-	switch cfg.ImagePullPolicy {
-	case "Always":
-		pullPolicy = corev1.PullAlways
-	case "Never":
-		pullPolicy = corev1.PullNever
-	}
+	pullPolicy := resolvePullPolicy(cfg.ImagePullPolicy)
 
 	replicas := int32(1)
 	// checkpoint flush 여유를 위해 graceful 종료 시간을 넉넉히(runStreaming 이 SIGTERM 후 flush).

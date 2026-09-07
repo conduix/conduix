@@ -17,13 +17,13 @@ permissions:
 jobs:
   # ============================================================
   # 1. Go 테스트 병렬화 (Matrix 전략)
-  # 패키지별로 독립된 러너에서 동시 실행하여 시간을 1/5로 단축
+  # 패키지별로 독립된 러너에서 동시 실행하여 시간을 대폭 단축
   # ============================================================
   test-go:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: [shared, plugin-sdk, pipeline-core, pipeline-worker, control-plane]
+        package: [shared, plugin-sdk, pipeline-core, pipeline-worker, pipeline-runner, control-plane]
     steps:
       - uses: actions/checkout@v7
 

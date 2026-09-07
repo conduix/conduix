@@ -17,7 +17,7 @@
 
 **함께 추가한 관측성**(사용자 요구): sub-execution 별 실행 agent 기록(`agent_id`) — worker/batch-job→콜백→execution.agent_id→web-ui 노출. "어느 노드/몰림" 조회 가능.
 
-**참고 코드**: control-plane `handlers/workflow_partition.go`(분할기/취합기), `services/scheduler_service.go`(고아 감지 `advanceParentOnStaleSub`), pipeline-core `executor/group_executor.go`(`WithAssignedPartitions`), pipeline-worker `k8s/job_manager.go`(ASSIGNED_PARTITIONS env), pipeline-batch-job `runner/runner.go`(executeWorkflow 파티션 필터).
+**참고 코드**: control-plane `handlers/workflow_partition.go`(분할기/취합기), `services/scheduler_service.go`(고아 감지 `advanceParentOnStaleSub`), pipeline-core `executor/group_executor.go`(`WithAssignedPartitions`), pipeline-worker `k8s/job_manager.go`(ASSIGNED_PARTITIONS env), pipeline-runner `runner/runner.go`(executeWorkflow 파티션 필터).
 
 ## 2. Bulk 분산 부하 균형 ✅ 완료(2026-07-08)
 

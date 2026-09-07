@@ -1,4 +1,4 @@
-// Package builder provides RunnerBuilder for building pipeline-batch-job images
+// Package builder provides RunnerBuilder for building pipeline-runner images
 // that include all native plugin stages compiled in-process.
 package builder
 
@@ -24,13 +24,14 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/conduix/conduix/control-plane/pkg/models"
+	"github.com/conduix/conduix/shared/types"
 )
 
 // RunnerBuilderConfig Runner 빌드 설정
 type RunnerBuilderConfig struct {
 	BuildTimeout time.Duration // 빌드 타임아웃 (default: 5분)
 	GoProxy      string        // GOPROXY 설정
-	ImagePrefix  string        // Docker 이미지 prefix (예: ghcr.io/conduix/pipeline-batch-job)
+	ImagePrefix  string        // Docker 이미지 prefix (예: ghcr.io/conduix/pipeline-runner)
 	Platform     string        // 빌드 플랫폼 (default: linux/arm64)
 	DockerPush   bool          // Docker push 수행 여부
 	SourceRoot   string        // 로컬 모듈(pipeline-core/shared/plugin-sdk) 소스 루트. go.mod replace 대상.
@@ -61,7 +62,7 @@ func DefaultRunnerBuilderConfig() *RunnerBuilderConfig {
 	return &RunnerBuilderConfig{
 		BuildTimeout: buildTimeout,
 		GoProxy:      "https://proxy.golang.org,direct",
-		ImagePrefix:  "ghcr.io/conduix/pipeline-batch-job",
+		ImagePrefix:  "ghcr.io/conduix/pipeline-runner",
 		Platform:     "linux/arm64",
 		DockerPush:   false,
 		SourceRoot:   sourceRoot,
@@ -72,8 +73,8 @@ func DefaultRunnerBuilderConfig() *RunnerBuilderConfig {
 // runnerSourceModules 는 runner 바이너리를 구성하는 소스 모듈이다.
 // 빌드용 복사 대상과 coreSourceHash 대상이 반드시 같아야 한다 — 어긋나면 해시에 안 잡힌
 // 모듈의 변경이 "identical source hash" 로 스킵돼 옛 바이너리가 계속 배포된다.
-// (pipeline-batch-job 이 해시에서 빠져 있어 /monitoring 추가가 반영되지 않았다.)
-var runnerSourceModules = []string{"pipeline-batch-job", "pipeline-core", "shared", "plugin-sdk"}
+// (runner 모듈이 해시에서 빠져 있어 /monitoring 추가가 반영되지 않은 사고가 있었다.)
+var runnerSourceModules = []string{"pipeline-runner", "pipeline-core", "shared", "plugin-sdk"}
 
 // buildMu 는 Build() 를 프로세스 전역으로 직렬화한다.
 // auto-build(plugin update)와 수동 build 가 각각 goroutine 으로 거의 동시에 Build() 를 호출하면,
@@ -81,7 +82,7 @@ var runnerSourceModules = []string{"pipeline-batch-job", "pipeline-core", "share
 // 동시에 써 GOCACHE 교착(hang)이 난다. control-plane 은 단일 프로세스이므로 in-process mutex 로 충분.
 var buildMu sync.Mutex
 
-// RunnerBuilder 모든 native plugin을 포함하는 pipeline-batch-job 이미지를 빌드
+// RunnerBuilder 모든 native plugin을 포함하는 pipeline-runner 이미지를 빌드
 type RunnerBuilder struct {
 	config *RunnerBuilderConfig
 	db     *gorm.DB
@@ -315,7 +316,7 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	}, nil
 }
 
-// buildInTempDir 임시 디렉토리에 pipeline-batch-job 모듈을 복사하고, 그 안에
+// buildInTempDir 임시 디렉토리에 pipeline-runner 모듈을 복사하고, 그 안에
 // 플러그인 소스 + cmd/runner/registry_custom.go 를 주입해 실제 runner(./cmd/runner)를 빌드한다.
 // 스텁 main 이 아니라 실제 배치 실행 로직에 native stage 를 compile-in 하는 것이 핵심이다 —
 // registry_custom.go 의 init() 이 stream 전역 레지스트리에 stage 를 등록하면 executor 가 해석한다.
@@ -331,16 +332,16 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 		return fmt.Errorf("create build cache dir: %w", err)
 	}
 
-	// pipeline-batch-job 모듈을 tmpDir 로 복사. replace 가 ../pipeline-core 등 상대경로라
+	// pipeline-runner 모듈을 tmpDir 로 복사. replace 가 ../pipeline-core 등 상대경로라
 	// 형제 모듈(pipeline-core/shared/plugin-sdk)도 sourceRoot 에서 함께 복사해야 한다.
-	batchJobDir := filepath.Join(tmpDir, "pipeline-batch-job")
+	batchJobDir := filepath.Join(tmpDir, "pipeline-runner")
 	for _, mod := range runnerSourceModules {
 		src := filepath.Join(rb.config.SourceRoot, mod)
 		if err := copyDir(src, filepath.Join(tmpDir, mod)); err != nil {
 			return fmt.Errorf("copy module %s from source root: %w", mod, err)
 		}
 	}
-	logBuf.WriteString("  pipeline-batch-job module + sibling modules copied\n")
+	logBuf.WriteString("  pipeline-runner module + sibling modules copied\n")
 
 	// 허용 모듈 레지스트리 조회 — 의존성 버전의 단일 진실원천.
 	// plugin go.mod 와 batch-job go.mod 양쪽이 이 버전을 쓰므로, 여러 stage 를 합쳐도
@@ -401,7 +402,7 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	buildOut, err := rb.runCommand(buildCtx, batchJobDir, []string{
 		"GOOS=" + goos,
 		"GOARCH=" + goarch,
-	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", "pipeline-batch-job", "./cmd/runner")
+	}, "go", "build", "-ldflags=-s -w", "-trimpath", "-o", types.RunnerBinaryName, "./cmd/runner")
 	logBuf.WriteString(buildOut)
 	if err != nil {
 		return fmt.Errorf("go build: %w", err)
@@ -410,7 +411,7 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 
 	// 빌드 바이너리를 gzip 압축해 RunnerVersion 에 저장 — 레지스트리 push 없이 Job initContainer 가
 	// 받아 실행하는 경로(선택지 2). tmpDir 은 곧 삭제되므로 여기서 읽어 둔다.
-	binPath := filepath.Join(batchJobDir, "pipeline-batch-job")
+	binPath := filepath.Join(batchJobDir, types.RunnerBinaryName)
 	rawBin, err := os.ReadFile(binPath)
 	if err != nil {
 		return fmt.Errorf("read built binary: %w", err)
@@ -742,12 +743,13 @@ func copyDir(src, dst string) error {
 
 // generateDockerfile Runner Docker 이미지용 Dockerfile(DockerPush 옵션 전용).
 func generateDockerfile() string {
-	return `FROM alpine:3.21
+	bin := types.RunnerBinaryName
+	return fmt.Sprintf(`FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
-COPY pipeline-batch-job /usr/local/bin/pipeline-batch-job
-RUN chmod +x /usr/local/bin/pipeline-batch-job
-ENTRYPOINT ["/usr/local/bin/pipeline-batch-job"]
-`
+COPY %[1]s /usr/local/bin/%[1]s
+RUN chmod +x /usr/local/bin/%[1]s
+ENTRYPOINT ["/usr/local/bin/%[1]s"]
+`, bin)
 }
 
 // extractPluginIDs Plugin 목록에서 ID만 추출

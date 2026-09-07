@@ -94,7 +94,7 @@ worker의 정체는 단순 "실행 데몬"이 아니다:
 
 - **G1 ✅**: control-plane이 직접 K8s Job 생성하던 분기 제거. realtime·batch 모두 대상 cluster 채널(`cluster:<id>:execute`)로 실행 명령 발행. batch 표시는 `WorkflowConfig.Type`, 리소스 스펙은 `cmd.JobConfig`로 전달. (`workflow.go` StartWorkflow, `agent.go` 추가 필드)
 - **G2 ✅**: worker가 batch 명령 수신 시 SETNX claim 후 `delegateBatchJob`이 `job_manager.go`(in-cluster client)로 자기 cluster에 Job 생성. realtime은 기존 in-process `executeGroup`. leader election 대신 claim 단일화(D1) — **`leader/election.go` 삭제**. 사용되지 않던 `k8s/deployment_manager.go`도 함께 제거(D6로 자기 스케일 안 하므로 불필요).
-- **G3 ✅**: Job Pod(pipeline-batch-job)가 `CALLBACK_URL`(`/internal/job-result`)로 결과 콜백 — 기존 `HandleJobResultCallback` 재사용. worker는 Job 생성만 하고 결과 감시는 안 함(control-plane이 콜백 수신).
+- **G3 ✅**: Job Pod(pipeline-runner)가 `CALLBACK_URL`(`/internal/job-result`)로 결과 콜백 — 기존 `HandleJobResultCallback` 재사용. worker는 Job 생성만 하고 결과 감시는 안 함(control-plane이 콜백 수신).
 - **G4 ✅**: control-plane WorkflowHandler에서 `startBatchJob`/`jobService`/Watch 제거(D2). **`KubernetesJobService`(파일 전체) 삭제** — `ClusterHandler.ScaleAgents`/`UpdateAgentConfig`도 K8s 직접 호출 제거하고 DB의 `DesiredAgents`(의도)만 기록. **control-plane은 이제 K8s 클라이언트를 전혀 갖지 않는다.** (실제 replica는 배포 차트가 반영 — [D6](#) 아래.)
 - **G5 ✅**: RBAC — cluster-wide `pod-log-reader` ClusterRole(jobs/deployments/pods 포함)을 제거하고, 네임스페이스 한정 `worker-job-manager` **Role**(jobs create + pods/log read)로 교체. 최소 권한. control-plane 몫의 deployment-scale 권한 삭제.
 - **G6 ✅**: 실행 시작에서 `resolveExecutionCluster`로 cluster 확정(지정→default→`errNoExecutionCluster` 4xx). `Cluster.IsDefault` 필드 추가. execution에 확정값 스냅샷. `CreateWorkflowRequest`·`UpdateWorkflowRequest`·YAML `WorkflowSpec` 모두 `cluster_id` 처리(이미 존재). web-ui 워크플로우 생성/수정 폼에 cluster selector 추가(default 폴백 안내).
@@ -137,8 +137,8 @@ worker의 정체는 단순 "실행 데몬"이 아니다:
 - **`pipeline-daemon` → `pipeline-worker` (확정, 적용 완료)**
   근거: 이 모듈은 특정 cluster에 소속되어 ① realtime 파이프라인을 상주 실행하고 ② control-plane의 위임을 받아 자기 cluster에 K8s Job을 만든다. 두 역할(실행+위임수행)을 포괄하는 중립어가 `worker`다. `daemon`은 상주만 담고 위임을 못 담아 부정확. `cluster-agent`는 "위임 대리"만 강조해 realtime 실행 역할이 흐려지고, `pipeline-` 접두 네이밍 일관성(core/batch-job/worker)에서 벗어남. → **`pipeline-worker`**.
 
-- **`pipeline-batch-job` = 유지 (확정)**
+- **`pipeline-runner` = 유지 (확정)**
   근거: "일회성 K8s Job으로 batch를 실행하는 바이너리"라는 의미가 정확. worker가 위임받아 만드는 그 Job의 실행 이미지가 이것이다. 역할·이름 일치.
 
 정리된 3자 관계:
-`control-plane`(제어·라우팅) → `pipeline-worker`(cluster 소속, 실행+Job위임생성) → `pipeline-batch-job`(worker가 만든 일회성 Job의 실행 바이너리).
+`control-plane`(제어·라우팅) → `pipeline-worker`(cluster 소속, 실행+Job위임생성) → `pipeline-runner`(worker가 만든 일회성 Job의 실행 바이너리).

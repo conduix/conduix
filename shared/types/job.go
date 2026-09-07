@@ -2,6 +2,16 @@ package types
 
 import "time"
 
+// RunnerBinaryName 은 위임 실행 pod(batch Job·streaming Deployment)이 실행하는
+// runner 바이너리 파일명이다. 세 곳이 반드시 일치해야 하며, 하나만 달라지면
+// pod 이 "no such file" 로 기동 실패한다:
+//   - CP 빌더의 `go build -o` (control-plane/internal/builder/runner_builder.go)
+//   - initContainer 가 gunzip 으로 저장하는 이름 (pipeline-worker/internal/k8s)
+//   - main container 의 command (같은 파일)
+//
+// 모듈이 달라 상수를 공유할 곳이 shared 뿐이므로 여기 둔다.
+const RunnerBinaryName = "pipeline-runner"
+
 // JobConfig Kubernetes Job 설정
 // Batch 워크플로우 실행 시 Job Pod 리소스 및 동작 설정
 type JobConfig struct {

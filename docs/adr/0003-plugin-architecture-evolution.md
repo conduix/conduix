@@ -37,7 +37,7 @@
 | **Tier 1: Script** | JavaScript(goja) `js_script` stage | **없음**(저장→재시작) | remap 대비 5~10배 느림 | 로직 있는 변환, 빠른 반복(~80% 케이스) |
 | **Tier 2: Native** | 사용자 Go 코드 | runner 이미지 재빌드(single image) | 네이티브 | 고성능·외부 SDK·회사 모듈 |
 
-- native plugin은 별도 바이너리·gRPC 없이 **runner 이미지(pipeline-batch-job) 하나에 전부 컴파일**되어 인프로세스 실행.
+- native plugin은 별도 바이너리·gRPC 없이 **runner 이미지(pipeline-runner) 하나에 전부 컴파일**되어 인프로세스 실행.
 - 배포 일관성: `RunnerVersion` + `SourceHash` vs `DeployedHash` 검증(불일치 시 실행 거부).
 - 초기 V4 문서는 스크립트 tier로 **Starlark**를 계획했으나, 커밋 `6099d12`에서 **JavaScript(goja)로 교체** + native Go stage 10종 추가.
 

@@ -10,10 +10,10 @@ RUN apk add --no-cache git
 COPY shared/ ./shared/
 COPY pipeline-core/ ./pipeline-core/
 COPY plugin-sdk/ ./plugin-sdk/
-COPY pipeline-batch-job/ ./pipeline-batch-job/
+COPY pipeline-runner/ ./pipeline-runner/
 
-# Build pipeline-batch-job
-WORKDIR /app/pipeline-batch-job
+# Build pipeline-runner
+WORKDIR /app/pipeline-runner
 RUN go mod download
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /app/runner ./cmd/runner
 

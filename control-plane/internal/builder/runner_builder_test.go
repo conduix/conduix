@@ -268,7 +268,7 @@ func TestCombinedSourceHash_CoreHashChangesResult(t *testing.T) {
 }
 
 // coreSourceHash 는 runner 바이너리를 구성하는 모든 모듈의 변경을 감지해야 한다.
-// pipeline-batch-job 이 빠져 있어 그 모듈만 바뀐 배포가 "identical source hash" 로
+// pipeline-runner 이 빠져 있어 그 모듈만 바뀐 배포가 "identical source hash" 로
 // 스킵되고 옛 바이너리가 계속 나갔다(라이브 모니터링 배포 때 실측).
 func TestCoreSourceHash_DetectsAllRunnerModules(t *testing.T) {
 	root := t.TempDir()

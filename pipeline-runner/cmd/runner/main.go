@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/conduix/conduix/pipeline-batch-job/internal/config"
-	"github.com/conduix/conduix/pipeline-batch-job/internal/runner"
+	"github.com/conduix/conduix/pipeline-runner/internal/config"
+	"github.com/conduix/conduix/pipeline-runner/internal/runner"
 	"github.com/conduix/conduix/shared/logging"
 
 	// K8s CPU/메모리 limit(cgroup)을 Go 런타임에 반영: GOMAXPROCS/GOMEMLIMIT 자동 설정.
@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	logging.Setup("pipeline-batch-job")
+	logging.Setup("pipeline-runner")
 	slog.Info("starting")
 
 	// 설정 로드

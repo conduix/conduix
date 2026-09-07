@@ -51,7 +51,7 @@ controlPlane:
     port: 8080
   autoscaling:
     enabled: false
-  # control-plane 은 native plugin 빌드 시 컨테이너 안에서 go build(pipeline-batch-job
+  # control-plane 은 native plugin 빌드 시 컨테이너 안에서 go build(pipeline-runner
   # 전체 컴파일)를 수행한다. 기본 500m/512Mi 로는 cgroup CPU throttle 로 빌드가 10분+
   # 걸리고 메모리도 OOM 위험. VM(2 CPU)에 맞춰 상향.
   resources:
@@ -77,7 +77,7 @@ agent:
   autoscaling:
     enabled: false
   # colima 로컬 이미지 재사용 (IfNotPresent). batch Job 이 이 이미지로 실행됨.
-  runnerImage: "conduix/pipeline-batch-job:e2e"
+  runnerImage: "conduix/pipeline-runner:e2e"
   # 실행 파드(batch Job)에 envFrom 으로 붙일 Secret — pipelineSecrets 로 만든 것.
   # 파이프라인 config 의 ${KAKAO_REST_KEY} 등을 batch Job 안에서 해소한다.
   runnerEnvFromSecrets:

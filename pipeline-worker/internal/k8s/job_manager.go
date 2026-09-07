@@ -27,7 +27,7 @@ const (
 )
 
 // streamingHealthPort 는 streaming pod 의 health/command REST 포트다.
-// pipeline-batch-job config 기본값(HEALTH_PORT=8082)과 일치해야 한다 — probe·명령 전송 대상 포트.
+// pipeline-runner config 기본값(HEALTH_PORT=8082)과 일치해야 한다 — probe·명령 전송 대상 포트.
 const streamingHealthPort = 8082
 
 // defaultJobTimeoutSeconds 는 워크플로우 JobConfig 에 timeout 이 없을 때 batch Job 에 적용하는
@@ -210,7 +210,7 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
-							Name:            "pipeline-batch-job",
+							Name:            "pipeline-runner",
 							Image:           image,
 							ImagePullPolicy: pullPolicy,
 							Env:             envVars,
@@ -329,7 +329,7 @@ func (m *JobManager) CreateCronJob(ctx context.Context, spec *CronJobSpec) (*bat
 							RestartPolicy: corev1.RestartPolicyNever,
 							Containers: []corev1.Container{
 								{
-									Name:      "pipeline-batch-job",
+									Name:      "pipeline-runner",
 									Image:     image,
 									Env:       envVars,
 									EnvFrom:   m.runnerEnvFrom,
@@ -378,10 +378,10 @@ func (m *JobManager) DeleteJob(ctx context.Context, namespace, name string) erro
 // URL 은 versionID 로만 달라지므로 rolling 시 이 명령만 교체하면 새 바이너리로 재기동된다.
 func (m *JobManager) fetchRunnerCommand(runnerVersionID, binMount string) []string {
 	binURL := fmt.Sprintf("%s/api/v1/internal/runner/versions/%s/binary", m.controlPlaneURL, runnerVersionID)
+	dest := binMount + "/" + types.RunnerBinaryName
 	return []string{
 		"sh", "-c",
-		fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s/pipeline-batch-job && chmod +x %s/pipeline-batch-job",
-			binURL, binMount, binMount),
+		fmt.Sprintf("set -e; wget -q -O- %q | gunzip > %s && chmod +x %s", binURL, dest, dest),
 	}
 }
 
@@ -405,7 +405,7 @@ func (m *JobManager) injectRunnerBinary(ps *corev1.PodSpec, runnerVersionID, ima
 		Command:         m.fetchRunnerCommand(runnerVersionID, binMount),
 		VolumeMounts:    []corev1.VolumeMount{{Name: "runner-bin", MountPath: binMount}},
 	})
-	ps.Containers[0].Command = []string{binMount + "/pipeline-batch-job"}
+	ps.Containers[0].Command = []string{binMount + "/" + types.RunnerBinaryName}
 	ps.Containers[0].Args = nil // base 이미지 ENTRYPOINT/CMD 잔여 인자 제거
 	ps.Containers[0].VolumeMounts = append(ps.Containers[0].VolumeMounts,
 		corev1.VolumeMount{Name: "runner-bin", MountPath: binMount})

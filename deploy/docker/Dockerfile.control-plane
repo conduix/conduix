@@ -58,17 +58,17 @@ COPY --from=builder /usr/local/bin/gopls /usr/local/bin/gopls
 COPY plugin-sdk /app/plugin-sdk
 
 # native plugin 런너 빌드(RunnerBuilder)가 참조하는 로컬 모듈 소스.
-# 빌더는 pipeline-batch-job 모듈을 tmpDir 로 복사해 그 안에 플러그인+registry_custom.go 를
+# 빌더는 pipeline-runner 모듈을 tmpDir 로 복사해 그 안에 플러그인+registry_custom.go 를
 # 주입하고 ./cmd/runner 를 빌드한다 — 실제 배치 실행 로직에 native stage 를 compile-in.
 # runtime 이미지에 이 소스들이 없으면 빌드가 실패한다.
 COPY pipeline-core /app/pipeline-core
 COPY shared /app/shared
-COPY pipeline-batch-job /app/pipeline-batch-job
+COPY pipeline-runner /app/pipeline-runner
 
 # control-plane 은 비-root(uid=1000)로 실행되는데, 리포에 0600 권한 소스(.go 포함)가 섞여
 # COPY 로 그대로 딸려온다 → RunnerBuilder 의 소스 복사가 permission denied 로 실패한다.
 # a+rX 로 world-readable(디렉토리는 순회 가능) 보장.
-RUN chmod -R a+rX /app/plugin-sdk /app/pipeline-core /app/shared /app/pipeline-batch-job
+RUN chmod -R a+rX /app/plugin-sdk /app/pipeline-core /app/shared /app/pipeline-runner
 
 ENV CONDUIX_SDK_PATH=/app/plugin-sdk
 ENV CONDUIX_SOURCE_ROOT=/app

@@ -94,7 +94,7 @@ type Config struct {
 
 	// batch 위임 시 생성할 K8s Job 설정
 	Namespace   string `json:"namespace"`    // Job 생성 네임스페이스 (비면 in-cluster 기본)
-	RunnerImage string `json:"runner_image"` // 배치 실행용 pipeline-batch-job 이미지
+	RunnerImage string `json:"runner_image"` // 배치 실행용 pipeline-runner 이미지
 	// 실행 파드(batch Job/streaming pod)에 envFrom 으로 붙일 Secret/ConfigMap 이름들.
 	// 파이프라인 config 의 ${VAR} 해소용 값을 실행 파드에 공급한다(비면 평문 config 만 동작).
 	RunnerEnvFromSecrets    []string `json:"runner_env_from_secrets"`
@@ -934,7 +934,7 @@ func (a *Agent) handleGroupExecution(message string) {
 
 // delegateBatchJob은 batch 워크플로우를 이 worker가 속한 cluster의 K8s Job으로 생성한다.
 // control-plane이 아니라 worker가 in-cluster 권한으로 Job을 만든다(위임 구조).
-// Job Pod(pipeline-batch-job)가 실행 후 control-plane에 REST 콜백으로 결과를 보고한다.
+// Job Pod(pipeline-runner)가 실행 후 control-plane에 REST 콜백으로 결과를 보고한다.
 func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	startTime := time.Now()
 	workflow := cmd.WorkflowConfig

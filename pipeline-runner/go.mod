@@ -1,4 +1,4 @@
-module github.com/conduix/conduix/pipeline-batch-job
+module github.com/conduix/conduix/pipeline-runner
 
 go 1.27
 

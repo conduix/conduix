@@ -101,7 +101,7 @@ func runAgentMode() {
 		HeartbeatInterval: 10 * time.Second,
 		// batch 위임 시 이 worker가 자기 cluster에 만들 K8s Job 설정
 		Namespace:   os.Getenv("NAMESPACE"),
-		RunnerImage: os.Getenv("RUNNER_IMAGE"), // pipeline-batch-job 이미지
+		RunnerImage: os.Getenv("RUNNER_IMAGE"), // pipeline-runner 이미지
 		// 실행 파드에 envFrom 으로 붙일 Secret/ConfigMap(콤마 구분). 파이프라인 config 의
 		// ${VAR}(DB 비밀번호·API 키 등)를 batch Job 안에서 해소하려면 여기에 지정한다.
 		RunnerEnvFromSecrets:    splitCSV(os.Getenv("RUNNER_ENV_FROM_SECRETS")),

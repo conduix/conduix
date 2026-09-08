@@ -572,6 +572,35 @@ func (m *JobManager) DeleteStreamingDeployment(ctx context.Context, namespace, n
 	return nil
 }
 
+// FindStreamingDeployments 는 label 로 streaming Deployment 이름들을 찾는다.
+// executionID 가 있으면 그 실행만, 비면 workflowID 의 모든 실행을 찾는다.
+// agent 메모리(runningExecs)가 아니라 K8s 실제 상태를 보므로, agent 재시작으로 메모리가
+// 비었는데 Deployment 는 살아있는 고아를 찾아낼 수 있다.
+func (m *JobManager) FindStreamingDeployments(ctx context.Context, namespace, workflowID, executionID string) ([]string, error) {
+	if namespace == "" {
+		namespace = m.client.Namespace()
+	}
+	selector := "app.kubernetes.io/component=streaming-runner"
+	if executionID != "" {
+		selector += ",conduix.io/execution-id=" + sanitizeLabel(executionID)
+	} else if workflowID != "" {
+		selector += ",conduix.io/workflow-id=" + sanitizeLabel(workflowID)
+	} else {
+		return nil, fmt.Errorf("workflow id or execution id required")
+	}
+
+	list, err := m.client.Clientset().AppsV1().Deployments(namespace).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list streaming deployments (%s): %w", selector, err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, d := range list.Items {
+		names = append(names, d.Name)
+	}
+	return names, nil
+}
+
 // StreamingDeploymentExists 는 execution 의 streaming Deployment 가 실제로 존재하는지 K8s 에서 확인한다.
 // reconcile 이 로컬 상태(runningExecs)가 아니라 K8s 실제 상태로 복구 여부를 판단하게 한다 —
 // Deployment 가 외부 삭제/유실됐는데 agent 로컬엔 아직 "실행 중"으로 남아있는 경우를 잡는다.

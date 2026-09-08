@@ -785,3 +785,64 @@ func TestPullPolicyAppliedToPods(t *testing.T) {
 		t.Errorf("streaming Deployment pullPolicy = %q, want Always", got)
 	}
 }
+
+// agent 재시작으로 runningExecs 가 비어도 K8s 에 남은 streaming Deployment 를 찾을 수 있어야 한다.
+// 이게 없으면 stop 이 아무 일도 못 하고 pod 이 계속 돌아 "DB 는 stopped, 실제로는 running" 이 된다.
+func TestFindStreamingDeployments(t *testing.T) {
+	jm, fakeClient := newTestJobManager()
+	ctx := context.Background()
+
+	mk := func(name, wf, ex string) {
+		_, err := fakeClient.AppsV1().Deployments("conduix").Create(ctx, &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "conduix",
+				Labels: map[string]string{
+					"app.kubernetes.io/component": "streaming-runner",
+					"conduix.io/workflow-id":      wf,
+					"conduix.io/execution-id":     ex,
+				},
+			},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	mk("conduix-rt-e1", "wf-a", "e1")
+	mk("conduix-rt-e2", "wf-a", "e2")
+	mk("conduix-rt-e9", "wf-b", "e9")
+
+	// executionID 지정 → 그 실행만
+	got, err := jm.FindStreamingDeployments(ctx, "conduix", "wf-a", "e1")
+	if err != nil {
+		t.Fatalf("by execution: %v", err)
+	}
+	if len(got) != 1 || got[0] != "conduix-rt-e1" {
+		t.Errorf("by execution = %v, want [conduix-rt-e1]", got)
+	}
+
+	// executionID 없음 → workflow 의 모든 실행 (stop 재호출 시 고아 전부 정리)
+	got, err = jm.FindStreamingDeployments(ctx, "conduix", "wf-a", "")
+	if err != nil {
+		t.Fatalf("by workflow: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("by workflow = %v, want 2 deployments", got)
+	}
+
+	// 다른 워크플로우는 섞이지 않아야 한다
+	got, _ = jm.FindStreamingDeployments(ctx, "conduix", "wf-b", "")
+	if len(got) != 1 || got[0] != "conduix-rt-e9" {
+		t.Errorf("wf-b = %v, want [conduix-rt-e9]", got)
+	}
+
+	// 없는 워크플로우 → 빈 목록(에러 아님). stop 은 멱등해야 한다.
+	got, err = jm.FindStreamingDeployments(ctx, "conduix", "wf-none", "")
+	if err != nil || len(got) != 0 {
+		t.Errorf("wf-none = %v, err=%v; want empty without error", got, err)
+	}
+
+	// 식별자가 둘 다 없으면 에러 — 전체 삭제 같은 사고를 막는다
+	if _, err := jm.FindStreamingDeployments(ctx, "conduix", "", ""); err == nil {
+		t.Error("expected error when both workflow and execution id are empty")
+	}
+}

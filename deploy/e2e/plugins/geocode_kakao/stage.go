@@ -421,6 +421,11 @@ func (s *Stage) placeNameFallback(placeName, addrNorm string) *geoResult {
 		return nil
 	}
 	var body struct {
+		// total_count: 시군구로 한정한 검색의 총 결과 수. 채택 판정의 핵심이다 —
+		// 1건이면 후보가 유일해 안전하고, 여러 건이면 1순위를 신뢰할 근거가 없다.
+		Meta struct {
+			TotalCount int `json:"total_count"`
+		} `json:"meta"`
 		Documents []struct {
 			PlaceName       string `json:"place_name"`
 			AddressName     string `json:"address_name"`
@@ -434,6 +439,7 @@ func (s *Stage) placeNameFallback(placeName, addrNorm string) *geoResult {
 	}
 
 	d := body.Documents[0]
+	total := body.Meta.TotalCount
 	if prefixMatchRatio(name, normalizePlaceName(d.PlaceName)) < placeNameMinRatio {
 		return nil
 	}
@@ -443,15 +449,21 @@ func (s *Stage) placeNameFallback(placeName, addrNorm string) *geoResult {
 		return nil
 	}
 
-	// 읍/면/동까지 대조한다. 시군구만 보면 같은 군 안의 다른 읍면을 통과시킨다 —
-	// 실측 오매칭: '금강삼사' 원본 '고성군 현내면 화포리 561-1' 인데 반환은
-	// '고성군 거진읍 화진포길 204-25'. 같은 고성군이고 시설명도 정확히 일치해
-	// 접두·시군구 검증을 모두 통과했다.
+	// 시군구 안에서 시설명이 유일해야(총 1건) 채택한다. 여러 건이면 자동으로 판별할 수 없다.
 	//
-	// 원본에 읍면동이 없으면(시군구까지만 기재된 주소) 이 검증은 건너뛴다 — 대조할
-	// 근거가 없고, 그런 레코드는 애초에 주소검색이 불가해 시설명이 유일한 단서다.
-	if emd := eupMyeonDongOf(addrNorm); emd != "" &&
-		!strings.Contains(d.AddressName, emd) && !strings.Contains(d.RoadAddressName, emd) {
+	// 유일하면 안전하다: 다른 후보가 없으니 오매칭할 대상 자체가 없다. 읍면이 원본과
+	// 달라도 채택한다 — 실측 '금강삼사' 는 원본 '고성군 현내면 화포리 561-1' 이 카카오에
+	// 아예 없는 주소이고(total=0) 시설명은 고성군에서 1건뿐이다. 원본의 읍면/리 표기가
+	// 틀린 것이고 반환값이 정답이다. 여기서 읍면을 대조하면 정답을 버린다.
+	//
+	// 여러 건이면 1순위를 신뢰할 근거가 없다. 읍면 대조로도 못 가른다 — 실측
+	// '1호 전곡공원'(화성시) 은 2건이 나오고 '전곡1호어린이공원 서신면 전곡리' 와
+	// '전곡공원1호 서신면 장외리' 가 둘 다 같은 서신면이다. 이름도 둘 다 그럴듯해
+	// 어느 쪽이 맞는지 알 수 없다. '시장'(정선군) 은 23건이 나온다.
+	//
+	// 이런 건은 override_field 로 사람이 보정하는 대상이다. 자동으로 좌표를 박으면
+	// "근사 좌표는 성공이 아니다" 원칙을 어기고, 틀렸다는 사실조차 드러나지 않는다.
+	if total != 1 {
 		return nil
 	}
 

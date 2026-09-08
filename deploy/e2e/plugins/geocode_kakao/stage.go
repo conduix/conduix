@@ -325,8 +325,18 @@ func (s *Stage) geocodeWithFallbacks(norm, lotnoRaw string) *geoResult {
 
 	// 네이버 폴백(S4): 카카오가 모든 후보로 못 찾은 주소만 네이버로 재시도.
 	// 카카오 DB 에만 없는 주소를 보강한다(실측: 카카오 not_found 를 네이버가 다수 복구).
-	if r := s.naverGeocode(norm); r != nil {
-		return r
+	//
+	// 카카오와 같은 후보 목록을 쓴다. 예전에는 norm(도로명) 하나만 넘겨서, 원본 도로명 번지가
+	// 틀렸고 지번주소로는 찾히는 레코드를 놓쳤다 — 실측: '서천군 서면 요포길 123'(원본, 실제는
+	// 135번지)은 실패하지만 지번 '서면 도둔리 1222-33' 으로는 네이버가 찾는다.
+	// 좌표 없는 810건 중 348건이 지번주소를 갖고 있고 표본 20건에서 14건이 회복됐다.
+	for _, cand := range candidates {
+		if cand == "" {
+			continue
+		}
+		if r := s.naverGeocode(cand); r != nil {
+			return r
+		}
 	}
 
 	return &geoResult{Status: statusNotFound}
@@ -371,12 +381,37 @@ func (s *Stage) naverGeocode(q string) *geoResult {
 			JibunAddress string `json:"jibunAddress"`
 			X            string `json:"x"` // 경도
 			Y            string `json:"y"` // 위도
+			// addressElements 로 "번지까지 특정됐는지" 를 판정한다. 네이버는 동 이름만 줘도
+			// (예: '서울특별시 동작구 동작동') 좌표를 반환하는데 그건 동 중심점이라 시설 위치가
+			// 아니다 — "근사 좌표는 성공이 아니다" 원칙에 따라 거부해야 한다.
+			AddressElements []struct {
+				Types    []string `json:"types"`
+				LongName string   `json:"longName"`
+			} `json:"addressElements"`
 		} `json:"addresses"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || len(body.Addresses) == 0 {
 		return nil
 	}
 	a := body.Addresses[0]
+
+	// 번지(LAND_NUMBER) 또는 건물번호(BUILDING_NUMBER) 중 하나라도 있어야 지점이 특정된 것.
+	// 둘 다 비면 시/군/구/동 레벨 매칭 = 중심점이므로 버린다.
+	pinpointed := false
+	for _, el := range a.AddressElements {
+		if el.LongName == "" {
+			continue
+		}
+		for _, ty := range el.Types {
+			if ty == "LAND_NUMBER" || ty == "BUILDING_NUMBER" {
+				pinpointed = true
+			}
+		}
+	}
+	if !pinpointed {
+		return nil
+	}
+
 	lon, _ := strconv.ParseFloat(a.X, 64)
 	lat, _ := strconv.ParseFloat(a.Y, 64)
 	if lat < koreaLatMin || lat > koreaLatMax || lon < koreaLonMin || lon > koreaLonMax {
@@ -575,7 +610,6 @@ var (
 	reDongEnding   = regexp.MustCompile(`(동|리|가)\d*$|(\d+동)$`)
 	reDescriptive  = regexp.MustCompile(`(인근|부근|일대|앞|옆|뒤|해안가|마을|입구|주변|밑|내)$`)
 	reMultiLot     = regexp.MustCompile(`외\s*\d*\s*필지`)
-	reNoSpaceLong  = regexp.MustCompile(`^\S{10,}$`)
 	reSidoPrefix   = regexp.MustCompile(`^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|전라|전북|전남|경상|경북|경남|제주)`)
 	// 도로명(로/길 뒤 번호) 또는 지번(동/리/가 뒤 번지) 형태 — sido 접두가 없어도 주소로 보고 시도.
 	// 아래 네 형태를 모두 인정해야 한다. 각각 실측으로 확인한 누락 사례가 있다(2026-09-08):
@@ -612,9 +646,12 @@ func normalizeAddress(addr string) string {
 // normalizeAddress 가 이미 떼어내므로, 떼고도 도로/동/번지 형태가 남으면 시도, 남지 않으면
 // (건물명·서술만 남음 = '태평인라인장', '조사리') 근사밖에 안 되므로 불가. sido 접두 유무는
 // 판단 기준이 아니다 — 접두가 없는 지번주소('가좌4동 399')도 형태만 맞으면 시도한다.
+// reNoSpaceLong(공백 없이 10자 이상)은 판정에서 뺐다. 카카오는 공백 없는 주소도 정상 처리한다
+// (실측: '서울특별시강남구테헤란로152' → 찾음, 표본 25건 중 21건 성공). 창원시 등 일부 지자체가
+// 주소를 통째로 붙여 보내는데, 이 규칙이 그걸 전부 막아 411건이 호출조차 되지 않았다.
+// 쓰레기 입력('abcdefghijklmnop')은 API 가 못 찾고 not_found 로 캐시되므로 사전 차단이 불필요하다.
 func isUnfixableAddress(norm string) bool {
 	return !reAddressShape.MatchString(norm) ||
-		reNoSpaceLong.MatchString(norm) ||
 		reMultiLot.MatchString(norm) ||
 		(strings.Contains(norm, "(") && !strings.Contains(norm, ")"))
 }

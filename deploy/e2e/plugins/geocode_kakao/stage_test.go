@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -37,7 +38,6 @@ func TestIsUnfixableAddress(t *testing.T) {
 	unfixable := []string{
 		"경기도 성남시 수정구 태평인라인장",       // 서술어(앞) 제거 후 — 건물명만, 번지 없음
 		"경상북도 포항시 북구 송라면 조사리",       // 서술어(해안가) 제거 후 — 리 이름만, 번지 없음
-		"경상남도마산합포구제2두부로30",           // 공백 없이 10자↑ (reNoSpaceLong)
 		"강원특별자치도 횡성군 우천면 우항리 583-2외 8필지", // 외 N필지
 		"경기도 평택시 고덕면 고덕로 283(좌교리",   // 안 닫힌 괄호(파손)
 		"강원특별자치도 임계면 송계리",            // 리 이름만
@@ -144,7 +144,12 @@ func mockNaver(t *testing.T, handler func(q string) (lat, lon string, road, foun
 		lat, lon, road, found := handler(r.URL.Query().Get("query"))
 		addrs := []any{}
 		if found {
-			a := map[string]any{"x": lon, "y": lat, "jibunAddress": "지번"}
+			// addressElements 에 LAND_NUMBER 를 넣어야 "번지까지 특정" 으로 인정된다
+			// (동 중심점 거부 로직). 실제 응답과 같은 형태를 유지한다.
+			a := map[string]any{"x": lon, "y": lat, "jibunAddress": "지번",
+				"addressElements": []any{
+					map[string]any{"types": []string{"LAND_NUMBER"}, "longName": "123-4"},
+				}}
 			if road {
 				a["roadAddress"] = "도로명"
 			}
@@ -427,5 +432,95 @@ func TestProcess_NoAddressMarker(t *testing.T) {
 func TestInit_Validation(t *testing.T) {
 	if err := (&Stage{}).Init(map[string]any{}); err == nil {
 		t.Error("expected error without address_field")
+	}
+}
+
+// 원본 도로명 번지가 틀렸고 지번주소로는 찾히는 레코드 — 네이버 폴백이 도로명만 시도하면
+// 놓친다. 실측: '서천군 서면 요포길 123'(원본, 실제 135번지)은 두 API 모두 실패하지만
+// 지번 '서면 도둔리 1222-33' 으로는 네이버가 찾는다(좌표 없는 810건 중 348건이 지번 보유).
+func TestProcess_NaverTriesLotnoCandidate(t *testing.T) {
+	ksrv, _ := mockKakao(t, func(q string) (string, string, bool, bool) {
+		return "", "", false, false // 카카오는 도로명·지번 모두 실패
+	})
+	defer ksrv.Close()
+
+	var naverQueries []string
+	nsrv, _ := mockNaver(t, func(q string) (string, string, bool, bool) {
+		naverQueries = append(naverQueries, q)
+		if strings.Contains(q, "도둔리") { // 지번으로만 찾힌다
+			return "36.1566490", "126.5047516", true, true
+		}
+		return "", "", false, false
+	})
+	defer nsrv.Close()
+
+	s := &Stage{}
+	if err := s.Init(map[string]any{
+		"api_key": "test-key", "api_base_url": ksrv.URL,
+		"address_field": "road_addr", "lotno_field": "lotno_addr",
+		"naver_client_id": "nid", "naver_client_secret": "nsecret", "naver_base_url": nsrv.URL,
+		"rps": 1000,
+	}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	rec, err := s.Process(map[string]any{
+		"road_addr":  "충청남도 서천군 서면 요포길 123",
+		"lotno_addr": "충청남도 서천군 서면 도둔리 1222-33",
+	})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if rec["geo_status"] != statusOK {
+		t.Fatalf("geo_status = %v, want ok (네이버가 지번으로 찾아야 한다). naver 질의: %v",
+			rec["geo_status"], naverQueries)
+	}
+	if rec["geo_source"] != "naver" {
+		t.Errorf("geo_source = %v, want naver", rec["geo_source"])
+	}
+
+	// 지번 후보가 실제로 네이버에 전달됐는지 — 이게 없으면 이번 수정이 무의미하다.
+	sawLotno := false
+	for _, q := range naverQueries {
+		if strings.Contains(q, "도둔리") {
+			sawLotno = true
+		}
+	}
+	if !sawLotno {
+		t.Errorf("네이버에 지번 후보가 전달되지 않았다: %v", naverQueries)
+	}
+}
+
+// 네이버는 동 이름만 줘도 좌표를 반환한다(동 중심점). 시설 위치가 아니므로 거부해야 한다 —
+// "근사 좌표는 성공이 아니다" 원칙. addressElements 의 LAND_NUMBER/BUILDING_NUMBER 로 판정한다.
+func TestNaverGeocode_RejectsRegionCentroid(t *testing.T) {
+	// addressElements 에 번지가 없는 응답(동 레벨 매칭)을 직접 만든다.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "OK",
+			"addresses": []any{map[string]any{
+				"x": "126.9531", "y": "37.5065", "jibunAddress": "서울특별시 동작구 동작동",
+				"addressElements": []any{
+					map[string]any{"types": []string{"SIDO"}, "longName": "서울특별시"},
+					map[string]any{"types": []string{"SIGUGUN"}, "longName": "동작구"},
+					map[string]any{"types": []string{"DONGMYUN"}, "longName": "동작동"},
+					map[string]any{"types": []string{"LAND_NUMBER"}, "longName": ""}, // 비어 있음
+				},
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	s := &Stage{}
+	if err := s.Init(map[string]any{
+		"address_field": "a",
+		"naver_client_id": "nid", "naver_client_secret": "nsecret", "naver_base_url": srv.URL,
+		"rps": 1000,
+	}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	if r := s.naverGeocode("서울특별시 동작구 동작동"); r != nil {
+		t.Errorf("동 중심점을 성공으로 받았다: %+v", r)
 	}
 }

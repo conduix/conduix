@@ -740,7 +740,7 @@ func TestProcess_PlaceNameFallbackRecovers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("query")
 		if strings.Contains(r.URL.Path, "keyword") && strings.Contains(q, "성주빌딩") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"documents": []any{map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{"meta": map[string]any{"total_count": 1}, "documents": []any{map[string]any{
 				"place_name": "성주빌딩", "address_name": "경남 창원시 성산구 성주동 127",
 				"road_address_name": "경남 창원시 성산구 삼정자로43번길 8",
 				"x":                 "128.710953986569", "y": "35.1986927086103",
@@ -774,16 +774,19 @@ func TestProcess_PlaceNameFallbackRecovers(t *testing.T) {
 	}
 }
 
-// 시군구만 대조하면 같은 군 안의 다른 읍/면을 통과시킨다.
-// 실측 오매칭: '금강삼사' 원본 '고성군 현내면 화포리 561-1' → 반환 '고성군 거진읍 화진포길 204-25'.
-// 같은 고성군이고 시설명도 정확히 일치해 접두·시군구 검증을 모두 통과했다.
-func TestPlaceNameFallback_RejectsDifferentEupMyeon(t *testing.T) {
+// 시설명이 시군구 안에서 유일하면(total=1) 읍/면이 원본과 달라도 채택한다.
+// 실측 '금강삼사': 원본 '고성군 현내면 화포리 561-1' 은 카카오에 없는 주소이고(total=0)
+// 시설명은 고성군에서 1건뿐이다 — 원본 읍면/리 표기가 틀린 것이고 반환값이 정답이다.
+// 여기서 읍면을 대조하면 정답을 버린다.
+func TestPlaceNameFallback_UniqueNameOverridesEupMyeon(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"documents": []any{map[string]any{
-			"place_name": "금강삼사", "address_name": "강원특별자치도 고성군 거진읍 화진포리 산1",
-			"road_address_name": "강원특별자치도 고성군 거진읍 화진포길 204-25",
-			"x":                 "128.4464014", "y": "38.4662009",
-		}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"meta": map[string]any{"total_count": 1}, // 유일
+			"documents": []any{map[string]any{
+				"place_name": "금강삼사", "address_name": "강원특별자치도 고성군 거진읍 화진포리 산1",
+				"road_address_name": "강원특별자치도 고성군 거진읍 화진포길 204-25",
+				"x":                 "128.4464014", "y": "38.4662009",
+			}}})
 	}))
 	defer srv.Close()
 
@@ -794,22 +797,43 @@ func TestPlaceNameFallback_RejectsDifferentEupMyeon(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	// 원본은 현내면, 반환은 거진읍 → 거부해야 한다
-	if r := s.placeNameFallback("금강삼사", "강원특별자치도 고성군 현내면 화포리 561-1"); r != nil {
-		t.Errorf("다른 읍/면을 채택했다: %+v", r)
-	}
-	// 같은 읍/면이면 채택
-	if r := s.placeNameFallback("금강삼사", "강원특별자치도 고성군 거진읍 화진포리 1"); r == nil {
-		t.Error("같은 읍/면인데 거부했다")
+	// 원본 현내면 vs 반환 거진읍 — 유일하므로 채택해야 한다
+	if r := s.placeNameFallback("금강삼사", "강원특별자치도 고성군 현내면 화포리 561-1"); r == nil {
+		t.Error("유일한 시설명인데 읍면 불일치로 거부했다 — 원본 표기 오류를 구제하지 못한다")
 	}
 }
 
-// 원본에 읍/면/동이 없으면(시군구까지만 기재) 이 검증은 건너뛴다 — 대조 근거가 없고,
-// 그런 레코드는 주소검색이 애초에 불가해 시설명이 유일한 단서다.
-// 실측: '천병약수터' 원본 '서울특별시 노원구' → 시설명으로 '중계동 산 101-1' 정확히 찾음.
+// 여러 건이면 1순위를 신뢰할 근거가 없어 채택하지 않는다. 읍면 대조로도 못 가른다 —
+// 실측 '1호 전곡공원'(화성시) 은 2건이고 '전곡1호어린이공원 서신면 전곡리' 와
+// '전곡공원1호 서신면 장외리' 가 둘 다 같은 서신면이다. 이런 건 override 로 사람이 보정한다.
+func TestPlaceNameFallback_RejectsMultipleCandidates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"meta": map[string]any{"total_count": 2}, // 여러 건
+			"documents": []any{map[string]any{
+				"place_name": "전곡1호어린이공원", "address_name": "경기 화성시 서신면 전곡리 1052",
+				"road_address_name": "경기 화성시 서신면 전곡리 1052",
+				"x":                 "126.694", "y": "37.140",
+			}}})
+	}))
+	defer srv.Close()
+
+	s := &Stage{}
+	if err := s.Init(map[string]any{
+		"api_key": "test-key", "api_base_url": srv.URL,
+		"address_field": "a", "place_name_field": "nm", "rps": 1000,
+	}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	// 읍면이 일치해도 여러 건이면 거부
+	if r := s.placeNameFallback("1호 전곡공원", "경기도 화성시 서신면 전곡리 100"); r != nil {
+		t.Errorf("후보가 여러 건인데 채택했다: %+v", r)
+	}
+}
+
 func TestPlaceNameFallback_SkipsEmdCheckWhenAbsent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"documents": []any{map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{"meta": map[string]any{"total_count": 1}, "documents": []any{map[string]any{
 			"place_name": "천병약수터", "address_name": "서울 노원구 중계동 산 101-1",
 			"road_address_name": "", "x": "127.0867838", "y": "37.6550731",
 		}}})

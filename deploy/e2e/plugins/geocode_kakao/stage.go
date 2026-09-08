@@ -66,9 +66,14 @@ type Stage struct {
 	apiBaseURL   string
 	addressField string
 	lotnoField   string
-	maxRetries   int
-	dailyQuota   int64
-	cacheTable   string
+	// overrideField: 원본 주소가 틀렸을 때 사람이 채워 넣는 보정 주소 컬럼.
+	// 수집 sink 의 columns 에서 제외해 두면 재수집에도 값이 보존된다.
+	overrideField string
+	// placeNameField: 주소로 못 찾을 때 시설명으로 장소 검색할 컬럼(비면 미사용).
+	placeNameField string
+	maxRetries     int
+	dailyQuota     int64
+	cacheTable     string
 
 	// skipIfGeocoded: 이미 이 주소로 좌표가 채워진 레코드는 재지오코딩하지 않는다.
 	// realtime CDC 재사용 시 (1) 무변경 UPDATE 재처리 방지 (2) 지오코딩→lat/lon UPDATE 가
@@ -143,6 +148,8 @@ func (s *Stage) Init(config map[string]any) error {
 		return fmt.Errorf("geocode_kakao: address_field is required")
 	}
 	s.lotnoField = cfgStr(config, "lotno_field", "")
+	s.overrideField = cfgStr(config, "override_field", "")
+	s.placeNameField = cfgStr(config, "place_name_field", "")
 	s.skipIfGeocoded = cfgBool(config, "skip_if_geocoded", true)
 	// 네이버 폴백: id/secret 둘 다 있어야 켜짐. 검증된 신형 엔드포인트가 기본값.
 	s.naverID = cfgStr(config, "naver_client_id", "")
@@ -189,6 +196,19 @@ func (s *Stage) Process(record map[string]any) (map[string]any, error) {
 	if strings.TrimSpace(addrRaw) == "" {
 		addrRaw = lotnoRaw
 	}
+
+	// 보정 주소(override)가 있으면 원본 대신 그것으로 지오코딩한다.
+	// 원본(road_addr)은 수집 파이프라인이 매번 덮어쓰므로 오타를 고쳐도 다음 수집에서
+	// 원복된다(실측: 창원시 표기 정정 95건이 배치 재실행으로 전부 되돌아갔다).
+	// 보정 컬럼을 수집 sink 의 columns 에서 빼두면 upsert 가 건드리지 않아 사람이 고친 값이
+	// 살아남는다 — lat/lon 이 보존되는 것과 같은 원리다.
+	// 비어 있으면 미사용 → 원본이 정상인 레코드는 아무 설정 없이 그대로 동작한다.
+	if s.overrideField != "" {
+		if ov, _ := record[s.overrideField].(string); strings.TrimSpace(ov) != "" {
+			addrRaw = ov
+		}
+	}
+
 	norm := normalizeAddress(addrRaw)
 	if norm == "" {
 		record["geo_status"] = "no_address"
@@ -216,6 +236,23 @@ func (s *Stage) Process(record map[string]any) (map[string]any, error) {
 	}
 
 	res := s.resolve(norm, lotnoRaw)
+
+	// 시설명 폴백(S5): 주소로는 어떤 지오코더도 못 찾을 때 시설명으로 장소를 검색한다.
+	// 원본 주소 자체가 틀린 경우를 구제한다 — 실측: '삼정자로48번길 3'(원본)은 두 API 모두
+	// 실패하지만 시설명 '성주빌딩' 으로 검색하면 실제 주소 '삼정자로43번길 8' 이 나온다.
+	//
+	// 주소 캐시(resolve) 밖에서 처리하는 이유: 캐시 키가 addr_norm 이라 시설명 결과를 넣으면
+	// 같은 주소를 공유하는 다른 시설이 그 좌표를 물려받는다. 실측으로 '대전광역시 서구' 한
+	// 주소에 시설명이 97개, '동작동' 에 22개 있어 오염 규모가 크다.
+	//
+	// 오매칭 위험이 커서(시설명 '성주빌딩' 단독 검색은 89건) 검증을 통과해야 채택한다.
+	if res.Status != statusOK && s.placeNameField != "" {
+		if pn, _ := record[s.placeNameField].(string); pn != "" {
+			if r := s.placeNameFallback(pn, norm); r != nil {
+				res = r
+			}
+		}
+	}
 
 	// geo_addr = 이 결과가 어떤 주소 기준인지의 기록 — 주소 변경 감지의 앵커
 	record["geo_addr"] = norm
@@ -344,6 +381,135 @@ func (s *Stage) geocodeWithFallbacks(norm, lotnoRaw string) *geoResult {
 
 // naverGeocode NCP Maps Geocoding 폴백. 키 없으면 nil(스킵), 쿼터 소진 시 nil.
 // 카카오와 응답 스키마가 다르다(addresses[].roadAddress/jibunAddress/x/y).
+// placeNameFallback 은 시설명으로 카카오 장소검색(keyword)을 호출해 좌표를 얻는다.
+// 주소가 틀려 어떤 지오코더도 못 찾는 레코드의 마지막 수단이다.
+//
+// 오매칭을 막는 검증 3중:
+//  1. 쿼리에 원본 주소의 시/도+시군구를 붙여 검색 범위를 좁힌다('성주빌딩' 단독은 89건).
+//  2. 반환 place_name 이 원본 시설명과 접두 일치율 0.7 이상이어야 한다. 표본 14건에서
+//     정상 10건은 0.70~1.00, 오매칭 4건('현내리마을회관'→'수통1리마을회관' 0.00,
+//     '한국의원'→'한국흉부외과의원' 0.50)은 전부 0.5 이하로 갈렸다.
+//     전체 유사도(SequenceMatcher)로는 정상 0.67 과 오매칭 0.67 이 겹쳐 분리되지 않는다.
+//  3. 이름이 3자 미만이면 신뢰하지 않는다('시장' → '정선아리랑시장' 류 오매칭 차단).
+func (s *Stage) placeNameFallback(placeName, addrNorm string) *geoResult {
+	if s.apiKey == "" {
+		return nil
+	}
+	name := normalizePlaceName(placeName)
+	if len([]rune(name)) < 3 {
+		return nil
+	}
+	region := regionTokens(addrNorm)
+	if region == "" {
+		return nil // 지역 한정 없이 검색하면 동명 시설 오매칭 위험이 크다
+	}
+
+	s.pace()
+	s.calls.Add(1)
+	u := s.apiBaseURL + "/v2/local/search/keyword.json?query=" + url.QueryEscape(region+" "+name)
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "KakaoAK "+s.apiKey)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var body struct {
+		Documents []struct {
+			PlaceName       string `json:"place_name"`
+			AddressName     string `json:"address_name"`
+			RoadAddressName string `json:"road_address_name"`
+			X               string `json:"x"`
+			Y               string `json:"y"`
+		} `json:"documents"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || len(body.Documents) == 0 {
+		return nil
+	}
+
+	d := body.Documents[0]
+	if prefixMatchRatio(name, normalizePlaceName(d.PlaceName)) < placeNameMinRatio {
+		return nil
+	}
+	// 반환 주소가 원본과 같은 시군구인지 — 지역 한정을 넣었어도 API 가 넓게 잡을 수 있다.
+	if sig := sigunguOf(addrNorm); sig != "" && !strings.Contains(d.AddressName, sig) &&
+		!strings.Contains(d.RoadAddressName, sig) {
+		return nil
+	}
+
+	lon, _ := strconv.ParseFloat(d.X, 64)
+	lat, _ := strconv.ParseFloat(d.Y, 64)
+	if lat < koreaLatMin || lat > koreaLatMax || lon < koreaLonMin || lon > koreaLonMax {
+		return nil
+	}
+	return &geoResult{Status: statusOK, Lat: lat, Lon: lon, Provider: "kakao_place", MatchType: "place"}
+}
+
+// placeNameMinRatio 는 시설명 접두 일치율 하한. 표본 14건 실측으로 정한 값(정상 0.70~1.00 /
+// 오매칭 0.00~0.50). 낮추면 오매칭이 통과하고, 높이면 '국립서울현충원 유공자'(0.70) 류를 놓친다.
+const placeNameMinRatio = 0.7
+
+// normalizePlaceName 은 비교용으로 시설명을 정리한다 — 괄호 부가설명, '화장실' 접미어,
+// 공백·구분자를 제거한다('검단(서울)졸음쉼터' → '검단졸음쉼터').
+func normalizePlaceName(s string) string {
+	s = reParenPair.ReplaceAllString(s, "")
+	s = reRestroomSuffix.ReplaceAllString(s, "")
+	return reNameNoise.ReplaceAllString(s, "")
+}
+
+// prefixMatchRatio 는 a 의 앞부분이 b 와 연속으로 몇 비율 일치하는지 반환한다.
+// 전체 유사도가 아니라 접두를 보는 이유: 오매칭은 앞부분(고유명)부터 다르고, 정상 매칭은
+// 뒤에 수식어가 붙는 형태('중부대학교' → '중부대학교 국제캠퍼스')다.
+func prefixMatchRatio(a, b string) float64 {
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) == 0 {
+		return 0
+	}
+	i := 0
+	for i < len(ra) && i < len(rb) && ra[i] == rb[i] {
+		i++
+	}
+	return float64(i) / float64(len(ra))
+}
+
+// regionTokens 는 주소 앞부분에서 검색 범위 한정에 쓸 '시도 시군구' 를 뽑는다.
+func regionTokens(addrNorm string) string {
+	toks := strings.Fields(addrNorm)
+	var out []string
+	for _, t := range toks {
+		if len(out) == 2 {
+			break
+		}
+		if knownSido[t] || reSigunguHead.MatchString(t+" ") {
+			out = append(out, t)
+			continue
+		}
+		if len(out) > 0 {
+			break // 시도 뒤 시군구가 아니면 중단
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// sigunguOf 는 주소에서 시/군/구 토큰 하나를 뽑는다(반환 주소 검증용).
+func sigunguOf(addrNorm string) string {
+	for _, t := range strings.Fields(addrNorm) {
+		if knownSido[t] {
+			continue
+		}
+		if reSigunguHead.MatchString(t + " ") {
+			return t
+		}
+	}
+	return ""
+}
+
 func (s *Stage) naverGeocode(q string) *geoResult {
 	if s.naverID == "" || s.naverSecret == "" {
 		return nil
@@ -480,9 +646,9 @@ func (s *Stage) pace() {
 }
 
 type kakaoDoc struct {
-	lat, lon           float64
-	matchType          string
-	region1, region2   string
+	lat, lon         float64
+	matchType        string
+	region1, region2 string
 }
 
 func (s *Stage) kakaoSearch(q string) (*kakaoDoc, int, error) {
@@ -502,8 +668,8 @@ func (s *Stage) kakaoSearch(q string) (*kakaoDoc, int, error) {
 	}
 	var body struct {
 		Documents []struct {
-			X           string `json:"x"`
-			Y           string `json:"y"`
+			X           string                 `json:"x"`
+			Y           string                 `json:"y"`
 			RoadAddress *struct{ X, Y string } `json:"road_address"`
 			Address     *struct {
 				X, Y             string
@@ -599,18 +765,22 @@ func (s *Stage) cachePut(norm string, r *geoResult) {
 // --- 주소 정규화·판정·변형 (문서의 규칙 — 실측 기여도는 문서 참조) ---
 
 var (
-	reParenPair    = regexp.MustCompile(`\([^)]*\)`)
-	reMultiSpace   = regexp.MustCompile(`\s{2,}`)
-	reBungilAttach = regexp.MustCompile(`(\d+번길)\s+(\d)`)
-	reBungilDetach = regexp.MustCompile(`(\d+번길)(\d)`)
-	reRoadDetach   = regexp.MustCompile(`([가-힣](?:로|길))(\d)`)
-	reLotHo        = regexp.MustCompile(`(산\s*)?(\d+)번지\s*(\d+)호`)
-	reLotOnly      = regexp.MustCompile(`(산\s*)?(\d+)번지`)
-	reTrailingNum  = regexp.MustCompile(`^(.*\s)(\d+)$`)
-	reDongEnding   = regexp.MustCompile(`(동|리|가)\d*$|(\d+동)$`)
-	reDescriptive  = regexp.MustCompile(`(인근|부근|일대|앞|옆|뒤|해안가|마을|입구|주변|밑|내)$`)
-	reMultiLot     = regexp.MustCompile(`외\s*\d*\s*필지`)
-	reSidoPrefix   = regexp.MustCompile(`^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|전라|전북|전남|경상|경북|경남|제주)`)
+	reParenPair      = regexp.MustCompile(`\([^)]*\)`)
+	reMultiSpace     = regexp.MustCompile(`\s{2,}`)
+	reBungilAttach   = regexp.MustCompile(`(\d+번길)\s+(\d)`)
+	reBungilDetach   = regexp.MustCompile(`(\d+번길)(\d)`)
+	reRoadDetach     = regexp.MustCompile(`([가-힣](?:로|길))(\d)`)
+	reLotHo          = regexp.MustCompile(`(산\s*)?(\d+)번지\s*(\d+)호`)
+	reLotOnly        = regexp.MustCompile(`(산\s*)?(\d+)번지`)
+	reTrailingNum    = regexp.MustCompile(`^(.*\s)(\d+)$`)
+	reDongEnding     = regexp.MustCompile(`(동|리|가)\d*$|(\d+동)$`)
+	reDescriptive    = regexp.MustCompile(`(인근|부근|일대|앞|옆|뒤|해안가|마을|입구|주변|밑|내)$`)
+	reMultiLot       = regexp.MustCompile(`외\s*\d*\s*필지`)
+	reRestroomSuffix = regexp.MustCompile(`\s*(공중)?화장실.*$`)
+	reNameNoise      = regexp.MustCompile(`[\s\-_,·]`)
+	reSidoPrefix     = regexp.MustCompile(`^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|전라|전북|전남|경상|경북|경남|제주)`)
+	// reSigunguHead: 시도 접두를 뗀 뒤 맨 앞이 시/군/구인지 — API 가 시도를 판별할 근거가 남았는지 확인용
+	reSigunguHead = regexp.MustCompile(`^[가-힣]+(시|군|구)(\s|$)`)
 	// 도로명(로/길 뒤 번호) 또는 지번(동/리/가 뒤 번지) 형태 — sido 접두가 없어도 주소로 보고 시도.
 	// 아래 네 형태를 모두 인정해야 한다. 각각 실측으로 확인한 누락 사례가 있다(2026-09-08):
 	//   - `\s?\d*(로|길)`: '공단 7로 31' — 로/길 앞이 숫자면 기존 패턴이 탈락시켰다. 실제
@@ -634,7 +804,7 @@ func normalizeAddress(addr string) string {
 		return ""
 	}
 	a = reParenPair.ReplaceAllString(a, " ") // 괄호쌍(안의 쉼표 포함) 먼저 — 안 닫힌 괄호만 파손으로 남는다
-	if i := strings.Index(a, ","); i >= 0 {   // 괄호 밖 최상위 쉼표에서 절단(건물명·부가설명 제거)
+	if i := strings.Index(a, ","); i >= 0 {  // 괄호 밖 최상위 쉼표에서 절단(건물명·부가설명 제거)
 		a = a[:i]
 	}
 	a = reDescriptive.ReplaceAllString(a, "") // '인근/부근/일대…' 서술 접미어는 통째로 버리지 말고 떼어 재시도
@@ -666,7 +836,57 @@ func spacingVariants(norm string) []string {
 	if v := reRoadDetach.ReplaceAllString(norm, "$1 $2"); v != norm {
 		out = append(out, v)
 	}
+	if v := sidoStrippedVariant(norm); v != "" {
+		out = append(out, v)
+	}
 	return out
+}
+
+// knownSido 는 정상 시도명 집합. 접두 2글자 정규식(reSidoPrefix)으로는 '경상님도' 같은
+// 오타를 정상으로 오판하므로 전체 이름으로 대조한다. 통합 지자체명 변경 시 여기에 추가한다.
+var knownSido = map[string]bool{
+	"서울특별시": true, "부산광역시": true, "대구광역시": true, "인천광역시": true,
+	"광주광역시": true, "대전광역시": true, "울산광역시": true, "세종특별자치시": true,
+	"경기도": true, "강원도": true, "강원특별자치도": true, "충청북도": true, "충청남도": true,
+	"전라북도": true, "전북특별자치도": true, "전라남도": true, "전남광주통합특별시": true,
+	"경상북도": true, "경상남도": true, "제주도": true, "제주특별자치도": true,
+	// 축약 표기도 원본 데이터에 섞여 들어온다(실측: '울산 울주군').
+	"서울": true, "부산": true, "대구": true, "인천": true, "광주": true, "대전": true,
+	"울산": true, "세종": true, "경기": true, "강원": true, "충북": true, "충남": true,
+	"전북": true, "전남": true, "경북": true, "경남": true, "제주": true,
+}
+
+// sidoStrippedVariant 는 시도 접두를 뗀 후보를 만든다.
+// 시도명이 오타('경상님도 양산시', '경상붓도 봉화군')면 접두를 고치려 애쓸 필요 없이 떼면 된다 —
+// API 가 시군 이름으로 시도를 정확히 판별한다(실측):
+//
+//	'경상님도 양산시 황산로 719'  → 실패
+//	'양산시 황산로 719'          → 경남 양산시 물금읍 황산로 719
+//	'봉화군 소천면 고선리 산5-1'   → 경북 봉화군 …  (경상'북'도로 올바르게 판별)
+//
+// 오타 사전을 두면 '경상님도→경상남도' 로 고쳐도 봉화군은 경북이라 틀린다. 제거가 옳다.
+// 정상 시도명은 건드리지 않는다(reSidoPrefix 에 매칭되면 이미 올바른 접두이므로 변형 불필요).
+func sidoStrippedVariant(norm string) string {
+	i := strings.Index(norm, " ")
+	if i <= 0 {
+		return ""
+	}
+	// reSidoPrefix 는 접두 2글자만 보므로 '경상님도' 도 매칭된다 — 오타 판별에 쓸 수 없다.
+	// 완전한 시도명 집합으로 대조해야 한다.
+	if knownSido[norm[:i]] {
+		return "" // 정상 접두 — 변형 없음
+	}
+	// 접두가 시도 형태('...도' / '...시')인데 알려진 시도명이 아니면 오타로 보고 뗀다.
+	head := norm[:i]
+	if !strings.HasSuffix(head, "도") && !strings.HasSuffix(head, "시") {
+		return ""
+	}
+	rest := strings.TrimSpace(norm[i+1:])
+	// 뒤에 시/군/구가 남아야 판별 가능하다 — 그것마저 없으면 의미 없는 후보다.
+	if !reSigunguHead.MatchString(rest) {
+		return ""
+	}
+	return rest
 }
 
 func lotNotationVariant(norm string) string {

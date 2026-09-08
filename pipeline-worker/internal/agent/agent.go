@@ -319,6 +319,15 @@ func (a *Agent) controlExecution(exec *RunningExecution, command string) error {
 func (a *Agent) applyControl(executionID, workflowID, command string) error {
 	execs := a.matchingExecutions(executionID, workflowID)
 	if len(execs) == 0 {
+		// runningExecs 는 agent 프로세스 메모리다. agent 가 재시작하면 비지만 streaming
+		// Deployment 는 K8s 에 그대로 남는다 — 그 상태에서 stop 을 받으면 여기서 에러만 내고
+		// pod 은 계속 돈다. CP 는 이미 DB 를 stopped 로 바꿔둔 뒤라(StopWorkflow) "정지됐다고
+		// 표시되는데 실제로는 도는" 불일치가 생긴다(실측: 재배포 후 stop 이 NOT_RUNNING 을
+		// 반환하는데 Deployment 는 살아 있어 손으로 지워야 했다).
+		// 메모리에 없으면 K8s 를 직접 조회해 정리한다 — 소유권은 label 이 증명한다.
+		if command == "stop" {
+			return a.stopOrphanStreamingDeployment(executionID, workflowID)
+		}
 		return fmt.Errorf("no running execution for workflow=%s execution=%s", workflowID, executionID)
 	}
 	var firstErr error
@@ -387,6 +396,48 @@ func (a *Agent) RollGroupExecution(executionID, workflowID, runnerVersionID stri
 // stopStreamingExecution 은 streaming pod 를 graceful 종료 후 Deployment 를 삭제하고 추적을 정리한다.
 // pod REST stop 을 먼저 보내 checkpoint flush 를 유도하되, pod 가 이미 사라졌으면(교체/크래시)
 // 명령 실패를 무시하고 Deployment 삭제로 진행한다 — 최종 상태는 "삭제됨"으로 수렴해야 한다.
+// stopOrphanStreamingDeployment 은 agent 메모리에 없는 streaming Deployment 를 K8s 에서 찾아 지운다.
+// agent 재시작으로 runningExecs 가 비면 stop 명령이 아무 일도 못 하고 pod 이 계속 도는데,
+// CP 는 이미 DB 를 stopped 로 바꿔둔 상태라 표시와 실제가 어긋난다. 그 간극을 메운다.
+//
+// 삭제 대상이 없으면(이미 지워졌거나 다른 cluster 소관) 에러가 아니다 — stop 의 목표는
+// "돌고 있지 않은 상태"이고 그것이 이미 달성돼 있다. 에러로 만들면 CP 가 재시도해도 소용없다.
+func (a *Agent) stopOrphanStreamingDeployment(executionID, workflowID string) error {
+	jm := a.getJobManager()
+	if jm == nil {
+		// K8s 클라이언트가 없는 agent(로컬 개발 등)는 위임 실행을 만들지도 않으므로 정리할 것도 없다.
+		return nil
+	}
+
+	names, err := jm.FindStreamingDeployments(a.ctx, "", workflowID, executionID)
+	if err != nil {
+		return fmt.Errorf("failed to find streaming deployments for workflow=%s execution=%s: %w",
+			workflowID, executionID, err)
+	}
+	if len(names) == 0 {
+		slog.Info("stop: no streaming deployment to clean up (already stopped)",
+			"workflow_id", workflowID, "execution_id", executionID)
+		return nil
+	}
+
+	var firstErr error
+	for _, name := range names {
+		if err := jm.DeleteStreamingDeployment(a.ctx, "", name); err != nil {
+			slog.Error("failed to delete orphan streaming deployment", "deployment", name, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		slog.Info("stop: deleted orphan streaming deployment (agent memory had no record)",
+			"deployment", name, "workflow_id", workflowID, "execution_id", executionID)
+	}
+	if executionID != "" {
+		a.releaseClaim(executionID)
+	}
+	return firstErr
+}
+
 func (a *Agent) stopStreamingExecution(exec *RunningExecution) error {
 	if err := a.sendStreamingCommand(exec, "stop"); err != nil {
 		slog.Warn("streaming stop command failed, proceeding to delete deployment",

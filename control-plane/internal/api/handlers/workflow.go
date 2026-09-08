@@ -656,11 +656,13 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 		return
 	}
 
-	// 실행 중이 아닌 경우
-	if workflow.Status != string(types.PipelineGroupStatusRunning) {
-		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowNotRunning, "Workflow is not running")
-		return
-	}
+	// 이미 stopped 여도 거절하지 않고 정지 명령을 보낸다.
+	// 아래 순서가 "DB 먼저 stopped → 그 다음 명령 발행"이라, 발행이 실패하거나 agent 가
+	// 재시작해 실행 기록(메모리)을 잃으면 "DB 는 stopped 인데 pod 은 살아있음" 불일치가 남는다.
+	// 그 상태에서 stop 재호출을 NOT_RUNNING 으로 거절하면 사용자가 정리할 방법이 없다
+	// (실측: streaming Deployment 를 kubectl 로 직접 지워야 했다).
+	// stop 의 목표는 "돌지 않는 상태"이므로 멱등해야 한다 — 이미 그렇다면 재확인은 해롭지 않다.
+	alreadyStopped := workflow.Status != string(types.PipelineGroupStatusRunning)
 
 	// 워크플로우 상태 업데이트
 	workflow.Status = string(types.PipelineGroupStatusStopped)
@@ -672,6 +674,12 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 	if err := h.db.Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
 		First(&runningExec).Error; err == nil {
 		execID = runningExec.ID
+	} else {
+		// running 인 execution 이 없다 = 이전 stop 이 DB 만 바꾸고 실물 정리에 실패한 경우다.
+		// 가장 최근 실행으로 cluster 를 알아낸다 — ClusterID 가 비면 명령이 잘못된 채널로
+		// 발행돼 어떤 agent 도 받지 못하고, 고아 Deployment 가 그대로 남는다.
+		// executionID 는 비워 보낸다: agent 가 workflow_id label 로 남은 것을 전부 찾아 지운다.
+		h.db.Where("workflow_id = ?", workflowID).Order("started_at DESC").First(&runningExec)
 	}
 
 	// 현재 실행 중인 execution 업데이트
@@ -690,9 +698,14 @@ func (h *WorkflowHandler) StopWorkflow(c *gin.Context) {
 		h.logger.Error("Failed to publish stop command", "workflow_id", workflowID, "execution_id", execID, "cluster_id", runningExec.ClusterID, "error", err)
 	}
 
+	msg := "Workflow stopped"
+	if alreadyStopped {
+		// 사용자가 "왜 또 stop 이 되지" 하고 혼란하지 않게 재확인이었음을 알린다.
+		msg = "Workflow was already marked stopped; re-sent stop to clean up any running workload"
+	}
 	c.JSON(http.StatusOK, types.APIResponse[any]{
 		Success: true,
-		Message: "Workflow stopped",
+		Message: msg,
 	})
 }
 

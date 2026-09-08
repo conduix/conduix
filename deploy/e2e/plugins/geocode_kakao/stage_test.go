@@ -773,3 +773,74 @@ func TestProcess_PlaceNameFallbackRecovers(t *testing.T) {
 		t.Errorf("geo_source = %v, want kakao_place (출처 구분 필요)", rec["geo_source"])
 	}
 }
+
+// 시군구만 대조하면 같은 군 안의 다른 읍/면을 통과시킨다.
+// 실측 오매칭: '금강삼사' 원본 '고성군 현내면 화포리 561-1' → 반환 '고성군 거진읍 화진포길 204-25'.
+// 같은 고성군이고 시설명도 정확히 일치해 접두·시군구 검증을 모두 통과했다.
+func TestPlaceNameFallback_RejectsDifferentEupMyeon(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"documents": []any{map[string]any{
+			"place_name": "금강삼사", "address_name": "강원특별자치도 고성군 거진읍 화진포리 산1",
+			"road_address_name": "강원특별자치도 고성군 거진읍 화진포길 204-25",
+			"x":                 "128.4464014", "y": "38.4662009",
+		}}})
+	}))
+	defer srv.Close()
+
+	s := &Stage{}
+	if err := s.Init(map[string]any{
+		"api_key": "test-key", "api_base_url": srv.URL,
+		"address_field": "a", "place_name_field": "nm", "rps": 1000,
+	}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	// 원본은 현내면, 반환은 거진읍 → 거부해야 한다
+	if r := s.placeNameFallback("금강삼사", "강원특별자치도 고성군 현내면 화포리 561-1"); r != nil {
+		t.Errorf("다른 읍/면을 채택했다: %+v", r)
+	}
+	// 같은 읍/면이면 채택
+	if r := s.placeNameFallback("금강삼사", "강원특별자치도 고성군 거진읍 화진포리 1"); r == nil {
+		t.Error("같은 읍/면인데 거부했다")
+	}
+}
+
+// 원본에 읍/면/동이 없으면(시군구까지만 기재) 이 검증은 건너뛴다 — 대조 근거가 없고,
+// 그런 레코드는 주소검색이 애초에 불가해 시설명이 유일한 단서다.
+// 실측: '천병약수터' 원본 '서울특별시 노원구' → 시설명으로 '중계동 산 101-1' 정확히 찾음.
+func TestPlaceNameFallback_SkipsEmdCheckWhenAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"documents": []any{map[string]any{
+			"place_name": "천병약수터", "address_name": "서울 노원구 중계동 산 101-1",
+			"road_address_name": "", "x": "127.0867838", "y": "37.6550731",
+		}}})
+	}))
+	defer srv.Close()
+
+	s := &Stage{}
+	if err := s.Init(map[string]any{
+		"api_key": "test-key", "api_base_url": srv.URL,
+		"address_field": "a", "place_name_field": "nm", "rps": 1000,
+	}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if r := s.placeNameFallback("천병약수터", "서울특별시 노원구"); r == nil {
+		t.Error("원본에 읍면동이 없는데 거부했다 — 이 경로가 시설명 폴백의 핵심 용도다")
+	}
+}
+
+func TestEupMyeonDongOf(t *testing.T) {
+	cases := map[string]string{
+		"강원특별자치도 고성군 현내면 화포리 561-1": "현내면",
+		"서울특별시 노원구 중계동 산 101-1":     "중계동",
+		"서울특별시 중랑구 면목3,8동 27":       "면목3,8동", // 숫자 붙은 행정동
+		"경상남도 창원시 의창구 중앙대로 181":     "",       // 도로명만 — 읍면동 없음
+		"서울특별시 노원구":                 "",       // 시군구까지만
+		// '리' 는 뽑지 않는다 — 카카오 도로명 주소에 리가 없어 대조하면 정상 매칭도 탈락한다
+		"전북특별자치도 순창군 쌍치면 둔전리": "쌍치면",
+	}
+	for in, want := range cases {
+		if got := eupMyeonDongOf(in); got != want {
+			t.Errorf("eupMyeonDongOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

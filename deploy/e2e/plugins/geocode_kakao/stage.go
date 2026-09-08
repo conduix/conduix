@@ -443,6 +443,18 @@ func (s *Stage) placeNameFallback(placeName, addrNorm string) *geoResult {
 		return nil
 	}
 
+	// 읍/면/동까지 대조한다. 시군구만 보면 같은 군 안의 다른 읍면을 통과시킨다 —
+	// 실측 오매칭: '금강삼사' 원본 '고성군 현내면 화포리 561-1' 인데 반환은
+	// '고성군 거진읍 화진포길 204-25'. 같은 고성군이고 시설명도 정확히 일치해
+	// 접두·시군구 검증을 모두 통과했다.
+	//
+	// 원본에 읍면동이 없으면(시군구까지만 기재된 주소) 이 검증은 건너뛴다 — 대조할
+	// 근거가 없고, 그런 레코드는 애초에 주소검색이 불가해 시설명이 유일한 단서다.
+	if emd := eupMyeonDongOf(addrNorm); emd != "" &&
+		!strings.Contains(d.AddressName, emd) && !strings.Contains(d.RoadAddressName, emd) {
+		return nil
+	}
+
 	lon, _ := strconv.ParseFloat(d.X, 64)
 	lat, _ := strconv.ParseFloat(d.Y, 64)
 	if lat < koreaLatMin || lat > koreaLatMax || lon < koreaLonMin || lon > koreaLonMax {
@@ -495,6 +507,22 @@ func regionTokens(addrNorm string) string {
 		}
 	}
 	return strings.Join(out, " ")
+}
+
+// eupMyeonDongOf 는 주소에서 읍/면/동 토큰을 뽑는다(반환 주소 검증용).
+// '리' 는 제외한다 — 카카오 도로명 주소(road_address_name)에는 리가 나타나지 않아
+// 대조하면 정상 매칭까지 탈락한다. 읍면동까지가 실용적 상한이다.
+// 숫자가 붙은 행정동('면목3,8동', '양평2동')도 그대로 비교한다 — 반환 주소도 같은 표기를 쓴다.
+func eupMyeonDongOf(addrNorm string) string {
+	for _, t := range strings.Fields(addrNorm) {
+		if knownSido[t] || reSigunguHead.MatchString(t+" ") {
+			continue
+		}
+		if reEupMyeonDong.MatchString(t) {
+			return t
+		}
+	}
+	return ""
 }
 
 // sigunguOf 는 주소에서 시/군/구 토큰 하나를 뽑는다(반환 주소 검증용).
@@ -778,6 +806,7 @@ var (
 	reMultiLot       = regexp.MustCompile(`외\s*\d*\s*필지`)
 	reRestroomSuffix = regexp.MustCompile(`\s*(공중)?화장실.*$`)
 	reNameNoise      = regexp.MustCompile(`[\s\-_,·]`)
+	reEupMyeonDong   = regexp.MustCompile(`^[가-힣][가-힣0-9,]*(읍|면|동)$`)
 	reSidoPrefix     = regexp.MustCompile(`^(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충청|충북|충남|전라|전북|전남|경상|경북|경남|제주)`)
 	// reSigunguHead: 시도 접두를 뗀 뒤 맨 앞이 시/군/구인지 — API 가 시도를 판별할 근거가 남았는지 확인용
 	reSigunguHead = regexp.MustCompile(`^[가-힣]+(시|군|구)(\s|$)`)

@@ -223,28 +223,30 @@ export default function ProjectDetailPage() {
   )
 
   const fetchProjectData = useCallback(async () => {
-    try {
-      setLoading(true)
-      const [projectRes, workflowsRes, dataTypesRes] = await Promise.all([
-        api.getProject(id!),
-        api.getProjectWorkflows(id!),
-        api.getProjectDataTypes(id!),
-      ])
+    setLoading(true)
+    // Promise.all 은 하나만 실패해도 전체가 reject 된다. 그러면 프로젝트 본체 조회가
+    // 성공했어도 catch 로 빠져 project 가 null 로 남고 화면이 "Project not found" 가
+    // 된다 — 실제로 존재하는 프로젝트인데도. 부수 데이터(workflows/dataTypes) 실패가
+    // 본체를 가려서는 안 되므로 allSettled 로 개별 처리한다.
+    const [projectRes, workflowsRes, dataTypesRes] = await Promise.allSettled([
+      api.getProject(id!),
+      api.getProjectWorkflows(id!),
+      api.getProjectDataTypes(id!),
+    ])
 
-      if (projectRes.success) {
-        setProject(projectRes.data)
-      }
-      if (workflowsRes.success) {
-        setWorkflows(workflowsRes.data || [])
-      }
-      if (dataTypesRes.success) {
-        setDataTypes(dataTypesRes.data || [])
-      }
-    } catch (error) {
+    if (projectRes.status === 'fulfilled' && projectRes.value.success) {
+      setProject(projectRes.value.data)
+    } else {
+      // 본체 조회만 실패하면 원인을 알려준다. "없음" 과 "못 불러옴" 은 다른 상태다.
       showError(t('project.loadError'))
-    } finally {
-      setLoading(false)
     }
+    if (workflowsRes.status === 'fulfilled' && workflowsRes.value.success) {
+      setWorkflows(workflowsRes.value.data || [])
+    }
+    if (dataTypesRes.status === 'fulfilled' && dataTypesRes.value.success) {
+      setDataTypes(dataTypesRes.value.data || [])
+    }
+    setLoading(false)
   }, [id, showError, t])
 
   useEffect(() => {

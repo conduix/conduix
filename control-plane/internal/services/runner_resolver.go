@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/conduix/conduix/control-plane/internal/builder"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 )
 
@@ -155,7 +156,31 @@ func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string
 	if len(latestReady.Binary) == 0 {
 		return "", "", true, buildRequired()
 	}
+	// plugin 해시가 같아도 코어(pipeline-runner/pipeline-core/shared/plugin-sdk)가 바뀌면
+	// 그 버전의 바이너리는 낡았다. 빌더는 이걸 combinedHash 로 감지해 재빌드하는데,
+	// 리졸버가 안 보면 옛 바이너리로 계속 실행돼 코어 수정이 영구히 반영되지 않는다.
+	if r.coreChangedSince(latestReady, nativePlugins) {
+		return "", "", true, buildRequired()
+	}
 	return latestReady.ID, latestReady.ImageTag, true, nil
+}
+
+// coreChangedSince 는 해당 버전이 빌드된 뒤 코어 소스가 바뀌었는지 본다.
+// 판정은 빌더와 같은 CombinedSourceHash 로 한다 — 두 곳이 다른 식으로 계산하면
+// 빌더는 재빌드하는데 리졸버는 옛 버전을 유효하다고 해서 서로 어긋난다.
+// SourceRoot 를 못 읽는 환경(소스 미포함 이미지)에서는 코어 해시가 빈 문자열이 되므로
+// 판정을 건너뛴다 — 재빌드를 강요해 실행을 막는 쪽보다 현행 유지가 안전하다.
+func (r *RunnerResolver) coreChangedSince(version *models.RunnerVersion, plugins []models.Plugin) bool {
+	coreHash := builder.CoreSourceHash(builder.SourceRootFromEnv(), nil)
+	if coreHash == "" {
+		return false
+	}
+
+	pluginHashes := make(map[string]string, len(plugins))
+	for _, p := range plugins {
+		pluginHashes[p.ID] = p.SourceHash
+	}
+	return builder.CombinedSourceHash(pluginHashes, coreHash) != version.SourceHash
 }
 
 // findNativePluginsInWorkflow 워크플로우의 파이프라인 설정에서 native plugin stage를 찾아 해당 Plugin 모델을 반환

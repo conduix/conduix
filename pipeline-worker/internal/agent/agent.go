@@ -67,6 +67,12 @@ type Agent struct {
 	redisHealthy    bool
 	healthMu        sync.RWMutex
 
+	// heartbeat 가 참조하는 K8s streaming Deployment 스냅샷(짧게 캐시).
+	// 로컬 추적이 비어도 실물이 있으면 running 으로 보고해 orphan 오판을 막는다.
+	streamingCacheMu sync.Mutex
+	streamingCache   []k8s.StreamingExecution
+	streamingCacheAt time.Time
+
 	// claimRenewInterval: claim 갱신 주기(0이면 기본 claimRenewInterval). 테스트에서 단축용.
 	claimRenewEvery time.Duration
 
@@ -545,6 +551,38 @@ func (a *Agent) GetStatus() *types.Agent {
 	}
 }
 
+// streamingCacheTTL 은 heartbeat 가 K8s 실물 목록을 재사용하는 시간이다.
+// heartbeat 는 10초 주기라 매번 API 를 때리면 부담이고, stale 판정 유예(2분)보다 훨씬
+// 짧으면 오판 방지에 충분하다.
+const streamingCacheTTL = 20 * time.Second
+
+// liveStreamingExecutions 는 이 cluster 에 실재하는 streaming Deployment 를 반환한다(짧게 캐시).
+// 조회 실패 시 마지막 성공 결과를 그대로 쓴다 — 일시적 API 실패로 heartbeat 에서 실행이 빠져
+// orphan 오판이 나는 것을 막는다.
+func (a *Agent) liveStreamingExecutions() []k8s.StreamingExecution {
+	a.streamingCacheMu.Lock()
+	defer a.streamingCacheMu.Unlock()
+
+	if time.Since(a.streamingCacheAt) < streamingCacheTTL {
+		return a.streamingCache
+	}
+
+	jm := a.getJobManager()
+	if jm == nil {
+		return nil
+	}
+	deps, err := jm.ListStreamingDeployments(a.ctx, "")
+	if err != nil {
+		slog.Debug("heartbeat: list streaming deployments failed, reusing last snapshot",
+			"error", err, "agent_id", a.ID)
+		return a.streamingCache
+	}
+
+	a.streamingCache = deps
+	a.streamingCacheAt = time.Now()
+	return deps
+}
+
 // heartbeatLoop 하트비트 루프
 func (a *Agent) heartbeatLoop() {
 	interval := a.config.HeartbeatInterval
@@ -570,14 +608,34 @@ func (a *Agent) sendHeartbeat() {
 	// 실행 중인 워크플로우 정보 수집
 	a.execMu.RLock()
 	runningExecs := make([]types.RunningExecutionInfo, 0, len(a.runningExecs))
+	seen := make(map[string]struct{}, len(a.runningExecs))
 	for _, exec := range a.runningExecs {
 		runningExecs = append(runningExecs, types.RunningExecutionInfo{
 			ExecutionID: exec.ExecutionID,
 			WorkflowID:  exec.WorkflowID,
 			StartedAt:   exec.StartedAt,
 		})
+		seen[exec.ExecutionID] = struct{}{}
 	}
 	a.execMu.RUnlock()
+
+	// 로컬 추적에 없지만 실물이 도는 streaming Deployment 도 실어 보낸다.
+	// 로컬 추적은 "의도"일 뿐이라 agent 재시작·claim 경합으로 비어 있을 수 있고, 그 상태로
+	// heartbeat 를 보내면 CP 의 stale 감지기가 정상 실행을 orphan 으로 확정한다
+	// (실측: agent 롤링 재시작 후 pod 은 71분간 정상 동작했는데 DB 만 error).
+	// K8s 가 실행의 authoritative 근거이므로 합집합으로 보고한다.
+	for _, d := range a.liveStreamingExecutions() {
+		if d.ExecutionID == "" {
+			continue
+		}
+		if _, ok := seen[d.ExecutionID]; ok {
+			continue
+		}
+		runningExecs = append(runningExecs, types.RunningExecutionInfo{
+			ExecutionID: d.ExecutionID,
+			WorkflowID:  d.WorkflowID,
+		})
+	}
 
 	heartbeat := types.AgentHeartbeat{
 		AgentID:      a.ID,
@@ -860,6 +918,9 @@ func (a *Agent) reconcileOnce() {
 		return
 	}
 
+	// CP 가 running 으로 인정하는 execution 집합. 아래 sweep 의 유일한 판정 근거다.
+	live := make(map[string]struct{}, len(cmds))
+
 	for _, raw := range cmds {
 		var cmd types.GroupExecutionCommand
 		if err := json.Unmarshal(raw, &cmd); err != nil {
@@ -876,6 +937,7 @@ func (a *Agent) reconcileOnce() {
 			// 실제 K8s 상태를 확인해 Deployment 가 사라졌으면 로컬 추적을 버리고 복구를 진행한다.
 			// in-process 실행은 로컬 goroutine 이 곧 실체이므로 로컬 추적을 그대로 신뢰(스킵).
 			if local.StreamingDeployment == "" {
+				live[cmd.ExecutionID] = struct{}{}
 				continue // in-process — 로컬이 authoritative
 			}
 			if jm := a.getJobManager(); jm != nil {
@@ -883,9 +945,11 @@ func (a *Agent) reconcileOnce() {
 				if err != nil {
 					slog.Warn("reconcile: deployment existence check failed, skipping this round",
 						"error", err, "execution_id", cmd.ExecutionID)
+					live[cmd.ExecutionID] = struct{}{} // 확인 불가 — sweep 대상에서 제외(보수적)
 					continue
 				}
 				if exists {
+					live[cmd.ExecutionID] = struct{}{}
 					continue // Deployment 살아있음 — 정상
 				}
 			}
@@ -902,7 +966,98 @@ func (a *Agent) reconcileOnce() {
 			"execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID, "agent_id", a.ID)
 		// 원본 JSON 그대로 handleGroupExecution 에 넘긴다(claim·타입분기·partition 배선 전부 재사용).
 		a.handleGroupExecution(string(raw))
+		live[cmd.ExecutionID] = struct{}{}
 	}
+
+	a.sweepAbandonedDeployments(live)
+}
+
+// sweepAbandonedDeployments 는 CP 가 running 으로 인정하지 않는 streaming Deployment 를 삭제한다.
+//
+// 이게 없으면 "DB 는 error, 실물은 계속 도는" 데드락이 영구히 남는다. reconcile 은 status=running
+// 만 조회하므로 한 번 error 로 확정된 실행은 다시 채택되지 않고, 그 사이 pod 은 소스를 계속 소비한다
+// (실측: agent 재시작으로 orphan 확정된 CDC 실행의 pod 이 71분간 binlog 를 계속 읽고 있었다).
+// 살아있는 채로 방치하면 나중에 같은 워크플로우를 다시 시작할 때 같은 소스를 이중 소비한다.
+//
+// 판정 근거는 CP 의 running 목록 하나다 — agent 로컬 상태를 근거로 삼으면 부팅 직후(아직 아무것도
+// 채택하지 않은 시점)에 정상 실행을 지운다. CP 조회가 실패한 라운드는 아예 건너뛴다.
+func (a *Agent) sweepAbandonedDeployments(live map[string]struct{}) {
+	jm := a.getJobManager()
+	if jm == nil {
+		return
+	}
+
+	deps, err := jm.ListStreamingDeployments(a.ctx, "")
+	if err != nil {
+		slog.Warn("sweep: list streaming deployments failed", "error", err, "agent_id", a.ID)
+		return
+	}
+
+	for _, d := range deps {
+		if d.ExecutionID == "" {
+			continue // label 없는 것은 판정 근거가 없어 건드리지 않는다.
+		}
+		if _, ok := live[d.ExecutionID]; ok {
+			// CP 가 running 으로 인정한다. 다만 pod 이 계속 못 뜨는 상태라면(CrashLoop,
+			// 이미지 pull 실패) Deployment 는 RestartPolicy=Always 로 영원히 재시작만 하고
+			// 실패가 어디에도 드러나지 않는다 — 그 상태로 방치하면 running 인 채 아무 일도
+			// 일어나지 않는 좀비가 된다. 유예를 넘겨도 unhealthy 면 실패로 확정한다.
+			a.failIfStuckUnhealthy(d)
+			continue
+		}
+
+		// CP 가 running 으로 안 보는데 실물이 살아있다 → 방치하면 이중 소비.
+		if err := jm.DeleteStreamingDeployment(a.ctx, d.Namespace, d.Name); err != nil {
+			slog.Error("sweep: failed to delete abandoned streaming deployment",
+				"deployment", d.Name, "execution_id", d.ExecutionID, "error", err)
+			continue
+		}
+		a.execMu.Lock()
+		delete(a.runningExecs, d.ExecutionID)
+		a.execMu.Unlock()
+		a.releaseClaim(d.ExecutionID)
+		slog.Warn("sweep: deleted abandoned streaming deployment (not running per control-plane)",
+			"deployment", d.Name, "execution_id", d.ExecutionID, "workflow_id", d.WorkflowID, "agent_id", a.ID)
+	}
+}
+
+// unhealthyGrace 는 streaming pod 이 준비되지 않은 채 버틸 수 있는 시간이다.
+// 이미지 pull + initContainer 바이너리 다운로드가 있어 첫 기동이 느릴 수 있으므로 넉넉히 둔다.
+const unhealthyGrace = 5 * time.Minute
+
+// failIfStuckUnhealthy 는 준비되지 않은 채 유예를 넘긴 streaming 실행을 실패로 확정하고
+// Deployment 를 지운다. 확정하지 않으면 DB 는 running, pod 은 CrashLoop 로 무한 재시작하는
+// 좀비가 되어 아무도 문제를 알아채지 못한다.
+func (a *Agent) failIfStuckUnhealthy(d k8s.StreamingExecution) {
+	if d.Healthy() || time.Since(d.CreatedAt) < unhealthyGrace {
+		return
+	}
+
+	slog.Error("streaming execution stuck unhealthy, failing it",
+		"deployment", d.Name, "execution_id", d.ExecutionID, "workflow_id", d.WorkflowID,
+		"ready", d.ReadyReplicas, "desired", d.DesiredReplicas, "age", time.Since(d.CreatedAt).String())
+
+	completedAt := time.Now()
+	_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+		ExecutionID: d.ExecutionID,
+		WorkflowID:  d.WorkflowID,
+		Status:      types.PipelineGroupStatusError,
+		StartedAt:   d.CreatedAt,
+		CompletedAt: &completedAt,
+		ErrorMessage: fmt.Sprintf(
+			"streaming pod never became ready within %s (ready=%d/%d) — check pod events and runner build",
+			unhealthyGrace, d.ReadyReplicas, d.DesiredReplicas),
+	})
+
+	if jm := a.getJobManager(); jm != nil {
+		if err := jm.DeleteStreamingDeployment(a.ctx, d.Namespace, d.Name); err != nil {
+			slog.Error("failed to delete unhealthy streaming deployment", "deployment", d.Name, "error", err)
+		}
+	}
+	a.execMu.Lock()
+	delete(a.runningExecs, d.ExecutionID)
+	a.execMu.Unlock()
+	a.releaseClaim(d.ExecutionID)
 }
 
 // fetchRunningExecutions 는 CP reconcile API 에서 이 cluster 의 running execution 명령 목록을 받는다.
@@ -1192,6 +1347,9 @@ func (a *Agent) getJobManager() *k8s.JobManager {
 	defer a.jobManagerMu.Unlock()
 	if a.jobManager != nil {
 		return a.jobManager
+	}
+	if a.config == nil {
+		return nil // config 없이 만들어진 Agent(단위 테스트 등) — K8s 위임 불가
 	}
 	client, err := k8s.NewClient(a.config.Namespace)
 	if err != nil {

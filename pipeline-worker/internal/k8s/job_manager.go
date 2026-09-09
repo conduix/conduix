@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"time"
+
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -604,6 +606,63 @@ func (m *JobManager) FindStreamingDeployments(ctx context.Context, namespace, wo
 // StreamingDeploymentExists 는 execution 의 streaming Deployment 가 실제로 존재하는지 K8s 에서 확인한다.
 // reconcile 이 로컬 상태(runningExecs)가 아니라 K8s 실제 상태로 복구 여부를 판단하게 한다 —
 // Deployment 가 외부 삭제/유실됐는데 agent 로컬엔 아직 "실행 중"으로 남아있는 경우를 잡는다.
+// StreamingExecution 은 이 cluster 에 실재하는 streaming Deployment 하나다.
+type StreamingExecution struct {
+	Name        string
+	Namespace   string
+	ExecutionID string
+	WorkflowID  string
+	// ReadyReplicas 가 0 이고 Desired 가 1 이면 pod 이 못 뜨는 상태다(CrashLoop, 이미지 pull
+	// 실패 등). Deployment 는 RestartPolicy=Always 라 무한 재시작하므로, 존재 여부만 보면
+	// "살아있다"로 오판한다 — 실패를 확정하려면 준비 상태를 봐야 한다.
+	ReadyReplicas   int32
+	DesiredReplicas int32
+	CreatedAt       time.Time
+}
+
+// Healthy 는 원하는 replica 가 실제로 준비됐는지다.
+func (s StreamingExecution) Healthy() bool {
+	return s.DesiredReplicas > 0 && s.ReadyReplicas >= s.DesiredReplicas
+}
+
+// desiredReplicas 는 spec.replicas 를 읽는다(미지정은 K8s 기본값 1).
+func desiredReplicas(d *appsv1.Deployment) int32 {
+	if d.Spec.Replicas == nil {
+		return 1
+	}
+	return *d.Spec.Replicas
+}
+
+// ListStreamingDeployments 는 이 worker 가 만든 streaming Deployment 를 전부 반환한다.
+// DB 상태와 실물을 맞대보는 자기 치유(orphan 청소)에 쓴다 — DB 만 보고는 "실물이 남아 도는"
+// 불일치를 발견할 수 없다.
+func (m *JobManager) ListStreamingDeployments(ctx context.Context, namespace string) ([]StreamingExecution, error) {
+	if namespace == "" {
+		namespace = m.client.Namespace()
+	}
+	list, err := m.client.Clientset().AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=%s,app.kubernetes.io/component=streaming-runner", labelManagedByKey, managedByValue),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list streaming deployments: %w", err)
+	}
+
+	out := make([]StreamingExecution, 0, len(list.Items))
+	for i := range list.Items {
+		d := &list.Items[i]
+		out = append(out, StreamingExecution{
+			Name:            d.Name,
+			Namespace:       d.Namespace,
+			ExecutionID:     d.Labels["conduix.io/execution-id"],
+			WorkflowID:      d.Labels["conduix.io/workflow-id"],
+			ReadyReplicas:   d.Status.ReadyReplicas,
+			DesiredReplicas: desiredReplicas(d),
+			CreatedAt:       d.CreationTimestamp.Time,
+		})
+	}
+	return out, nil
+}
+
 func (m *JobManager) StreamingDeploymentExists(ctx context.Context, namespace, workflowID, executionID string) (bool, error) {
 	if namespace == "" {
 		namespace = m.client.Namespace()

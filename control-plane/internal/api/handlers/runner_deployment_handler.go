@@ -43,11 +43,13 @@ type RunnerDeploymentStatus struct {
 // 실행 중인 워크플로우별로 "어느 노드에서 어떤 runner 버전이 도는지" 와 그것이 최신인지를 준다.
 func (h *RunnerHandler) GetRunnerDeployments(c *gin.Context) {
 	var latestReady models.RunnerVersion
-	hasReady := h.db.Where("status = ?", "ready").
+	hasReady := h.db.Select(models.RunnerVersionMetaColumns()).
+		Where("status = ?", "ready").
 		Order("build_number DESC").First(&latestReady).Error == nil
 
 	var building models.RunnerVersion
-	hasBuilding := h.db.Where("status IN ?", []string{"pending", "building"}).
+	hasBuilding := h.db.Select(models.RunnerVersionMetaColumns()).
+		Where("status IN ?", []string{"pending", "building"}).
 		Order("build_number DESC").First(&building).Error == nil
 
 	// 실행 중인 것만 본다. 끝난 실행의 버전은 배포 현황이 아니라 이력이다.

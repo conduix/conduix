@@ -184,7 +184,8 @@ func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string
 		return "", "", true, buildRequired(BuildReasonNoReadyVersion)
 	}
 	// ready 지만 바이너리가 없는 버전은 실행 불가 → 빌드 필요로 유도(함정 #3 회피).
-	if len(latestReady.Binary) == 0 {
+	// Binary 를 읽지 않았으므로 BinarySize 로 판정한다(빌더가 저장 시 함께 기록한다).
+	if latestReady.BinarySize == 0 {
 		return "", "", true, buildRequired(BuildReasonBinaryMissing)
 	}
 	// plugin 해시가 같아도 코어(pipeline-runner/pipeline-core/shared/plugin-sdk)가 바뀌면
@@ -279,7 +280,10 @@ func extractStageTypes(pipelinesConfig string) []string {
 // getLatestReadyVersion 최신 ready 상태의 RunnerVersion 반환
 func (r *RunnerResolver) getLatestReadyVersion() (*models.RunnerVersion, error) {
 	var version models.RunnerVersion
-	err := r.db.Where("status = ?", "ready").
+	// Binary(32MB급)를 읽지 않는다 — 여기서는 존재 여부만 필요하고, 그것은 BinarySize 로
+	// 판정한다. 워크플로우 시작마다 32MB 를 읽어 len() 만 확인하던 낭비를 없앤다.
+	err := r.db.Select(models.RunnerVersionMetaColumns()).
+		Where("status = ?", "ready").
 		Order("build_number DESC").
 		First(&version).Error
 	if err != nil {

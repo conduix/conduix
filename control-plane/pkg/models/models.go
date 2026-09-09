@@ -722,6 +722,23 @@ type StageRevision struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// RunnerVersionMetaColumns 는 Binary(32MB급 longblob)를 제외한 메타 컬럼이다.
+//
+// GORM 의 Find/First 는 SELECT * 를 내므로 목록·상태 조회에서도 바이너리를 전부 읽는다.
+// json:"-" 로 응답에는 안 나가지만 DB→앱 전송 비용은 그대로다(실측: 17행 453MB,
+// /runner/versions 5.3초). 바이너리가 실제로 필요한 곳은 DownloadBinary 하나뿐이므로
+// 그 외에는 이 목록으로 Select 한다. 존재 여부만 필요하면 BinarySize 를 본다.
+//
+// build_log 는 mediumtext 라 목록에서는 제외하고 단건 조회에서만 읽는다.
+func RunnerVersionMetaColumns() []string {
+	return []string{
+		"id", "build_number", "status", "image_tag", "image_digest",
+		"binary_size", "source_hash", "plugin_ids", "plugin_hashes",
+		"revision_seq", "trigger", "parent_id", "error", "duration_ms",
+		"created_by", "started_at", "finished_at", "created_at",
+	}
+}
+
 // TableName 테이블 이름
 func (RunnerVersion) TableName() string {
 	return "runner_versions"

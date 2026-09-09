@@ -841,10 +841,16 @@ export default function WorkflowDetailPage() {
 
   const hierarchicalPipelines = getHierarchicalPipelines()
 
+  // Monitoring 탭은 실행 중일 때만 렌더되므로 그 뒤 탭 인덱스가 1 씩 밀린다.
+  // 탭 전환 훅과 TabPanel 이 각자 인덱스를 계산하면 어긋나서(체크포인트가
+  // 클릭으로는 안 뜨고 Refresh 로만 뜨던 버그) 여기 한 곳에서만 정한다.
+  const monitoringTabIndex = 3
+  const checkpointsTabIndex = runningExecutionId ? 4 : 3
+
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue)
     // Load checkpoints when switching to checkpoints tab
-    if (newValue === 4 && workflow?.type === 'realtime') {
+    if (newValue === checkpointsTabIndex && workflow?.type === 'realtime') {
       fetchCheckpoints()
     }
   }
@@ -1328,7 +1334,7 @@ export default function WorkflowDetailPage() {
 
         {/* Monitoring Tab (only when running) */}
         {runningExecutionId && (
-          <TabPanel value={tabValue} index={3}>
+          <TabPanel value={tabValue} index={monitoringTabIndex}>
             <Card>
               <CardHeader
                 title={t('workflow.monitoring')}
@@ -1503,7 +1509,7 @@ export default function WorkflowDetailPage() {
 
         {/* Checkpoints Tab (only for realtime) */}
         {workflow.type === 'realtime' && (
-          <TabPanel value={tabValue} index={runningExecutionId ? 4 : 3}>
+          <TabPanel value={tabValue} index={checkpointsTabIndex}>
             <Card>
               <CardHeader
                 title={t('checkpoint.title')}

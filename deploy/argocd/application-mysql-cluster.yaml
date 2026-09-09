@@ -19,6 +19,35 @@ spec:
         routerInstances: 1
         tls:
           useSelfSigned: true
+        # 로컬 Colima 노드(2 cpu / 8Gi)에서 mysql 이 limit 없이 떠 exitCode 137 로
+        # 반복 축출됐다(server 14회, router 63회). 값은 실측 사용량 기준:
+        # server 1471Mi/39m, router 76Mi/28m. CPU request 는 노드가 이미 93% 라
+        # 스케줄링을 막지 않도록 낮게 두고, 버스트는 limit 으로 흡수한다.
+        #
+        # 주의: 차트 문서상 podSpec 은 InnoDBCluster "최초 생성 시에만" 반영되며
+        # Operator 가 이후 변경을 감시하지 않는다. 이미 생성된 클러스터에는
+        # 재생성 없이는 적용되지 않는다(재생성은 데이터 백업 후 별도 진행).
+        podSpec:
+          containers:
+            - name: mysql
+              resources:
+                requests:
+                  memory: 1Gi
+                  cpu: 100m
+                limits:
+                  memory: 2Gi
+                  cpu: 800m
+        router:
+          podSpec:
+            containers:
+              - name: router
+                resources:
+                  requests:
+                    memory: 64Mi
+                    cpu: 50m
+                  limits:
+                    memory: 256Mi
+                    cpu: 300m
   destination:
     server: https://kubernetes.default.svc
     namespace: conduix

@@ -262,12 +262,49 @@ func (a *Agent) Stop() error {
 		}
 	}
 
+	// claim 을 즉시 해제한다. 안 하면 TTL(30s) 동안 죽은 이 agent 의 claim 이 남아,
+	// 그 사이 reconcile 을 돈 다른 agent 가 전부 "already claimed" 로 skip 한다. 그 결과
+	// 아무도 runningExecs 에 담지 않아 heartbeat 에서 실행이 빠지고, stale 감지기가 정상
+	// 실행을 orphan 으로 확정한다(실측: agent 롤링 재시작만으로 CDC 실행이 error).
+	//
+	// 위임 실행(streaming pod / batch Job)은 agent 와 독립적으로 계속 돌기 때문에 해제가
+	// 특히 중요하다 — 실물은 살아있는데 DB 만 error 가 되는 불일치를 막는다.
+	// a.cancel() 로 a.ctx 가 이미 끝났으므로 해제에는 별도 ctx 를 쓴다.
+	a.releaseClaimsOnShutdown(execs)
+
 	a.mu.Lock()
 	a.Status = types.AgentStatusOffline
 	a.mu.Unlock()
 
 	slog.Info("agent stopped", "agent_id", a.ID)
 	return nil
+}
+
+// releaseClaimsOnShutdown 은 종료 시 이 agent 가 쥔 claim 을 해제해 다음 agent 가
+// 즉시 인계받게 한다. 자기 소유인 것만 지운다(다른 agent 의 claim 을 지우면 이중 실행).
+func (a *Agent) releaseClaimsOnShutdown(execs []*RunningExecution) {
+	if a.redisClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), claimReleaseTimeout)
+	defer cancel()
+
+	for _, exec := range execs {
+		if exec.ExecutionID == "" {
+			continue
+		}
+		key := executionClaimKey(exec.ExecutionID)
+		owner, err := a.redisClient.Get(ctx, key)
+		if err != nil || owner != a.ID {
+			continue
+		}
+		if err := a.redisClient.Del(ctx, key); err != nil {
+			slog.Warn("shutdown: failed to release claim (will expire via TTL)",
+				"execution_id", exec.ExecutionID, "agent_id", a.ID, "error", err)
+			continue
+		}
+		slog.Info("shutdown: released claim for handover", "execution_id", exec.ExecutionID, "agent_id", a.ID)
+	}
 }
 
 // matchingExecutions 는 제어 명령 대상 실행 목록을 반환한다.
@@ -1172,6 +1209,9 @@ func (a *Agent) getJobManager() *k8s.JobManager {
 const (
 	claimTTL           = 30 * time.Second
 	claimRenewInterval = claimTTL / 3
+	// claimReleaseTimeout 은 종료 시 claim 해제에 쓰는 상한이다. a.ctx 가 이미 취소된
+	// 뒤라 별도 ctx 가 필요하고, 종료를 오래 붙잡지 않도록 짧게 둔다.
+	claimReleaseTimeout = 3 * time.Second
 )
 
 // preferredClaimBackoffDefault 는 부하 분산 배정 시, 선호 agent 가 아닌 노드가 claim 을 미루는

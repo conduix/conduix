@@ -107,7 +107,13 @@ function App() {
               <Route path="projects/:projectAlias/workflows/:workflowId/pipelines/:pipelineId/source" element={<SourceEditorPage />} />
               <Route path="data-models" element={<DataModelsPage />} />
               <Route path="data-models/:id" element={<DataModelDetailPage />} />
-              <Route path="plugins" element={<PluginsPage />} />
+              {/* 메뉴 라벨이 Stage 이므로 URL 도 /stages 를 정본으로 한다.
+                  /plugins 는 기존 북마크·링크가 깨지지 않게 리다이렉트로 남긴다.
+                  API·DB·Go 코드의 plugin 용어는 그대로다 — plugin-sdk 가 별도 모듈이고
+                  사용자가 작성한 커스텀 stage 소스가 그것을 import 하므로, 전면 리네이밍은
+                  기존 사용자 코드를 깨뜨린다. */}
+              <Route path="stages" element={<PluginsPage />} />
+              <Route path="plugins" element={<Navigate to="/stages" replace />} />
             </Route>
           </Routes>
         </BrowserRouter>

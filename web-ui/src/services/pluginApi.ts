@@ -96,6 +96,8 @@ export interface RunnerPluginStatus {
 
 export interface RunnerVersion {
   id: string
+  // 사람이 식별하기 쉬운 순번. id(rv-해시)만으로는 어느 빌드가 최근인지 알기 어렵다.
+  build_number: number
   status: 'pending' | 'building' | 'ready' | 'failed'
   source_hash: string
   image_tag?: string
@@ -111,6 +113,10 @@ export interface RunnerStatusResponse {
   needs_build: boolean
   plugins: RunnerPluginStatus[]
   latest_ready_version?: RunnerVersion
+  // needs_build 는 빌드가 시작되면 곧 false 가 되므로, 그것만 보고 폴링하면
+  // 정작 빌드 중에 화면이 갱신되지 않는다. 진행/실패를 별도로 받는다.
+  building_version?: RunnerVersion | null
+  last_failed_version?: RunnerVersion | null
 }
 
 export async function getRunnerStatus(): Promise<RunnerStatusResponse> {

@@ -420,6 +420,7 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 			Status:            string(types.PipelineGroupStatusRunning),
 			StartedAt:         time.Now(),
 			PipelinesSnapshot: workflow.PipelinesConfig, // 실행 시점 파이프라인 설정 저장
+			RunnerVersionID:   resolvedRunnerVersionID,  // 어떤 native 바이너리로 도는지 관측용
 			TriggeredBy:       "user",
 			TriggeredByID:     userIDStr,
 			CreatedAt:         time.Now(),

@@ -1,0 +1,2 @@
+DROP INDEX idx_workflow_executions_runner_version ON workflow_executions;
+ALTER TABLE workflow_executions DROP COLUMN runner_version_id;

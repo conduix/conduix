@@ -14,21 +14,50 @@ import (
 // DefaultRunnerImage 기본 pipeline-runner 이미지 (native plugin이 없는 경우)
 const DefaultRunnerImage = "ghcr.io/conduix/pipeline-runner:latest"
 
+// BuildRequiredReason 은 빌드가 필요해진 이유다.
+// 이유마다 사용자가 확인할 곳이 달라서 메시지를 구분해야 한다 — stage 수정이면 그 stage 를,
+// 코어 변경이면 배포 버전을, ready 버전 부재면 빌드 이력을 봐야 한다.
+type BuildRequiredReason string
+
+const (
+	// BuildReasonPluginChanged stage 소스가 배포본과 다르다.
+	BuildReasonPluginChanged BuildRequiredReason = "plugin_changed"
+	// BuildReasonNoReadyVersion 쓸 수 있는 ready 버전이 없다(최초 빌드 전, 또는 전부 실패).
+	BuildReasonNoReadyVersion BuildRequiredReason = "no_ready_version"
+	// BuildReasonBinaryMissing ready 지만 바이너리가 비어 실행 불가하다.
+	BuildReasonBinaryMissing BuildRequiredReason = "binary_missing"
+	// BuildReasonCoreChanged stage 는 그대로인데 코어 모듈이 바뀌었다.
+	BuildReasonCoreChanged BuildRequiredReason = "core_changed"
+)
+
 // BuildRequiredError native plugin의 빌드가 필요할 때 반환하는 에러
 type BuildRequiredError struct {
-	PendingPlugins     []models.Plugin `json:"pending_plugins"`
-	LatestReadyVersion string          `json:"latest_ready_version,omitempty"`
-	LatestReadySeq     int             `json:"latest_ready_seq"` // 최신 ready runner의 revision seq
-	LatestSeq          int             `json:"latest_seq"`       // 현재 최신 revision seq
+	Reason             BuildRequiredReason `json:"reason"`
+	PendingPlugins     []models.Plugin     `json:"pending_plugins"`
+	LatestReadyVersion string              `json:"latest_ready_version,omitempty"`
+	LatestReadySeq     int                 `json:"latest_ready_seq"` // 최신 ready runner의 revision seq
+	LatestSeq          int                 `json:"latest_seq"`       // 현재 최신 revision seq
 }
 
 func (e *BuildRequiredError) Error() string {
-	names := make([]string, len(e.PendingPlugins))
-	for i, p := range e.PendingPlugins {
-		names[i] = p.Name
+	switch e.Reason {
+	case BuildReasonNoReadyVersion:
+		return "실행 가능한 runner 빌드가 없습니다. Stage 화면에서 빌드한 뒤 실행해주세요."
+	case BuildReasonBinaryMissing:
+		return fmt.Sprintf("runner %s 는 ready 지만 바이너리가 없어 실행할 수 없습니다. 다시 빌드해주세요.",
+			e.LatestReadyVersion)
+	case BuildReasonCoreChanged:
+		// stage 소스는 그대로이므로 stage 이름을 나열하면 오히려 혼란스럽다.
+		return fmt.Sprintf("conduix 코어가 업데이트되어 현재 runner(%s)가 낡았습니다. 다시 빌드한 뒤 실행해주세요.",
+			e.LatestReadyVersion)
+	default:
+		names := make([]string, len(e.PendingPlugins))
+		for i, p := range e.PendingPlugins {
+			names[i] = p.Name
+		}
+		return fmt.Sprintf("stage [%s]가 seq #%d에서 수정되었습니다. 현재 runner는 seq #%d 기준 빌드입니다. 빌드 후 실행해주세요.",
+			strings.Join(names, ", "), e.LatestSeq, e.LatestReadySeq)
 	}
-	return fmt.Sprintf("stage [%s]가 seq #%d에서 수정되었습니다. 현재 runner는 seq #%d 기준 빌드입니다. 빌드 후 실행해주세요.",
-		strings.Join(names, ", "), e.LatestSeq, e.LatestReadySeq)
 }
 
 // RunnerResolver 워크플로우 실행 시 Runner 이미지를 결정하는 서비스
@@ -106,6 +135,7 @@ func (r *RunnerResolver) ResolveRunnerImage(workflow *models.Workflow) (string, 
 	latestSeq := r.getLatestRevisionSeq()
 
 	return "", &BuildRequiredError{
+		Reason:             BuildReasonPluginChanged,
 		PendingPlugins:     pendingPlugins,
 		LatestReadyVersion: latestReady,
 		LatestReadySeq:     latestReadySeq,
@@ -135,8 +165,9 @@ func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string
 		}
 	}
 
-	buildRequired := func() error {
+	buildRequired := func(reason BuildRequiredReason) error {
 		return &BuildRequiredError{
+			Reason:             reason,
 			PendingPlugins:     pendingPlugins,
 			LatestReadyVersion: r.getLatestReadyVersionID(),
 			LatestReadySeq:     r.getLatestReadyVersionSeq(),
@@ -145,22 +176,22 @@ func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string
 	}
 
 	if len(pendingPlugins) > 0 {
-		return "", "", true, buildRequired()
+		return "", "", true, buildRequired(BuildReasonPluginChanged)
 	}
 
 	latestReady, err := r.getLatestReadyVersion()
 	if err != nil {
-		return "", "", true, buildRequired() // ready 버전 없음 → 빌드 필요
+		return "", "", true, buildRequired(BuildReasonNoReadyVersion)
 	}
 	// ready 지만 바이너리가 없는 버전은 실행 불가 → 빌드 필요로 유도(함정 #3 회피).
 	if len(latestReady.Binary) == 0 {
-		return "", "", true, buildRequired()
+		return "", "", true, buildRequired(BuildReasonBinaryMissing)
 	}
 	// plugin 해시가 같아도 코어(pipeline-runner/pipeline-core/shared/plugin-sdk)가 바뀌면
 	// 그 버전의 바이너리는 낡았다. 빌더는 이걸 combinedHash 로 감지해 재빌드하는데,
 	// 리졸버가 안 보면 옛 바이너리로 계속 실행돼 코어 수정이 영구히 반영되지 않는다.
 	if r.coreChangedSince(latestReady, nativePlugins) {
-		return "", "", true, buildRequired()
+		return "", "", true, buildRequired(BuildReasonCoreChanged)
 	}
 	return latestReady.ID, latestReady.ImageTag, true, nil
 }

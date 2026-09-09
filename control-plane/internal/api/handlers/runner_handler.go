@@ -36,7 +36,9 @@ func NewRunnerHandler(db *database.DB) *RunnerHandler {
 // ListVersions GET /api/v1/runner/versions — RunnerVersion 목록 조회
 func (h *RunnerHandler) ListVersions(c *gin.Context) {
 	var versions []models.RunnerVersion
-	query := h.db.Order("build_number DESC")
+	// Binary(32MB급)·build_log(mediumtext)를 제외한다 — 목록에는 불필요하고,
+	// SELECT * 로 읽으면 응답이 초 단위로 느려진다(실측 5.3초).
+	query := h.db.Select(models.RunnerVersionMetaColumns()).Order("build_number DESC")
 
 	// status 필터
 	if status := c.Query("status"); status != "" {
@@ -61,7 +63,9 @@ func (h *RunnerHandler) GetVersion(c *gin.Context) {
 	id := c.Param("id")
 
 	var version models.RunnerVersion
-	if err := h.db.First(&version, "id = ?", id).Error; err != nil {
+	// 단건은 build_log 가 필요하다(로그 열람). Binary 만 제외한다.
+	cols := append(models.RunnerVersionMetaColumns(), "build_log")
+	if err := h.db.Select(cols).First(&version, "id = ?", id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "runner version not found"})
 			return
@@ -112,7 +116,8 @@ func (h *RunnerHandler) CheckStatus(c *gin.Context) {
 	// 최신 ready 버전
 	var latestReady *models.RunnerVersion
 	var rv models.RunnerVersion
-	if err := h.db.Where("status = ?", "ready").Order("build_number DESC").First(&rv).Error; err == nil {
+	if err := h.db.Select(models.RunnerVersionMetaColumns()).
+		Where("status = ?", "ready").Order("build_number DESC").First(&rv).Error; err == nil {
 		latestReady = &rv
 	}
 
@@ -122,14 +127,16 @@ func (h *RunnerHandler) CheckStatus(c *gin.Context) {
 	// needs_build 가 true 로 남아 폴링이 계속 도는 낭비가 생긴다.
 	var building *models.RunnerVersion
 	var bv models.RunnerVersion
-	if err := h.db.Where("status IN ?", []string{"pending", "building"}).
+	if err := h.db.Select(models.RunnerVersionMetaColumns()).
+		Where("status IN ?", []string{"pending", "building"}).
 		Order("build_number DESC").First(&bv).Error; err == nil {
 		building = &bv
 	}
 
 	var lastFailed *models.RunnerVersion
 	var fv models.RunnerVersion
-	if err := h.db.Where("status = ?", "failed").Order("build_number DESC").First(&fv).Error; err == nil {
+	if err := h.db.Select(models.RunnerVersionMetaColumns()).
+		Where("status = ?", "failed").Order("build_number DESC").First(&fv).Error; err == nil {
 		lastFailed = &fv
 	}
 

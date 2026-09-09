@@ -7,6 +7,7 @@ import layoutSource from './components/Layout/MainLayout.tsx?raw'
 import pluginsSource from './pages/Plugins.tsx?raw'
 import apiSource from './services/pluginApi.ts?raw'
 import detailSource from './pages/WorkflowDetail.tsx?raw'
+import projectDetailSource from './pages/ProjectDetail.tsx?raw'
 
 // 메뉴 라벨(Stage)과 URL(/plugins)이 어긋나 있던 것을 고쳤다.
 // 라우트·메뉴·리다이렉트는 서로 맞물려야 하고, 한쪽만 바뀌면 죽은 링크가 된다.
@@ -63,5 +64,20 @@ describe('빌드 모니터링 배선', () => {
 
   it('RunnerVersion 에 build_number 가 있다 — id(rv-해시)만으로는 최신 판별이 안 된다', () => {
     expect(api).toContain('build_number: number')
+  })
+})
+
+describe('프로젝트 상세 조회 견고성', () => {
+  const projectDetail = projectDetailSource
+
+  it('allSettled 로 개별 처리한다 — 부수 데이터 실패가 본체를 가려서는 안 된다', () => {
+    // Promise.all 은 하나만 실패해도 전체 reject → 존재하는 프로젝트가
+    // "Project not found" 로 표시된다(실측).
+    expect(projectDetail).toContain('Promise.allSettled')
+    expect(projectDetail).not.toContain('await Promise.all([')
+  })
+
+  it('본체 조회 실패는 별도로 알린다 — "없음" 과 "못 불러옴" 은 다른 상태다', () => {
+    expect(projectDetail).toMatch(/projectRes\.status === 'fulfilled'[\s\S]{0,200}showError/)
   })
 })

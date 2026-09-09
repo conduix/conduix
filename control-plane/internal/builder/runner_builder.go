@@ -38,14 +38,20 @@ type RunnerBuilderConfig struct {
 	CacheDir     string        // GOCACHE/GOPATH 영속 경로. tmpDir 밖에 두어 재빌드 간 컴파일·모듈 캐시 재사용.
 }
 
+// SourceRootFromEnv 는 runner 소스 모듈의 루트다. 빌더와 리졸버가 같은 트리를 봐야
+// 코어 해시 판정이 일치하므로 여기 한 곳에서만 결정한다.
+func SourceRootFromEnv() string {
+	if root := os.Getenv("CONDUIX_SOURCE_ROOT"); root != "" {
+		return root
+	}
+	return ".." // 로컬 개발 폴백(control-plane 디렉토리 기준 리포 루트)
+}
+
 // DefaultRunnerBuilderConfig 기본 설정.
 // SourceRoot 는 CONDUIX_SOURCE_ROOT env(런타임 이미지의 /app)에서 읽는다 — 빌드 시 replace 가
 // 가리킬 pipeline-core/shared/plugin-sdk 소스 위치. env 없으면 로컬 개발(리포 루트 기준) 폴백.
 func DefaultRunnerBuilderConfig() *RunnerBuilderConfig {
-	sourceRoot := os.Getenv("CONDUIX_SOURCE_ROOT")
-	if sourceRoot == "" {
-		sourceRoot = ".." // 로컬 개발 폴백(control-plane 디렉토리 기준 리포 루트)
-	}
+	sourceRoot := SourceRootFromEnv()
 	cacheDir := os.Getenv("CONDUIX_BUILD_CACHE_DIR")
 	if cacheDir == "" {
 		cacheDir = filepath.Join(os.TempDir(), "conduix-runner-cache")
@@ -586,9 +592,17 @@ func CombinedSourceHash(pluginHashes map[string]string, coreHash string) string 
 // 코어 코드가 바뀌면(플러그인 소스는 그대로여도) combinedHash 가 달라져 재빌드된다.
 // 실패 시 빈 문자열(해시 미포함) — 재사용 스킵 판정이 관대해질 뿐 안전에는 무해.
 func (rb *RunnerBuilder) coreSourceHash() string {
+	return CoreSourceHash(rb.config.SourceRoot, rb.logger)
+}
+
+// CoreSourceHash 는 sourceRoot 아래 runner 구성 모듈의 .go 소스 스냅샷 해시다.
+// 빌더(재빌드 스킵 판정)와 리졸버(기존 버전 유효성 판정)가 같은 값을 봐야 하므로
+// 여기 한 곳에서만 계산한다 — 어긋나면 빌더는 재빌드하는데 리졸버는 옛 버전을
+// 유효하다고 판정해 코어 수정이 실행 pod 에 영구히 반영되지 않는다.
+func CoreSourceHash(sourceRoot string, logger *slog.Logger) string {
 	h := sha256.New()
 	for _, mod := range runnerSourceModules {
-		root := filepath.Join(rb.config.SourceRoot, mod)
+		root := filepath.Join(sourceRoot, mod)
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -602,7 +616,7 @@ func (rb *RunnerBuilder) coreSourceHash() string {
 			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			rel, _ := filepath.Rel(rb.config.SourceRoot, path)
+			rel, _ := filepath.Rel(sourceRoot, path)
 			data, rerr := os.ReadFile(path)
 			if rerr != nil {
 				return rerr
@@ -611,7 +625,9 @@ func (rb *RunnerBuilder) coreSourceHash() string {
 			return nil
 		})
 		if err != nil {
-			rb.logger.Warn("core source hash walk failed — 코어 변경 감지 없이 진행", "module", mod, "error", err)
+			if logger != nil {
+				logger.Warn("core source hash walk failed — 코어 변경 감지 없이 진행", "module", mod, "error", err)
+			}
 			return ""
 		}
 	}

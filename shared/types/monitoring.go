@@ -4,11 +4,16 @@ import "time"
 
 // ExecutionMonitoringInfo 워크플로우 실행 모니터링 정보
 type ExecutionMonitoringInfo struct {
-	ExecutionID string                   `json:"execution_id"`
-	WorkflowID  string                   `json:"workflow_id"`
-	Status      string                   `json:"status"`
-	Pipelines   []PipelineMonitoringInfo `json:"pipelines"`
-	UpdatedAt   time.Time                `json:"updated_at"`
+	ExecutionID string `json:"execution_id"`
+	WorkflowID  string `json:"workflow_id"`
+	Status      string `json:"status"`
+	// AgentID 는 이 실행을 위임 생성한 agent(노드)다. realtime(streaming) 은 종료 콜백이
+	// 없어 결과 보고로 agent_id 를 남길 기회가 없으므로, 상시 흐르는 모니터링 경로에 실어
+	// 보낸다. in-process 실행은 GroupExecutor 가 채우지 않으므로 비며, 이때는 agent 가
+	// 자기 ID 로 채운다.
+	AgentID   string                   `json:"agent_id,omitempty"`
+	Pipelines []PipelineMonitoringInfo `json:"pipelines"`
+	UpdatedAt time.Time                `json:"updated_at"`
 }
 
 // PipelineMonitoringInfo 파이프라인 모니터링 정보

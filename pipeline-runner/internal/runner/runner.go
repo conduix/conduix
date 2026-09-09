@@ -13,11 +13,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/conduix/conduix/pipeline-runner/internal/config"
-	"github.com/conduix/conduix/pipeline-runner/internal/health"
 	"github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
 	"github.com/conduix/conduix/pipeline-core/pkg/executor"
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
+	"github.com/conduix/conduix/pipeline-runner/internal/config"
+	"github.com/conduix/conduix/pipeline-runner/internal/health"
 	"github.com/conduix/conduix/shared/types"
 )
 
@@ -118,13 +118,7 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 	defer cancel()
 
 	// REST /monitoring → 이 pod 의 실시간 진행 정보. agent 가 label 로 pod 를 찾아 pull 한다.
-	r.healthServer.SetMonitoringHandler(func() any {
-		info := groupExec.GetMonitoringInfo()
-		if info == nil {
-			return nil
-		}
-		return info
-	})
+	r.healthServer.SetMonitoringHandler(r.monitoringHandler(groupExec))
 
 	// REST /commands → GroupExecutor 제어 연결(stop/pause/resume). C1: pod 가 REST 로 명령 수신.
 	r.healthServer.SetCommandHandler(func(cmd string) error {
@@ -192,13 +186,7 @@ func (r *Runner) executeWorkflow(ctx context.Context) (*types.PipelineGroupExecu
 
 	// REST /monitoring → batch Job 도 실행 중 진행률을 노출한다(streaming 과 동일 배선).
 	// 없으면 agent 가 위임 실행의 진행 정보를 얻을 방법이 없어 라이브 모니터링이 빈다.
-	r.healthServer.SetMonitoringHandler(func() any {
-		info := groupExec.GetMonitoringInfo()
-		if info == nil {
-			return nil
-		}
-		return info
-	})
+	r.healthServer.SetMonitoringHandler(r.monitoringHandler(groupExec))
 
 	_, err := groupExec.Start(ctx, "batch-runner")
 	if err != nil {
@@ -226,6 +214,22 @@ func (r *Runner) executeWorkflow(ctx context.Context) (*types.PipelineGroupExecu
 				return exec, fmt.Errorf("execution failed: %s", exec.ErrorMessage)
 			}
 		}
+	}
+}
+
+// monitoringHandler 는 GET /monitoring 응답을 만든다. GroupExecutor 의 진행 정보에
+// AgentID 를 덧붙이는데, 이 값은 위임 생성한 agent 가 AGENT_ID 로 주입한 것이다.
+// realtime(streaming) 은 무한 실행이라 종료 결과 콜백(sendBatchResult)이 영구히 발생하지
+// 않아 agent_id 를 DB 에 남길 다른 경로가 없다. batch 도 실행 중에는 결과 콜백 전이므로
+// 같은 배선을 쓴다.
+func (r *Runner) monitoringHandler(groupExec *executor.GroupExecutor) func() any {
+	return func() any {
+		info := groupExec.GetMonitoringInfo()
+		if info == nil {
+			return nil
+		}
+		info.AgentID = r.cfg.AgentID
+		return info
 	}
 }
 

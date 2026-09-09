@@ -1008,8 +1008,8 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	// JobConfig(선택): 있으면 리소스 스펙으로 사용, 없으면 JobManager 기본값.
 	// 기본값에서 시작해 워크플로우 JobConfig 로 덮는다. 예전엔 zero value 에서 시작해
 	// JobConfig 가 비면 CPU/메모리 limit 이 아예 안 붙었다(실측: realtime pod 이 resources:{}).
-	// Go 1.25+ 는 cgroup CPU limit 으로 GOMAXPROCS 를 정하는데, limit 이 없으면 노드 전체
-	// 코어를 보고 과다 병렬로 돌아 다른 pod 을 굶긴다. 주석은 "using defaults" 였지만
+	// memory limit 이 없으면 automemlimit 이 ErrNoLimit 을 받아 GOMEMLIMIT 을 MaxInt64 로
+	// 두므로 GC 가 힙을 억제하지 않아 OOMKill 로 이어진다. 주석은 "using defaults" 였지만
 	// 실제로 기본값이 적용된 적이 없었다(DefaultJobConfig 는 프로덕션 호출처가 0개였다).
 	jobConfig := types.DefaultJobConfig()
 	if cmd.JobConfig != "" {
@@ -1085,8 +1085,8 @@ func (a *Agent) delegateStreamingDeployment(cmd *types.GroupExecutionCommand) {
 
 	// 기본값에서 시작해 워크플로우 JobConfig 로 덮는다. 예전엔 zero value 에서 시작해
 	// JobConfig 가 비면 CPU/메모리 limit 이 아예 안 붙었다(실측: realtime pod 이 resources:{}).
-	// Go 1.25+ 는 cgroup CPU limit 으로 GOMAXPROCS 를 정하는데, limit 이 없으면 노드 전체
-	// 코어를 보고 과다 병렬로 돌아 다른 pod 을 굶긴다. 주석은 "using defaults" 였지만
+	// memory limit 이 없으면 automemlimit 이 ErrNoLimit 을 받아 GOMEMLIMIT 을 MaxInt64 로
+	// 두므로 GC 가 힙을 억제하지 않아 OOMKill 로 이어진다. 주석은 "using defaults" 였지만
 	// 실제로 기본값이 적용된 적이 없었다(DefaultJobConfig 는 프로덕션 호출처가 0개였다).
 	jobConfig := types.DefaultJobConfig()
 	if cmd.JobConfig != "" {

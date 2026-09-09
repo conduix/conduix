@@ -14,8 +14,9 @@ import (
 	"github.com/conduix/conduix/shared/logging"
 
 	// K8s 메모리 limit(cgroup)을 GOMEMLIMIT 에 반영. CPU 쪽(GOMAXPROCS)은 Go 1.25+ 런타임이
-	// cgroup CPU limit 을 직접 읽어 정하므로 automaxprocs 를 뺐다 — 단, limit 이 설정돼 있어야
-	// 동작한다(위임 실행 pod 은 JobConfig 기본값으로 limit 을 받는다).
+	// cgroup CPU limit 을 직접 읽어 정하므로 automaxprocs 를 뺐다. 단 런타임은 limit 을
+	// ceil 한 뒤 최소 2 로 올리므로(runtime/cgroup_linux.go adjustCgroupGOMAXPROCS),
+	// 1 CPU 이하 pod 은 GOMAXPROCS=2 가 된다 — automaxprocs 도 동일 하한이라 차이는 없다.
 	_ "github.com/KimMachineGun/automemlimit"
 )
 

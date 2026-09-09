@@ -303,7 +303,9 @@
     "jobTtlAfterFinished": "TTL After Finished (seconds)",
     "jobTtlAfterFinishedHelp": "Time to wait before auto-deleting completed Job (default: 300)",
     "jobResourceSettings": "Resource Settings",
-    "jobBehaviorSettings": "Behavior Settings"
+    "jobBehaviorSettings": "Behavior Settings",
+    "runnerVersion": "Runner Version",
+    "runnerVersionStale": "Older than latest ready build ({{latest}})"
   },
   "agent": {
     "title": "Agents",

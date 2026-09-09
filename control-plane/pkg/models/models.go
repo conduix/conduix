@@ -325,10 +325,15 @@ func (Workflow) TableName() string {
 
 // WorkflowExecution 워크플로우 실행 이력
 type WorkflowExecution struct {
-	ID                string     `gorm:"primaryKey;size:36" json:"id"`
-	WorkflowID        string     `gorm:"size:36;not null;index" json:"workflow_id"`
-	ClusterID         string     `gorm:"size:36;index" json:"cluster_id,omitempty"` // 실행 시점 클러스터
-	AgentID           string     `gorm:"size:36;index" json:"agent_id,omitempty"`   // 실행한 Agent
+	ID         string `gorm:"primaryKey;size:36" json:"id"`
+	WorkflowID string `gorm:"size:36;not null;index" json:"workflow_id"`
+	ClusterID  string `gorm:"size:36;index" json:"cluster_id,omitempty"` // 실행 시점 클러스터
+	AgentID    string `gorm:"size:36;index" json:"agent_id,omitempty"`   // 실행한 Agent
+	// RunnerVersionID 는 이 실행이 쓰는 native stage 바이너리 버전이다.
+	// native stage 워크플로우는 GHCR 이미지가 아니라 runner_versions.Binary 로 실행되므로,
+	// 이 값이 없으면 "어떤 코드가 돌고 있는지" 확인할 방법이 없다(실측: 코어 수정 후 옛
+	// 바이너리로 계속 돌던 것을 kubectl 로 initContainer 명령을 뜯어야 알 수 있었다).
+	RunnerVersionID   string     `gorm:"size:36;index" json:"runner_version_id,omitempty"`
 	Status            string     `gorm:"size:50;not null" json:"status"`
 	StartedAt         time.Time  `json:"started_at"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`

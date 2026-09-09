@@ -121,6 +121,7 @@ func (h *WorkflowHandler) publishSubExecutions(
 			Status:            string(types.PipelineGroupStatusRunning),
 			StartedAt:         time.Now(),
 			PipelinesSnapshot: parent.PipelinesSnapshot,
+			RunnerVersionID:   runnerVersionID, // 부모와 같은 바이너리로 돈다 — 관측용
 			TriggeredBy:       "user",
 			TriggeredByID:     userID,
 			CreatedAt:         time.Now(),

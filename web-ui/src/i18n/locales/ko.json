@@ -303,7 +303,9 @@
     "jobTtlAfterFinished": "완료 후 삭제 대기 (초)",
     "jobTtlAfterFinishedHelp": "Job 완료 후 자동 삭제까지 대기 시간 (기본: 300)",
     "jobResourceSettings": "리소스 설정",
-    "jobBehaviorSettings": "동작 설정"
+    "jobBehaviorSettings": "동작 설정",
+    "runnerVersion": "Runner 버전",
+    "runnerVersionStale": "최신 빌드({{latest}})보다 이전 버전"
   },
   "agent": {
     "title": "에이전트",

@@ -1,15 +1,20 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+
+// Vite 의 ?raw import 로 소스를 문자열로 읽는다.
+// node:fs 를 쓰면 @types/node 가 필요해 tsc 빌드가 깨진다(CI 에서 실측).
+import appSource from './App.tsx?raw'
+import layoutSource from './components/Layout/MainLayout.tsx?raw'
+import pluginsSource from './pages/Plugins.tsx?raw'
+import apiSource from './services/pluginApi.ts?raw'
+import detailSource from './pages/WorkflowDetail.tsx?raw'
 
 // 메뉴 라벨(Stage)과 URL(/plugins)이 어긋나 있던 것을 고쳤다.
 // 라우트·메뉴·리다이렉트는 서로 맞물려야 하고, 한쪽만 바뀌면 죽은 링크가 된다.
-// 컴포넌트를 렌더하지 않고 소스를 읽어 검증한다(jsdom 설정 불필요).
-const src = (p: string) => readFileSync(join(__dirname, p), 'utf8')
+// 컴포넌트를 렌더하지 않고 소스를 검증한다(jsdom 설정 불필요).
 
 describe('stage 라우트 일관성', () => {
-  const app = src('App.tsx')
-  const layout = src('components/Layout/MainLayout.tsx')
+  const app = appSource
+  const layout = layoutSource
 
   it('/stages 가 Stage 페이지를 렌더한다', () => {
     expect(app).toMatch(/<Route\s+path="stages"\s+element={<PluginsPage\s*\/>}/)
@@ -26,7 +31,7 @@ describe('stage 라우트 일관성', () => {
 })
 
 describe('runner 버전 관측 배선', () => {
-  const detail = src('pages/WorkflowDetail.tsx')
+  const detail = detailSource
 
   it('실행 타입에 runner_version_id 가 있다', () => {
     expect(detail).toContain('runner_version_id?: string')
@@ -40,8 +45,8 @@ describe('runner 버전 관측 배선', () => {
 })
 
 describe('빌드 모니터링 배선', () => {
-  const plugins = src('pages/Plugins.tsx')
-  const api = src('services/pluginApi.ts')
+  const plugins = pluginsSource
+  const api = apiSource
 
   it('폴링이 building 중에도 돈다 — needs_build 만 보면 빌드 시작과 함께 멈춘다', () => {
     expect(plugins).toMatch(/runnerStatus\?\.needs_build\s*\|\|\s*isBuilding/)

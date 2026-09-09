@@ -1421,6 +1421,23 @@ func agentBaseURL() string {
 // 실행 중인 워크플로우의 실시간 모니터링 정보 조회 (Agent에 프록시).
 // route param 은 :execId — c.Param("executionId") 로 읽으면 빈 문자열이 되어 항상 404 가 나서
 // 라이브 모니터링 UI 가 비었었다(batch/realtime 공통). GetWorkflowExecution 과 동일하게 execId 로 읽는다.
+// backfillExecutionAgentID 는 실행 레코드의 agent_id 가 비어 있을 때만 채운다.
+// realtime(streaming) 은 무한 실행이라 종료 결과 콜백이 영구히 발생하지 않아 agent_id 를
+// 남길 다른 경로가 없다. 이미 값이 있으면(결과 콜백이 기록한 경우) 건드리지 않는다 —
+// 재배치로 노드가 바뀌는 경우까지 추적하려면 별도 이벤트가 필요하고, 여기서 덮으면
+// 조회 시점의 값이 이력을 지운다.
+func (h *WorkflowHandler) backfillExecutionAgentID(execution *models.WorkflowExecution, agentID string) {
+	if agentID == "" || execution.AgentID != "" {
+		return
+	}
+	if err := h.db.Model(execution).Update("agent_id", agentID).Error; err != nil {
+		slog.Warn("failed to backfill execution agent_id",
+			"execution_id", execution.ID, "agent_id", agentID, "error", err)
+		return
+	}
+	execution.AgentID = agentID
+}
+
 func (h *WorkflowHandler) GetExecutionMonitoring(c *gin.Context) {
 	requestID := middleware.GetRequestID(c)
 	workflowID := c.Param("id")
@@ -1456,6 +1473,13 @@ func (h *WorkflowHandler) GetExecutionMonitoring(c *gin.Context) {
 			for agentID := range heartbeats {
 				monitoringInfo, err := h.redisService.GetExecutionMonitoring(agentID, executionID)
 				if err == nil && monitoringInfo != nil {
+					// 응답에 실려온 값이 있으면 그게 실제 실행 노드다(위임 실행). 없으면
+					// Redis 키의 agent 가 곧 in-process 실행 노드다.
+					resolved := monitoringInfo.AgentID
+					if resolved == "" {
+						resolved = agentID
+					}
+					h.backfillExecutionAgentID(&execution, resolved)
 					// Redis에서 찾았으면 즉시 반환
 					c.JSON(http.StatusOK, gin.H{
 						"success":    true,
@@ -1506,6 +1530,14 @@ func (h *WorkflowHandler) GetExecutionMonitoring(c *gin.Context) {
 			"request_id": requestID,
 		})
 		return
+	}
+
+	// 위임 실행(realtime streaming pod / batch Job)은 실행 중 결과 콜백이 없어 agent_id 가
+	// 비어 있다. 모니터링 응답에 실려온 값으로 채운다 — UI 의 Agent(Node) 컬럼 근거.
+	if data, ok := agentResp["data"].(map[string]any); ok {
+		if id, ok := data["agent_id"].(string); ok {
+			h.backfillExecutionAgentID(&execution, id)
+		}
 	}
 
 	c.JSON(resp.StatusCode, agentResp)

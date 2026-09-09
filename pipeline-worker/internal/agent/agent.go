@@ -1534,7 +1534,12 @@ func (a *Agent) GetExecutionMonitoring(executionID string) *types.ExecutionMonit
 	a.execMu.RUnlock()
 
 	if ok && exec.GroupExecutor != nil {
-		return exec.GroupExecutor.GetMonitoringInfo()
+		info := exec.GroupExecutor.GetMonitoringInfo()
+		if info != nil && info.AgentID == "" {
+			// in-process 실행은 GroupExecutor 가 AgentID 를 모른다 — 여기가 그 agent 다.
+			info.AgentID = a.ID
+		}
+		return info
 	}
 
 	// batch 는 runningExecs 에 등록되지 않으므로 !ok 도 위임 실행일 수 있다.
@@ -1593,6 +1598,9 @@ func (a *Agent) GetAllExecutionMonitoring() []*types.ExecutionMonitoringInfo {
 	for _, exec := range a.runningExecs {
 		if exec.GroupExecutor != nil {
 			if info := exec.GroupExecutor.GetMonitoringInfo(); info != nil {
+				if info.AgentID == "" {
+					info.AgentID = a.ID
+				}
 				result = append(result, info)
 			}
 		}

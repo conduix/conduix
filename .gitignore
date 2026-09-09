@@ -81,3 +81,7 @@ checkpoints/
 Chart.lock
 deploy/helm/**/charts/*.tgz
 deploy/helm/**/values-local.yaml
+
+# Claude Code 개인 설정 — 사용자별 권한 허용 목록이 쌓이므로 공유하지 않는다.
+# 팀 공유 설정이 필요하면 .claude/settings.json 을 별도로 추적한다.
+.claude/settings.local.json

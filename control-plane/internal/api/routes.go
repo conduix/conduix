@@ -29,6 +29,7 @@ type Server struct {
 	authHandler         *handlers.AuthHandler
 	workflowHandler     *handlers.WorkflowHandler
 	statsHandler        *handlers.StatsHandler
+	statsIngestHandler  *handlers.StatsIngestHandler
 	scheduleHandler     *handlers.ScheduleHandler
 	graphHandler        *handlers.GraphHandler
 	dataTypeHandler     *handlers.DataTypeHandler
@@ -74,6 +75,7 @@ func NewServer(db *database.DB, redisService *services.RedisService, schedulerSe
 		authHandler:         handlers.NewAuthHandler(db, jwtSecret, usersConfig, frontendURL),
 		workflowHandler:     handlers.NewWorkflowHandler(db, redisService),
 		statsHandler:        handlers.NewStatsHandler(db),
+		statsIngestHandler:  handlers.NewStatsIngestHandler(db),
 		scheduleHandler:     handlers.NewScheduleHandler(db, schedulerService),
 		graphHandler:        handlers.NewGraphHandler(db, redisService),
 		dataTypeHandler:     handlers.NewDataTypeHandler(db),
@@ -165,6 +167,9 @@ func (s *Server) setupRoutes() {
 		internalJob := v1.Group("/internal")
 		{
 			internalJob.POST("/job-result", s.workflowHandler.HandleJobResultCallback)
+			// 실행 pod 가 시간 버킷 통계를 보낸다. realtime 은 종료 콜백이 없어(무한 실행)
+			// 이 경로가 유일한 통계 수집 수단이다. job-result 와 같은 신뢰 모델(클러스터 내부).
+			internalJob.POST("/stats/hourly", s.statsIngestHandler.IngestHourlyStats)
 		}
 
 		// 파이프라인 체크포인트 내부 API (Agent/streaming pod 에서 호출 — 인증 불필요, 클러스터 내부).

@@ -120,6 +120,10 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 	// REST /monitoring → 이 pod 의 실시간 진행 정보. agent 가 label 로 pod 를 찾아 pull 한다.
 	r.healthServer.SetMonitoringHandler(r.monitoringHandler(groupExec))
 
+	// 시간 버킷 통계 전송. realtime 은 종료 콜백이 영구히 발생하지 않으므로 이 경로가
+	// 없으면 시간당 수집량·에러량이 어디에도 남지 않는다.
+	go newStatsReporter(r.cfg.ControlPlaneURL, r.cfg.WorkflowID).run(ctx, groupExec)
+
 	// REST /commands → GroupExecutor 제어 연결(stop/pause/resume). C1: pod 가 REST 로 명령 수신.
 	r.healthServer.SetCommandHandler(func(cmd string) error {
 		switch cmd {
@@ -187,6 +191,10 @@ func (r *Runner) executeWorkflow(ctx context.Context) (*types.PipelineGroupExecu
 	// REST /monitoring → batch Job 도 실행 중 진행률을 노출한다(streaming 과 동일 배선).
 	// 없으면 agent 가 위임 실행의 진행 정보를 얻을 방법이 없어 라이브 모니터링이 빈다.
 	r.healthServer.SetMonitoringHandler(r.monitoringHandler(groupExec))
+
+	// batch 도 같은 배선으로 시간 버킷을 남긴다. 결과 콜백은 실행 총량만 담아
+	// "몇 시에 얼마나 처리했나" 를 답하지 못한다.
+	go newStatsReporter(r.cfg.ControlPlaneURL, r.cfg.WorkflowID).run(ctx, groupExec)
 
 	_, err := groupExec.Start(ctx, "batch-runner")
 	if err != nil {

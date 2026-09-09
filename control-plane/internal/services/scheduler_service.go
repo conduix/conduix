@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -90,6 +92,7 @@ func (s *SchedulerService) Start() error {
 
 	// stale 실행 감지 루프 시작 (claim한 에이전트 크래시로 유실된 실행 복구)
 	go s.staleExecutionLoop()
+	go s.statsRetentionLoop()
 
 	return nil
 }
@@ -112,6 +115,61 @@ func (s *SchedulerService) staleExecutionLoop() {
 		}
 	}
 }
+
+// statsRetentionInterval 은 오래된 통계 버킷을 정리하는 주기다.
+// 하루 1회면 충분하다 — 버킷은 시간당 1행씩만 늘고, 정리가 몇 시간 늦어도 무해하다.
+const statsRetentionInterval = 24 * time.Hour
+
+// statsRetentionLoop 은 보관 기간을 넘긴 시간 버킷을 주기적으로 삭제한다.
+// 이게 없으면 몇 년 도는 realtime 파이프라인의 버킷이 영구 누적된다
+// (파이프라인 100개 × 3년 = 260만 행). 부팅 직후 1회 돌려 재시작이 잦아도 정리가
+// 밀리지 않게 한다.
+func (s *SchedulerService) statsRetentionLoop() {
+	s.purgeOldStats()
+
+	ticker := time.NewTicker(statsRetentionInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.purgeOldStats()
+		}
+	}
+}
+
+func (s *SchedulerService) purgeOldStats() {
+	days := statsRetentionDaysFromEnv()
+	if days <= 0 {
+		return // 보관 기간 미설정 — 삭제하지 않는다(사고 방지)
+	}
+	cutoff := time.Now().AddDate(0, 0, -days).Truncate(time.Hour)
+	res := s.db.Where("bucket_hour < ?", cutoff).Delete(&models.PipelineHourlyStats{})
+	if res.Error != nil {
+		slog.Error("stats retention: purge failed", "error", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		slog.Info("stats retention: purged old hourly buckets",
+			"deleted", res.RowsAffected, "cutoff", cutoff, "retention_days", days)
+	}
+}
+
+// statsRetentionDaysFromEnv 는 보관 기간을 env 로 조절할 수 있게 한다.
+// 파싱 실패·미설정은 기본값 — 잘못된 값이 통계를 전부 지우지 않도록 0/음수는 무시한다.
+func statsRetentionDaysFromEnv() int {
+	if v := os.Getenv("STATS_RETENTION_DAYS"); v != "" {
+		if d, err := strconv.Atoi(v); err == nil && d > 0 {
+			return d
+		}
+		slog.Warn("invalid STATS_RETENTION_DAYS, using default", "value", v, "default", defaultStatsRetentionDays)
+	}
+	return defaultStatsRetentionDays
+}
+
+const defaultStatsRetentionDays = 90
 
 // detectStaleExecutions는 DB의 running 실행 중, 살아있는 에이전트 하트비트에 없고
 // 유예시간(staleGrace)을 지난 것을 stale로 판정하여 failed로 전이한다.

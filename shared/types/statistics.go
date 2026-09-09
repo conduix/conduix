@@ -56,6 +56,7 @@ const (
 type HourlyStatsBucket struct {
 	ID               string           `json:"id"`
 	PipelineID       string           `json:"pipeline_id"`
+	PipelineName     string           `json:"pipeline_name,omitempty"` // 조회 화면 표시용(조인 없이 읽기)
 	WorkflowID       string           `json:"workflow_id"`
 	BucketHour       time.Time        `json:"bucket_hour"` // 시간 경계 (truncated to hour)
 	RecordsCollected int64            `json:"records_collected"`

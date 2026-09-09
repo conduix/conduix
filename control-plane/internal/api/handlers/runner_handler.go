@@ -116,11 +116,30 @@ func (h *RunnerHandler) CheckStatus(c *gin.Context) {
 		latestReady = &rv
 	}
 
+	// 진행 중인 빌드. needs_build 는 빌드가 시작되면 곧 false 가 되므로, 그것만 보고
+	// 폴링하면 정작 빌드 중에 화면이 갱신되지 않는다(실측: building 상태가 UI 에 안 뜸).
+	// 실패한 최신 빌드도 함께 준다 — 실패는 사용자가 즉시 알아야 하고, 실패 후에는
+	// needs_build 가 true 로 남아 폴링이 계속 도는 낭비가 생긴다.
+	var building *models.RunnerVersion
+	var bv models.RunnerVersion
+	if err := h.db.Where("status IN ?", []string{"pending", "building"}).
+		Order("build_number DESC").First(&bv).Error; err == nil {
+		building = &bv
+	}
+
+	var lastFailed *models.RunnerVersion
+	var fv models.RunnerVersion
+	if err := h.db.Where("status = ?", "failed").Order("build_number DESC").First(&fv).Error; err == nil {
+		lastFailed = &fv
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success":              true,
 		"needs_build":          needsBuild,
 		"plugins":              statuses,
 		"latest_ready_version": latestReady,
+		"building_version":     building,
+		"last_failed_version":  lastFailed,
 	})
 }
 

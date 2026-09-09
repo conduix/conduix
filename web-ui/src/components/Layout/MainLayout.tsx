@@ -92,7 +92,7 @@ export default function MainLayout() {
       label: t('nav.history'),
     },
     {
-      key: '/plugins',
+      key: '/stages',
       icon: <PluginIcon />,
       label: t('nav.plugins'),
     },

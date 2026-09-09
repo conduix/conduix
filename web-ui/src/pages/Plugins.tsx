@@ -18,6 +18,7 @@ import {
   Collapse,
   ToggleButton,
   ToggleButtonGroup,
+  CircularProgress,
 } from '@mui/material'
 import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
@@ -133,23 +134,37 @@ export default function PluginsPage() {
     }
   }, [t, showError])
 
+  // 빌드 히스토리 로드. 다이얼로그 열 때와 빌드 진행 중 폴링에서 함께 쓴다 —
+  // 폴링이 이걸 안 갱신하면 다이얼로그를 열어둔 채로는 진행이 보이지 않는다.
+  const loadBuildVersions = useCallback(async () => {
+    try {
+      setBuildVersions(await getRunnerVersions())
+    } catch {
+      // 목록 조회 실패는 무해 — 기존 목록 유지
+    }
+  }, [])
+
   useEffect(() => {
     loadPlugins()
     loadRunnerStatus()
   }, [loadPlugins, loadRunnerStatus])
 
-  // Runner 빌드 상태 폴링 (needs_build일 때 5초마다)
+  // Runner 빌드 상태 폴링.
+  // needs_build 만 보면 빌드가 시작된 순간 조건이 꺼져 정작 building 중에 화면이 멈춘다
+  // (실측: 빌드 진행이 UI 에 안 뜸). 진행 중인 빌드가 있으면 계속 돌고, 끝나면 멈춘다.
+  const isBuilding = Boolean(runnerStatus?.building_version)
   useEffect(() => {
-    if (runnerStatus?.needs_build) {
+    if (runnerStatus?.needs_build || isBuilding) {
       pollRef.current = setInterval(() => {
         loadRunnerStatus()
         loadPlugins() // deployed_hash 갱신 반영
+        loadBuildVersions() // 빌드 히스토리·로그 갱신
       }, 5000)
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [runnerStatus?.needs_build, loadRunnerStatus, loadPlugins])
+  }, [runnerStatus?.needs_build, isBuilding, loadRunnerStatus, loadPlugins, loadBuildVersions])
 
   const activeCount = plugins.filter((p) => p.status === 'active').length
 
@@ -429,6 +444,43 @@ export default function PluginsPage() {
           />
         </Grid>
       </Grid>
+      {/* 빌드 진행 중 — needs_build 배너보다 먼저 둔다. 빌드가 시작되면 needs_build 는
+          꺼지지만, 시작 직후 두 배너가 겹쳐 보이는 순간을 피하려면 진행이 우선이다. */}
+      {runnerStatus?.building_version && (
+        <Alert
+          severity="info"
+          icon={<CircularProgress size={18} />}
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={handleViewBuildLogs}>
+              {t('plugin.viewLogs', 'Logs')}
+            </Button>
+          }
+        >
+          {t('plugin.buildInProgress', 'Runner build in progress — #{{build}} ({{status}})', {
+            build: runnerStatus.building_version.build_number,
+            status: runnerStatus.building_version.status,
+          })}
+        </Alert>
+      )}
+      {/* 빌드 실패 — 사용자가 즉시 알아야 한다. 실패를 모르면 needs_build 가 계속 true 로
+          남은 이유를 알 수 없고 폴링만 도는 상태가 된다. */}
+      {!runnerStatus?.building_version && runnerStatus?.last_failed_version && runnerStatus.needs_build && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={handleViewBuildLogs}>
+              {t('plugin.viewLogs', 'Logs')}
+            </Button>
+          }
+        >
+          {t('plugin.buildFailed', 'Runner build #{{build}} failed: {{error}}', {
+            build: runnerStatus.last_failed_version.build_number,
+            error: runnerStatus.last_failed_version.error || '-',
+          })}
+        </Alert>
+      )}
       {/* Runner Build Status Banner */}
       {runnerStatus && runnerStatus.needs_build && (
         <Alert

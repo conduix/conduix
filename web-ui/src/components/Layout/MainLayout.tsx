@@ -34,6 +34,7 @@ import {
   Group as TeamIcon,
   Folder as ProjectIcon,
   Extension as PluginIcon,
+  Build as BuildIcon,
   Language as LanguageIcon,
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
@@ -95,6 +96,11 @@ export default function MainLayout() {
       key: '/stages',
       icon: <PluginIcon />,
       label: t('nav.plugins'),
+    },
+    {
+      key: '/runner',
+      icon: <BuildIcon />,
+      label: t('nav.runner', 'Runner'),
     },
   ]
 

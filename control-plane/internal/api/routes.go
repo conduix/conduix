@@ -420,6 +420,9 @@ func (s *Server) setupRoutes() {
 				runner.GET("/versions", s.runnerHandler.ListVersions)
 				runner.GET("/versions/:id", s.runnerHandler.GetVersion)
 				runner.GET("/status", s.runnerHandler.CheckStatus)
+				// 노드별 배포 현황: 실행 중인 워크플로우가 어느 노드에서 어떤 runner 버전으로
+				// 도는지 + 그게 최신인지. 없으면 "빌드는 최신인데 노드는 옛 바이너리" 를 알 수 없다.
+				runner.GET("/deployments", s.runnerHandler.GetRunnerDeployments)
 				runner.POST("/build", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.StartBuild)
 				runner.POST("/resolve", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.ResolveImage)
 				runner.POST("/rebuild/:id", middleware.RoleMiddleware(string(types.UserRoleAdmin), string(types.UserRoleOperator)), s.runnerHandler.RebuildVersion)

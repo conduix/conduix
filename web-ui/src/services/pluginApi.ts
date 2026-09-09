@@ -139,3 +139,33 @@ export async function getClusterAgents(clusterId: string): Promise<ClusterAgent[
   const resp = await api.get<{ success: boolean; data: ClusterAgent[] }>(`/clusters/${clusterId}/agents`)
   return resp.data?.data || []
 }
+
+export interface RunnerDeploymentRow {
+  execution_id: string
+  workflow_id: string
+  workflow_name: string
+  workflow_type: string
+  agent_id?: string
+  runner_version_id: string
+  runner_build_number: number
+  // 실행이 쓰는 버전이 최신 ready 와 다르다 = 노드에 옛 코드가 돌고 있다.
+  stale: boolean
+  // 실행은 시작됐으나 아직 어느 노드인지 확정 전 = 배포 중.
+  deploying: boolean
+  started_at?: string
+}
+
+export interface RunnerDeploymentStatus {
+  latest_ready_version?: string
+  latest_ready_build_number?: number
+  building_version?: string
+  deployments: RunnerDeploymentRow[]
+  stale_count: number
+  deploying_count: number
+}
+
+// 노드별 배포 현황. "빌드는 최신인데 노드는 옛 바이너리" 를 화면에서 구분하기 위한 근거다.
+export async function getRunnerDeployments(): Promise<RunnerDeploymentStatus> {
+  const resp = await api.get<{ success: boolean; data: RunnerDeploymentStatus }>('/runner/deployments')
+  return resp.data?.data || { deployments: [], stale_count: 0, deploying_count: 0 }
+}

@@ -52,7 +52,8 @@
     "schedules": "Schedules",
     "settings": "Settings",
     "users": "Users",
-    "plugins": "Stages"
+    "plugins": "Stages",
+    "runner": "Runner"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -1360,5 +1361,34 @@
     "toggleError": "Failed to update schedule",
     "triggerSuccess": "Execution started",
     "triggerError": "Failed to start execution"
+  },
+  "runner": {
+    "title": "Runner Builds & Deployments",
+    "deployments": "Deployed on nodes",
+    "history": "Build history",
+    "workflow": "Workflow",
+    "node": "Node",
+    "version": "Runner version",
+    "state": "State",
+    "startedAt": "Started",
+    "versionId": "Version",
+    "status": "Status",
+    "duration": "Duration",
+    "finishedAt": "Finished",
+    "log": "Log",
+    "viewLog": "View",
+    "noLog": "(no log)",
+    "current": "current",
+    "stale": "outdated",
+    "upToDate": "up to date",
+    "deploying": "deploying",
+    "noRunning": "No running executions",
+    "noBuilds": "No builds yet",
+    "noNativeStage": "no native stage",
+    "latestIs": "latest: {{id}} (#{{no}})",
+    "buildingNow": "Build in progress: {{id}}",
+    "staleRunning": "{{count}} running execution(s) use an older runner than the latest build ({{latest}}). Restart them to pick up the new binary.",
+    "deployingNow": "{{count}} execution(s) are still being placed on a node.",
+    "loadPartialError": "Some data could not be loaded"
   }
 }

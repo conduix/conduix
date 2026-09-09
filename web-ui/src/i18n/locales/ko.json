@@ -52,7 +52,8 @@
     "schedules": "스케줄",
     "settings": "설정",
     "users": "사용자",
-    "plugins": "Stage"
+    "plugins": "Stage",
+    "runner": "Runner"
   },
   "dashboard": {
     "title": "대시보드",
@@ -1363,5 +1364,34 @@
     "toggleError": "스케줄 상태를 변경하지 못했습니다",
     "triggerSuccess": "실행을 시작했습니다",
     "triggerError": "실행을 시작하지 못했습니다"
+  },
+  "runner": {
+    "title": "Runner 빌드·배포 현황",
+    "deployments": "노드 배포 현황",
+    "history": "빌드 히스토리",
+    "workflow": "워크플로우",
+    "node": "노드",
+    "version": "Runner 버전",
+    "state": "상태",
+    "startedAt": "시작",
+    "versionId": "버전",
+    "status": "빌드 상태",
+    "duration": "소요",
+    "finishedAt": "완료",
+    "log": "로그",
+    "viewLog": "보기",
+    "noLog": "(로그 없음)",
+    "current": "현재",
+    "stale": "구버전",
+    "upToDate": "최신",
+    "deploying": "배포중",
+    "noRunning": "실행 중인 워크플로우가 없습니다",
+    "noBuilds": "빌드 이력이 없습니다",
+    "noNativeStage": "native stage 미사용",
+    "latestIs": "최신: {{id}} (#{{no}})",
+    "buildingNow": "빌드 진행 중: {{id}}",
+    "staleRunning": "실행 중 {{count}}건이 최신 빌드({{latest}})보다 이전 runner 를 씁니다. 재시작하면 새 바이너리로 교체됩니다.",
+    "deployingNow": "{{count}}건이 아직 노드에 배치되는 중입니다.",
+    "loadPartialError": "일부 데이터를 불러오지 못했습니다"
   }
 }

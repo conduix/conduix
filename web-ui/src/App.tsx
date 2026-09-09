@@ -26,6 +26,7 @@ import SourceEditorPage from './pages/SourceEditor'
 import DataModelsPage from './pages/DataModels'
 import DataModelDetailPage from './pages/DataModelDetail'
 import PluginsPage from './pages/Plugins'
+import RunnerStatusPage from './pages/RunnerStatus'
 import 'dayjs/locale/ko'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -114,6 +115,9 @@ function App() {
                   기존 사용자 코드를 깨뜨린다. */}
               <Route path="stages" element={<PluginsPage />} />
               <Route path="plugins" element={<Navigate to="/stages" replace />} />
+              {/* Runner 빌드 히스토리 + 노드 배포 현황. native stage 는 DB 바이너리로
+                  실행되므로 "노드가 최신인지" 를 여기서만 확인할 수 있다. */}
+              <Route path="runner" element={<RunnerStatusPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

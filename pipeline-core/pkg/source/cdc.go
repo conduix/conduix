@@ -867,11 +867,27 @@ func (h *mysqlEventHandler) OnDDL(header *replication.EventHeader, nextPos mysql
 
 	ddlSQL := string(queryEvent.Query)
 	schema := string(queryEvent.Schema)
-	slog.Default().Info("CDC schema change (DDL)", "host", h.source.host, "schema", schema, "query", ddlSQL)
+
+	// canal 은 스키마 캐시 갱신을 위해 구독 범위 밖의 DDL 도 여기로 보낸다(row 이벤트와 달리
+	// IncludeTableRegex 가 적용되지 않는다). 그것을 그대로 흘리면 무관한 테이블 변경에
+	// DDL 방어가 발동해 파이프라인이 정지한다 — 실측으로 확인된 오정지 경로다.
+	ddlSchema, ddlTable, parsed := ddlTarget(ddlSQL)
+	if ddlSchema == "" {
+		ddlSchema = schema
+	}
+	if !h.source.ddlInScope(ddlSchema, ddlTable, parsed) {
+		slog.Default().Debug("CDC DDL out of subscribed scope, ignored",
+			"host", h.source.host, "schema", ddlSchema, "table", ddlTable)
+		return nil
+	}
+
+	slog.Default().Info("CDC schema change (DDL)",
+		"host", h.source.host, "schema", schema, "table", ddlTable, "query", ddlSQL)
 
 	event := &CDCEvent{
 		Type:      CDCEventDDL,
-		Database:  schema,
+		Database:  ddlSchema,
+		Table:     ddlTable,
 		Timestamp: time.Now(),
 		Data:      map[string]any{"ddl": ddlSQL},
 		pos:       pos,

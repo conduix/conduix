@@ -317,3 +317,171 @@ func TestAutoBuilder_ConcurrentReservationsAreSafe(t *testing.T) {
 		t.Error("동시 요청이 모두 거부됐다")
 	}
 }
+
+// fakeLocker 는 Redis 분산 락을 흉내낸다.
+type fakeLocker struct {
+	mu   sync.Mutex
+	held map[string]bool
+	err  error
+}
+
+func newFakeLocker() *fakeLocker { return &fakeLocker{held: map[string]bool{}} }
+
+func (f *fakeLocker) SetNX(_ context.Context, key string, _ interface{}, _ time.Duration) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.held[key] {
+		return false, nil
+	}
+	f.held[key] = true
+	return true, nil
+}
+
+func (f *fakeLocker) Del(_ context.Context, keys ...string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, k := range keys {
+		delete(f.held, k)
+	}
+	return nil
+}
+
+// in-process 맵만으로는 다중 레플리카에서 중복 예약을 막을 수 없다.
+// 실측: 2 레플리카에서 실행을 두 번 누르니 각 pod 가 자기 맵만 보고 둘 다 예약해
+// newly_reserved=true 가 두 번 나오고, 빌드 후 실행 레코드가 2건 생성됐다.
+func TestAutoBuilder_DistributedLockBlocksOtherReplica(t *testing.T) {
+	locker := newFakeLocker()
+	release := make(chan struct{})
+
+	// pod A
+	fbA := &fakeBuilder{result: &builder.RunnerBuildResult{VersionID: "v1", Status: "ready"}}
+	a, dbA := newTestAutoBuilder(t, fbA)
+	a.WithLocker(locker)
+	fbA.onBuild = func() {
+		<-release
+		insertVersion(t, dbA, "v1", "ready", 1024)
+	}
+
+	// pod B — 별개 프로세스이므로 예약 맵을 공유하지 않는다
+	fbB := &fakeBuilder{result: &builder.RunnerBuildResult{VersionID: "v1", Status: "ready"}}
+	b, _ := newTestAutoBuilder(t, fbB)
+	b.WithLocker(locker)
+
+	var startCount atomic.Int32
+	start := func(string, string) error { startCount.Add(1); return nil }
+
+	if !a.Reserve("wf-1", "u", start) {
+		t.Fatal("pod A 의 첫 예약이 거부됐다")
+	}
+	if b.Reserve("wf-1", "u", start) {
+		t.Error("pod B 가 중복 예약했다 — 빌드 후 같은 워크플로우가 두 번 시작된다")
+	}
+	if fbB.calls.Load() != 0 {
+		t.Error("pod B 가 중복 빌드를 걸었다")
+	}
+
+	close(release)
+	deadline := time.Now().Add(3 * time.Second)
+	for startCount.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := startCount.Load(); got != 1 {
+		t.Errorf("실행 시작 %d회, want 1", got)
+	}
+}
+
+// 락이 해제되면 다음 요청이 예약할 수 있어야 한다 — 안 그러면 한 번 실행한 워크플로우는
+// 락 TTL(25분)이 지날 때까지 재실행이 막힌다.
+func TestAutoBuilder_ReleasesDistributedLock(t *testing.T) {
+	locker := newFakeLocker()
+	fb := &fakeBuilder{result: &builder.RunnerBuildResult{VersionID: "v1", Status: "skipped"}}
+	a, _ := newTestAutoBuilder(t, fb)
+	a.WithLocker(locker)
+
+	done := make(chan struct{}, 2)
+	start := func(string, string) error { done <- struct{}{}; return nil }
+
+	if !a.Reserve("wf-1", "u", start) {
+		t.Fatal("첫 예약 거부")
+	}
+	<-done
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if a.Reserve("wf-1", "u", start) {
+			<-done
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("락이 해제되지 않아 재예약이 거부됐다")
+}
+
+// Redis 가 죽었을 때 실행을 포기하면 정상 요청이 조용히 사라진다.
+// 중복 실행보다 실행 누락이 더 나쁘고, 빌더의 DB building 체크가 중복 빌드는 이미 막는다.
+func TestAutoBuilder_ProceedsWhenLockUnavailable(t *testing.T) {
+	locker := newFakeLocker()
+	locker.err = errors.New("redis not connected")
+
+	fb := &fakeBuilder{result: &builder.RunnerBuildResult{VersionID: "v1", Status: "skipped"}}
+	a, _ := newTestAutoBuilder(t, fb)
+	a.WithLocker(locker)
+
+	started := make(chan struct{}, 1)
+	if !a.Reserve("wf-1", "u", func(string, string) error { started <- struct{}{}; return nil }) {
+		t.Fatal("락 조회 실패로 예약이 거부됐다 — 실행 요청이 조용히 사라진다")
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("락 없이도 실행이 시작돼야 한다")
+	}
+}
+
+// 락이 없는 구성(단일 프로세스·테스트)에서도 동작해야 한다.
+func TestAutoBuilder_WorksWithoutLocker(t *testing.T) {
+	fb := &fakeBuilder{result: &builder.RunnerBuildResult{VersionID: "v1", Status: "skipped"}}
+	a, _ := newTestAutoBuilder(t, fb) // locker 미주입
+
+	started := make(chan struct{}, 1)
+	if !a.Reserve("wf-1", "u", func(string, string) error { started <- struct{}{}; return nil }) {
+		t.Fatal("locker 없이 예약이 거부됐다")
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("locker 없는 구성에서 실행이 시작되지 않았다")
+	}
+}
+
+// 다른 워크플로우는 서로 막지 않는다 — 락 키가 워크플로우별로 분리돼야 한다.
+func TestAutoBuilder_LockIsPerWorkflow(t *testing.T) {
+	locker := newFakeLocker()
+	fb := &fakeBuilder{result: &builder.RunnerBuildResult{VersionID: "v1", Status: "skipped"}}
+	a, _ := newTestAutoBuilder(t, fb)
+	a.WithLocker(locker)
+
+	done := make(chan struct{}, 2)
+	start := func(string, string) error { done <- struct{}{}; return nil }
+
+	if !a.Reserve("wf-1", "u", start) {
+		t.Fatal("wf-1 예약 거부")
+	}
+	if !a.Reserve("wf-2", "u", start) {
+		t.Fatal("wf-2 가 wf-1 락에 막혔다 — 락 키가 워크플로우별로 분리되지 않았다")
+	}
+	<-done
+	<-done
+}
+
+func TestReservationKey_IsPerWorkflow(t *testing.T) {
+	if reservationKey("a") == reservationKey("b") {
+		t.Fatal("서로 다른 워크플로우가 같은 락 키를 쓴다")
+	}
+	if !strings.Contains(reservationKey("wf-1"), "wf-1") {
+		t.Error("락 키에 워크플로우 id 가 없어 디버깅이 어렵다")
+	}
+}

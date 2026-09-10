@@ -51,8 +51,22 @@ func NewWorkflowHandler(db *database.DB, redisService *services.RedisService) *W
 		logger:         logger,
 		assignStrategy: strategy,
 		runnerResolver: services.NewRunnerResolver(db.DB),
-		autoBuilder:    services.NewAutoBuilder(db.DB, builder.NewRunnerBuilder(db.DB, nil), logger),
+		// 분산 락을 넣어 다중 레플리카에서 중복 예약을 막는다 — 없으면 pod 별로 각각
+		// 예약해 빌드 후 같은 워크플로우가 여러 번 시작된다(실측 2 레플리카에서 2건).
+		autoBuilder: newAutoBuilderWithLock(db, redisService, logger),
 	}
+}
+
+// newAutoBuilderWithLock 은 Redis 가 있으면 분산 락을 붙인 AutoBuilder 를 만든다.
+// Redis 가 없는 구성에서도 동작해야 하므로 nil 이면 락 없이 만든다(in-process 맵만 사용).
+func newAutoBuilderWithLock(db *database.DB, redisService *services.RedisService, logger *slog.Logger) *services.AutoBuilder {
+	ab := services.NewAutoBuilder(db.DB, builder.NewRunnerBuilder(db.DB, nil), logger)
+	if redisService != nil {
+		if client := redisService.GetClient(); client != nil {
+			return ab.WithLocker(client)
+		}
+	}
+	return ab
 }
 
 // CreateWorkflowRequest 워크플로우 생성 요청

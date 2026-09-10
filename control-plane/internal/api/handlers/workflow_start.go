@@ -93,7 +93,10 @@ func (h *WorkflowHandler) startWorkflowCore(workflowID, userID, triggeredBy stri
 		// 발행 전 agent 가용성 확인. Redis pub/sub 는 구독자가 없어도 에러를 내지 않으므로,
 		// 이 검사가 없으면 명령이 조용히 사라지고 워크플로우는 영구히 running 으로 남는다
 		// (batch 는 stale 감지 대상이 아니라 자동 복구조차 없다).
-		if aerr := services.EnsureLiveAgent(tx, resolvedClusterID); aerr != nil {
+		//
+		// 판정은 Redis heartbeat 로 한다 — DB agents 테이블에는 죽은 pod 레코드가 누적되어
+		// (실측 66행) 살아있는 agent 를 죽었다고 오판한다.
+		if aerr := services.EnsureLiveAgent(h.redisService, resolvedClusterID); aerr != nil {
 			return aerr
 		}
 

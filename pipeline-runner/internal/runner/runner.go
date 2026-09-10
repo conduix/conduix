@@ -144,11 +144,17 @@ func (r *Runner) runStreaming(ctx context.Context) error {
 
 	r.healthServer.SetStatus("running")
 
+	startTime := time.Now()
 	_, err := groupExec.Start(ctx, "streaming-runner")
 	if err != nil {
 		r.healthServer.SetStatus("error")
 		return fmt.Errorf("failed to start streaming execution: %w", err)
 	}
+
+	// streaming 도 스스로 끝날 수 있다(DDL 방어의 schema_changed, 소스 오류 등).
+	// 감시가 없으면 실행은 죽었는데 파드는 사는 좀비가 되고, control-plane 의 status 가
+	// running 에 머물러 UI 에 성공도 실패도 안 보인다(실측).
+	go r.watchStreamingCompletion(ctx, groupExec, startTime, cancel)
 
 	slog.Info("streaming pipeline running, waiting for context cancellation", "workflow_id", r.cfg.WorkflowID)
 

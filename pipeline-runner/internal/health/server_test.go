@@ -144,3 +144,38 @@ func TestMonitoringHandlerMethodNotAllowed(t *testing.T) {
 		t.Errorf("code = %d, want 405", w.Code)
 	}
 }
+
+// 실행이 죽었는데 /ready 가 200 을 주면 파드가 Ready 로 남아 좀비가 된다.
+//
+// 이 응답은 streaming Deployment 의 readinessProbe 가 읽는다(job_manager.go 의
+// ReadinessProbe → /ready). Ready 가 유지되면 agent 의 failIfStuckUnhealthy 가
+// Healthy()==true 로 판정해 회수 대상에서 빠진다 — 실측 9분 좀비의 마지막 고리다.
+func TestReadyHandler_NotReadyOnNonRunningStatus(t *testing.T) {
+	for _, status := range []string{"starting", "error", "stopping", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			s := NewServer(0, "streaming")
+			s.SetStatus(status)
+
+			rec := httptest.NewRecorder()
+			s.readyHandler(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Errorf("status=%q 에서 /ready 가 %d — 503 이어야 파드가 NotReady 가 되고 회수된다",
+					status, rec.Code)
+			}
+		})
+	}
+}
+
+// running 일 때만 Ready — 방어가 정상 실행을 죽이면 안 된다.
+func TestReadyHandler_ReadyWhileRunning(t *testing.T) {
+	s := NewServer(0, "streaming")
+	s.SetStatus("running")
+
+	rec := httptest.NewRecorder()
+	s.readyHandler(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("running 인데 /ready 가 %d — 정상 실행이 NotReady 로 죽는다", rec.Code)
+	}
+}

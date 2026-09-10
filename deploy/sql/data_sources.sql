@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS data_sources (
   auth_param      VARCHAR(80)           COMMENT '인증 전달 위치. 예: serviceKey, Authorization',
   response_format VARCHAR(20)  NOT NULL DEFAULT 'json' COMMENT 'json | xml | json+xml',
   data_field      VARCHAR(200)          COMMENT '응답에서 레코드 배열 경로. 예: body.items.item',
+  pagination_desc VARCHAR(500)          COMMENT '페이지네이션 설정. 이 값들이 없으면 워크플로우를 재현할 수 없다',
+  total_field     VARCHAR(120)          COMMENT '전체 건수 필드 경로(페이지 종료 판정용)',
 
   -- 파라미터·제약: 이 값들을 몰라 실패했던 이력이 많아 명시적으로 남긴다
   params_desc     TEXT                  COMMENT '주요 쿼리 파라미터 설명(줄바꿈 구분)',

@@ -6,6 +6,8 @@
 --
 -- 채울 때 기준:
 -- - params_desc / page_size_max / daily_quota: 몰라서 실패한 이력이 많다. 문서에 있으면 반드시 적는다.
+-- - data_field / total_field / pagination_desc: 응답 경로는 API 마다 다르다(restrooms 는 response. 접두어가
+--   있고 아동급식은 없다). 이 값이 없으면 워크플로우를 재현할 수 없다.
 -- - notes: 실측으로 알게 된 함정을 남긴다(빈값 존재, 필드 경로 차이, 좌표 없음 등).
 --   여기 적어두지 않으면 다음 연동에서 같은 실수를 반복한다.
 -- - verified_at: 실호출로 확인한 날짜만 적는다. 문서만 읽고 적지 않는다.
@@ -23,13 +25,15 @@ ON DUPLICATE KEY UPDATE secret_value=VALUES(secret_value), notes=VALUES(notes);
 -- 2) 연동 등록
 INSERT INTO data_sources
   (id, name, provider, dataset_no, category, base_url, http_method, auth_type, auth_param,
-   response_format, data_field, params_desc, page_size_max, daily_quota, rate_limit_desc,
+   response_format, data_field, pagination_desc, total_field, params_desc, page_size_max, daily_quota, rate_limit_desc,
    total_records, has_coordinates, update_cycle, pk_strategy, description, notes,
    target_table, workflow_ids, status, verified_at)
 VALUES
   ('my-new-source', '데이터셋 이름', '공공데이터포털', '데이터셋번호', 'collect',
    'https://api.data.go.kr/openapi/...', 'GET', 'query_param', 'serviceKey',
    'json', 'body.items.item',
+   'type=page_increment, page_param=pageNo, per_page_param=numOfRows, per_page=1000, max_pages=?, start_page=1',
+   'body.totalCount',
    'serviceKey: 인증키(필수)\npageNo: 페이지 번호\nnumOfRows: 페이지당 건수(최대 ?)',
    1000, 10000, NULL,
    NULL, 1, '월', '원천 PK 전략',

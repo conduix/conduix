@@ -283,6 +283,7 @@
     "processingErrors": "Processing Errors",
     "errors": "Errors",
     "noMonitoringData": "No monitoring data available",
+    "monitoringFailed": "Execution stopped",
     "jobConfig": "Kubernetes Job Settings",
     "jobConfigDesc": "Kubernetes Job Pod settings for batch workflow execution",
     "jobConfigEnabled": "Run as Kubernetes Job",

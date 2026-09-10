@@ -283,6 +283,7 @@
     "processingErrors": "처리 오류",
     "errors": "오류",
     "noMonitoringData": "모니터링 데이터가 없습니다",
+    "monitoringFailed": "실행이 중단되었습니다",
     "jobConfig": "Kubernetes Job 설정",
     "jobConfigDesc": "배치 워크플로우 실행 시 Kubernetes Job Pod 설정",
     "jobConfigEnabled": "Kubernetes Job으로 실행",

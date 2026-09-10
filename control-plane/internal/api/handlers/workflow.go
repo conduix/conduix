@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
+	"github.com/conduix/conduix/control-plane/internal/builder"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/internal/services/assignment"
 	"github.com/conduix/conduix/control-plane/pkg/database"
@@ -32,6 +33,9 @@ type WorkflowHandler struct {
 	logger         *slog.Logger
 	assignStrategy assignment.Strategy      // partition sub-execution 배정 전략(ASSIGNMENT_STRATEGY, 기본 broadcast)
 	runnerResolver *services.RunnerResolver // native stage 실행에 쓸 RunnerVersion 결정
+	// autoBuilder 는 "빌드가 필요해 실행이 막히는" 상황을 자동 해소한다.
+	// 예전에는 409 로 사용자에게 떠넘겼다 — 서버가 아는 일을 사람이 대신 하게 만들었다.
+	autoBuilder *services.AutoBuilder
 }
 
 // NewWorkflowHandler 핸들러 생성
@@ -47,6 +51,7 @@ func NewWorkflowHandler(db *database.DB, redisService *services.RedisService) *W
 		logger:         logger,
 		assignStrategy: strategy,
 		runnerResolver: services.NewRunnerResolver(db.DB),
+		autoBuilder:    services.NewAutoBuilder(db.DB, builder.NewRunnerBuilder(db.DB, nil), logger),
 	}
 }
 
@@ -368,6 +373,9 @@ func (h *WorkflowHandler) DeleteWorkflow(c *gin.Context) {
 }
 
 // StartWorkflow POST /api/v1/workflows/:id/start
+//
+// 실행 로직은 startWorkflowCore 에 있다. 여기서는 HTTP 로 들어온 요청을 그것에 넘기고
+// 결과를 응답으로 바꾼다 — 자동 빌드 후 시작 경로가 같은 core 를 쓰기 때문이다.
 func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 
@@ -377,161 +385,101 @@ func (h *WorkflowHandler) StartWorkflow(c *gin.Context) {
 		userIDStr = userID.(string)
 	}
 
-	var workflow models.Workflow
-	var execution *models.WorkflowExecution
-	// 실행 시점에 확정된 cluster (D4/D5: 지정→default→거부, execution에 스냅샷).
-	resolvedClusterID := ""
-	// native stage compile-in 실행에 쓸 RunnerVersion ID(없으면 기본 이미지 경로).
-	resolvedRunnerVersionID := ""
-	var buildRequiredErr *services.BuildRequiredError
-
-	// 트랜잭션으로 동시성 제어 (SELECT FOR UPDATE)
-	err := h.db.Transaction(func(tx *gorm.DB) error {
-		// FOR UPDATE로 행 잠금 획득
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&workflow, "id = ?", workflowID).Error; err != nil {
-			return err
-		}
-
-		// 이미 실행 중인 경우 에러 반환
-		if workflow.Status == string(types.PipelineGroupStatusRunning) {
-			return fmt.Errorf("WORKFLOW_RUNNING")
-		}
-
-		// native stage 실행 준비: 이 워크플로우가 native plugin 을 쓰면 실행할 RunnerVersion 을 확정한다.
-		// 빌드 필요(변경분/미빌드/바이너리없음)면 트랜잭션을 롤백해 status 오염 없이 차단한다.
-		// batch 는 K8s Job, realtime 은 streaming Deployment(pod)로 바이너리를 initContainer 주입 실행한다.
-		versionID, _, _, rerr := h.runnerResolver.ResolveRunnerVersion(&workflow)
-		if rerr != nil {
-			var bre *services.BuildRequiredError
-			if errors.As(rerr, &bre) {
-				buildRequiredErr = bre
-				return fmt.Errorf("BUILD_REQUIRED")
-			}
-			return rerr
-		}
-		resolvedRunnerVersionID = versionID
-
-		// 실행 대상 cluster 확정: 워크플로우 지정값 우선, 없으면 default cluster로 폴백.
-		// 그래도 없으면 실행 불가 — 그룹 없이는 실행하지 않는다.
-		cid, cerr := h.resolveExecutionCluster(tx, workflow.ClusterID)
-		if cerr != nil {
-			return cerr
-		}
-		resolvedClusterID = cid
-
-		// 이전에 running 상태로 남아있는 실행 기록 정리 (비정상 종료된 실행)
-		now := time.Now()
-		tx.Model(&models.WorkflowExecution{}).
-			Where("workflow_id = ? AND status = ?", workflowID, string(types.PipelineGroupStatusRunning)).
-			Updates(map[string]any{
-				"status":        string(types.PipelineGroupStatusStopped),
-				"completed_at":  now,
-				"error_message": "Terminated: new execution started",
+	outcome, err := h.startWorkflowCore(workflowID, userIDStr, "user")
+	if err == nil {
+		if outcome.SubExecutions > 1 {
+			c.JSON(http.StatusAccepted, types.APIResponse[map[string]any]{
+				Success: true,
+				Data: map[string]any{
+					"execution_id": outcome.ExecutionID,
+					"workflow_id":  workflowID,
+					"status":       outcome.Status,
+					"distributed":  true,
+					"sub_count":    outcome.SubExecutions,
+				},
 			})
-
-		// 실행 기록 생성 (파이프라인 설정 스냅샷 포함)
-		execution = &models.WorkflowExecution{
-			ID:                uuid.New().String(),
-			WorkflowID:        workflowID,
-			ClusterID:         resolvedClusterID, // 실행 시점 확정 클러스터 스냅샷 (D5)
-			Status:            string(types.PipelineGroupStatusRunning),
-			StartedAt:         time.Now(),
-			PipelinesSnapshot: workflow.PipelinesConfig, // 실행 시점 파이프라인 설정 저장
-			RunnerVersionID:   resolvedRunnerVersionID,  // 어떤 native 바이너리로 도는지 관측용
-			TriggeredBy:       "user",
-			TriggeredByID:     userIDStr,
-			CreatedAt:         time.Now(),
+			return
 		}
+		c.JSON(http.StatusAccepted, types.APIResponse[map[string]any]{
+			Success: true,
+			Data: map[string]any{
+				"execution_id": outcome.ExecutionID,
+				"workflow_id":  workflowID,
+				"status":       outcome.Status,
+				"started_at":   outcome.StartedAt,
+			},
+		})
+		return
+	}
 
-		if err := tx.Create(execution).Error; err != nil {
-			return err
-		}
-
-		// 워크플로우 상태 업데이트
-		workflow.Status = string(types.PipelineGroupStatusRunning)
-		workflow.LastRunAt = &execution.StartedAt
-		return tx.Save(&workflow).Error
-	})
-
-	if err != nil {
-		if err.Error() == "WORKFLOW_RUNNING" {
+	var blocked *startWorkflowBlocked
+	if errors.As(err, &blocked) {
+		switch blocked.Reason {
+		case blockedWorkflowRunning:
 			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeWorkflowRunning, "Workflow is already running")
 			return
-		}
-		if err.Error() == "BUILD_REQUIRED" {
-			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState, buildRequiredErr.Error())
+		case blockedBuildRequired:
+			h.respondBuildStarted(c, workflowID, userIDStr, blocked.BuildRequired)
 			return
 		}
-		if err == gorm.ErrRecordNotFound {
-			middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
-			return
-		}
-		if errors.Is(err, errNoExecutionCluster) {
-			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidState,
-				"No target cluster: set workflow.cluster_id or mark a cluster as default")
-			return
-		}
-		h.logger.Error("Failed to start workflow", "error", err)
-		middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to start workflow")
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		middleware.ErrorResponseWithCode(c, http.StatusNotFound, types.ErrCodeNotFound, "Workflow not found")
+		return
+	}
+	var noAgent *services.NoLiveAgentError
+	if errors.As(err, &noAgent) {
+		// 사유와 조치를 함께 준다 — "실행 시작됨" 후 영구 정지보다 즉시 거부가 낫다.
+		middleware.ErrorResponseWithCode(c, http.StatusServiceUnavailable,
+			types.ErrCodeInvalidState, noAgent.Error())
+		return
+	}
+	if errors.Is(err, errNoExecutionCluster) {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeInvalidState,
+			"No target cluster: set workflow.cluster_id or mark a cluster as default")
+		return
+	}
+	h.logger.Error("Failed to start workflow", "workflow_id", workflowID, "error", err)
+	middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to start workflow")
+}
+
+// respondBuildStarted 는 빌드가 필요한 실행 요청을 자동 빌드로 처리하고 202 를 돌려준다.
+//
+// 예전에는 409 + "다시 빌드한 뒤 실행해주세요" 로 끝냈다. 서버는 무엇을 빌드해야 하는지
+// 알고 있는데도 사용자가 다른 화면으로 가서 빌드를 누르고, 완료를 지켜보다 실행을 다시
+// 눌러야 했다. 이제 빌드를 걸고 완료 시 실행까지 이어간다 — 실행 버튼 한 번으로 끝난다.
+func (h *WorkflowHandler) respondBuildStarted(c *gin.Context, workflowID, userID string, bre *services.BuildRequiredError) {
+	// bre 는 현재 호출 경로에서 항상 non-nil 이지만, nil 이면 아래 bre.Error() 가 panic 한다.
+	// 실행 요청 하나가 서버를 죽이지 않도록 방어한다.
+	reason := ""
+	message := "runner 빌드가 필요합니다."
+	if bre != nil {
+		reason = string(bre.Reason)
+		message = bre.Error()
+	}
+
+	if h.autoBuilder == nil {
+		// 자동 빌드를 쓸 수 없는 구성이면 최소한 사유는 그대로 알린다.
+		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState, message)
 		return
 	}
 
-	h.logger.Info("Workflow status updated to running", "workflow_id", workflowID)
+	reserved := h.autoBuilder.Reserve(workflowID, userID, h.startAfterBuild)
 
-	// 파이프라인 설정 파싱
-	var pipelines []types.GroupedPipeline
-	if workflow.PipelinesConfig != "" {
-		if err := json.Unmarshal([]byte(workflow.PipelinesConfig), &pipelines); err != nil {
-			h.logger.Error("Failed to parse pipelines config", "workflow_id", workflowID, "error", err)
-		}
-	}
-	h.logger.Info("Parsed pipelines", "workflow_id", workflowID, "count", len(pipelines))
+	h.logger.Info("auto-build triggered by start request",
+		"workflow_id", workflowID, "reason", reason, "newly_reserved", reserved)
 
-	// 위임 실행: realtime·batch 모두 대상 cluster 채널로 실행 명령을 발행한다.
-	// 실행 주체는 그 cluster의 worker다 — realtime은 in-process 상주 실행, batch는
-	// worker가 자기 cluster에 K8s Job을 생성(위임). control-plane은 K8s Job을 직접 만들지 않는다(D1/D2).
-	// batch의 리소스 스펙(CPU/mem/namespace 등)은 workflow.JobConfig에 있으면 worker가 적용한다(D3).
-	workflowConfig := &types.Workflow{
-		ID:            workflow.ID,
-		ProjectID:     workflow.ProjectID,
-		Name:          workflow.Name,
-		Type:          types.PipelineGroupType(workflow.Type),
-		ExecutionMode: types.ExecutionMode(workflow.ExecutionMode),
-		Pipelines:     pipelines,
-	}
-
-	// 파티션 분산 실행: partitioned source 가 있으면 파티션을 sub-execution 그룹으로 나눠
-	// 여러 개 발행한다. 없으면 단일 실행(현행). partition-distributed-execution 참고.
-	partitionGroups := planPartitionGroups(pipelines)
-	if len(partitionGroups) > 1 {
-		h.publishSubExecutions(c, workflowID, userIDStr, execution, workflow.JobConfig, workflowConfig, partitionGroups, resolvedRunnerVersionID)
-		return
-	}
-
-	cmd := &types.WorkflowExecutionCommand{
-		ID:              uuid.New().String(),
-		WorkflowID:      workflowID,
-		ExecutionID:     execution.ID,
-		TargetClusterID: execution.ClusterID, // 실행 시점 확정 클러스터 (D5 스냅샷)
-		TriggeredBy:     "user",
-		UserID:          userIDStr,
-		JobConfig:       workflow.JobConfig, // batch 위임 시 worker가 Job 리소스 스펙으로 사용(선택)
-		WorkflowConfig:  workflowConfig,
-		RunnerVersionID: resolvedRunnerVersionID, // native stage 면 CP 바이너리를 initContainer 로 주입
-		Timestamp:       time.Now(),
-	}
-
-	if err := h.redisService.PublishWorkflowExecution(cmd); err != nil {
-		h.logger.Error("Failed to publish workflow execution", "execution_id", execution.ID, "cluster_id", execution.ClusterID, "error", err)
-	}
-
+	// 202: 요청은 접수됐고 빌드 후 실행이 이어진다. 클라이언트는 실행 이력을 폴링하면 된다.
 	c.JSON(http.StatusAccepted, types.APIResponse[map[string]any]{
 		Success: true,
+		Message: "runner 빌드를 시작했습니다. 빌드가 끝나면 실행이 자동으로 시작됩니다.",
 		Data: map[string]any{
-			"execution_id": execution.ID,
-			"workflow_id":  workflowID,
-			"status":       execution.Status,
-			"started_at":   execution.StartedAt,
+			"workflow_id":   workflowID,
+			"status":        "building",
+			"build_reason":  reason,
+			"build_message": message,
+			// 이미 예약이 있으면 새로 걸지 않았다는 뜻 — 중복 빌드를 만들지 않는다.
+			"newly_reserved": reserved,
 		},
 	})
 }
@@ -836,7 +784,9 @@ func (h *WorkflowHandler) RollWorkflow(c *gin.Context) {
 	if rerr != nil {
 		var bre *services.BuildRequiredError
 		if errors.As(rerr, &bre) {
-			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState, bre.Error())
+			// 실행 시작과 같은 처리: 빌드를 걸고 완료 후 roll 을 이어서 보낸다.
+			// 사유만 던지면 사용자가 빌드 화면으로 가서 직접 빌드하고 다시 roll 을 눌러야 한다.
+			h.respondRollBuildStarted(c, workflowID, bre)
 			return
 		}
 		h.logger.Error("Failed to resolve runner version for roll", "workflow_id", workflowID, "error", rerr)
@@ -866,6 +816,87 @@ func (h *WorkflowHandler) RollWorkflow(c *gin.Context) {
 		Message: "Workflow roll triggered",
 		Data:    map[string]any{"runner_version_id": versionID, "execution_id": execID},
 	})
+}
+
+// respondRollBuildStarted 는 roll 요청이 빌드 필요로 막혔을 때 빌드를 걸고 완료 후 roll 한다.
+func (h *WorkflowHandler) respondRollBuildStarted(c *gin.Context, workflowID string, bre *services.BuildRequiredError) {
+	message := "runner 빌드가 필요합니다."
+	reason := ""
+	if bre != nil {
+		message = bre.Error()
+		reason = string(bre.Reason)
+	}
+
+	userID, _ := c.Get("user_id")
+	userIDStr := ""
+	if userID != nil {
+		userIDStr = userID.(string)
+	}
+
+	if h.autoBuilder == nil {
+		middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState, message)
+		return
+	}
+
+	reserved := h.autoBuilder.Reserve(rollReservationKey(workflowID), userIDStr,
+		func(_, uid string) error { return h.rollAfterBuild(workflowID, uid) })
+
+	h.logger.Info("auto-build triggered by roll request",
+		"workflow_id", workflowID, "reason", reason, "newly_reserved", reserved)
+
+	c.JSON(http.StatusAccepted, types.APIResponse[map[string]any]{
+		Success: true,
+		Message: "runner 빌드를 시작했습니다. 빌드가 끝나면 재배포가 자동으로 진행됩니다.",
+		Data: map[string]any{
+			"workflow_id":    workflowID,
+			"status":         "building",
+			"build_reason":   reason,
+			"build_message":  message,
+			"newly_reserved": reserved,
+		},
+	})
+}
+
+// rollReservationKey 는 roll 예약을 실행 시작 예약과 구분한다.
+// 같은 키를 쓰면 실행 시작 예약이 있을 때 roll 이 조용히 무시된다(둘은 다른 동작이다).
+func rollReservationKey(workflowID string) string {
+	return "roll:" + workflowID
+}
+
+// rollAfterBuild 는 빌드 완료 후 roll 명령을 발행한다.
+func (h *WorkflowHandler) rollAfterBuild(workflowID, userID string) error {
+	var workflow models.Workflow
+	if err := h.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
+		return err
+	}
+
+	versionID, _, usesNative, rerr := h.runnerResolver.ResolveRunnerVersion(&workflow)
+	if rerr != nil {
+		// 빌드 후에도 부족하면 재시도하지 않는다 — 무한 빌드 루프를 만든다.
+		h.logger.Error("roll after build still blocked", "workflow_id", workflowID, "error", rerr)
+		return rerr
+	}
+	if !usesNative || versionID == "" {
+		return fmt.Errorf("workflow %s does not use native stages", workflowID)
+	}
+
+	execID, execClusterID := h.runningExecution(workflowID)
+	if execID == "" {
+		// 빌드 중에 실행이 끝났다. roll 할 대상이 없으므로 조용히 종료한다 —
+		// 이건 오류가 아니다(사용자가 stop 했을 수 있다).
+		h.logger.Info("no running execution to roll after build", "workflow_id", workflowID)
+		return nil
+	}
+
+	if err := h.redisService.PublishWorkflowRollCommand(execClusterID, workflowID, execID, versionID); err != nil {
+		h.logger.Error("failed to publish roll after build",
+			"workflow_id", workflowID, "execution_id", execID, "error", err)
+		return err
+	}
+
+	h.logger.Info("roll published after auto-build",
+		"workflow_id", workflowID, "execution_id", execID, "runner_version_id", versionID)
+	return nil
 }
 
 // ReconcileClusterExecutions GET /api/v1/clusters/:id/running-executions (무인증 내부용)

@@ -1249,6 +1249,10 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	}
 
 	// Job 생성 성공. 이후 상태·결과는 Job Pod가 control-plane에 직접 콜백한다.
+	// 접수 사실을 알린다 — 이 기록이 없으면 control-plane 이 "아무도 받지 않은 실행" 으로
+	// 보고 실패 확정한다(batch 는 heartbeat 에 등록되지 않아 다른 판정 근거가 없다).
+	a.reportExecutionClaim(cmd.WorkflowID, cmd.ExecutionID, job.Name)
+
 	slog.Info("delegated batch job", "job", job.Name, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
 }
 
@@ -1336,6 +1340,10 @@ func (a *Agent) delegateStreamingDeployment(cmd *types.GroupExecutionCommand) {
 		StreamingNamespace:  dep.Namespace,
 	}
 	a.execMu.Unlock()
+
+	// realtime 도 같은 배선을 쓴다 — 어느 노드가 이 실행을 받았는지 실행 중에 알 수 있어야
+	// 분산 현황이 보이고, 접수 흔적으로 유실 판정도 정확해진다.
+	a.reportExecutionClaim(cmd.WorkflowID, cmd.ExecutionID, dep.Name)
 
 	slog.Info("delegated streaming deployment", "deployment", dep.Name, "namespace", dep.Namespace, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
 }

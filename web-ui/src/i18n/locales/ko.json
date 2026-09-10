@@ -316,7 +316,8 @@
     "setNameHelp": "같은 세트 이름을 가진 워크플로우들은 모두 실행되어야 데이터가 완성됩니다. 비우면 세트에서 제외됩니다.",
     "setRunsWith": "함께 실행:",
     "setAlone": "이 세트에 다른 워크플로우가 없습니다",
-    "setNameField": "세트 이름 (선택)"
+    "setNameField": "세트 이름 (선택)",
+    "buildStarted": "runner 빌드를 시작했습니다. 빌드가 끝나면 실행이 자동으로 시작됩니다."
   },
   "agent": {
     "title": "에이전트",

@@ -329,6 +329,10 @@ type WorkflowExecution struct {
 	WorkflowID string `gorm:"size:36;not null;index" json:"workflow_id"`
 	ClusterID  string `gorm:"size:36;index" json:"cluster_id,omitempty"` // 실행 시점 클러스터
 	AgentID    string `gorm:"size:36;index" json:"agent_id,omitempty"`   // 실행한 Agent
+	// DelegatedTo 는 위임 생성한 K8s 리소스명(Job/Deployment)이다.
+	// batch 는 agent 가 위임만 하고 끝나므로, 이 값이 실행이 실제로 접수됐다는 증거가 된다
+	// (비어 있으면 아무도 받지 않았을 수 있다 — stale 판정 근거).
+	DelegatedTo string `gorm:"size:253" json:"delegated_to,omitempty"`
 	// RunnerVersionID 는 이 실행이 쓰는 native stage 바이너리 버전이다.
 	// native stage 워크플로우는 GHCR 이미지가 아니라 runner_versions.Binary 로 실행되므로,
 	// 이 값이 없으면 "어떤 코드가 돌고 있는지" 확인할 방법이 없다(실측: 코어 수정 후 옛

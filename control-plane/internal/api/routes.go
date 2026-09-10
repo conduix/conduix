@@ -161,6 +161,8 @@ func (s *Server) setupRoutes() {
 		internal := v1.Group("/workflows")
 		{
 			internal.POST("/:id/executions/:executionId/result", s.workflowHandler.ReceiveExecutionResult)
+			// agent 가 위임 접수를 알린다 — 이 기록이 없는 batch 는 아무도 받지 않은 것으로 본다.
+			internal.POST("/:id/executions/:executionId/claim", s.workflowHandler.ClaimExecution)
 		}
 
 		// Job 결과 콜백 API (Kubernetes Job Pod에서 호출)

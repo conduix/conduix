@@ -553,7 +553,12 @@ export default function WorkflowDetailPage() {
     try {
       setActionLoading(true)
       const res = await api.startWorkflow(effectiveId)
-      if (res.success) {
+      if (res.success && res.data?.status === 'building') {
+        // 서버가 runner 빌드를 걸고 실행을 예약했다. "실행됨" 으로 표시하면
+        // 사용자는 왜 진행이 없는지 알 수 없다 — 빌드 중임을 알린다.
+        showSuccess(res.message || t('workflow.buildStarted'))
+        fetchWorkflowData()
+      } else if (res.success) {
         showSuccess(t('workflow.startSuccess'))
         fetchWorkflowData()
       } else {

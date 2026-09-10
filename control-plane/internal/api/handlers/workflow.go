@@ -64,6 +64,9 @@ type CreateWorkflowRequest struct {
 	FailurePolicy *types.FailurePolicy    `json:"failure_policy,omitempty"`
 	Metadata      map[string]any          `json:"metadata,omitempty"`
 	Tags          []string                `json:"tags,omitempty"`
+	// JobConfig 는 batch 위임 pod 의 리소스 스펙이다. 생성 시 지정하지 않으면
+	// agent 가 DefaultJobConfig 를 쓴다.
+	JobConfig *types.JobConfig `json:"job_config,omitempty"`
 }
 
 // CreateWorkflow POST /api/v1/workflows
@@ -105,6 +108,7 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		FailurePolicy: req.FailurePolicy,
 		Metadata:      req.Metadata,
 		Tags:          req.Tags,
+		JobConfig:     req.JobConfig,
 	}, userIDStr)
 
 	if err := h.db.Create(workflow).Error; err != nil {
@@ -225,6 +229,10 @@ type UpdateWorkflowRequest struct {
 	FailurePolicy *types.FailurePolicy    `json:"failure_policy,omitempty"`
 	Metadata      map[string]any          `json:"metadata,omitempty"`
 	Tags          []string                `json:"tags,omitempty"`
+	// JobConfig 는 batch 위임 pod 의 리소스·타임아웃 스펙이다.
+	// 이 필드가 없어서 API 로는 수정이 불가한데도 success:true 를 반환했다 —
+	// 요청이 조용히 무시되어 DB 를 직접 고쳐야 했다(실측).
+	JobConfig *types.JobConfig `json:"job_config,omitempty"`
 }
 
 // UpdateWorkflow PUT /api/v1/workflows/:id
@@ -308,6 +316,15 @@ func (h *WorkflowHandler) UpdateWorkflow(c *gin.Context) {
 	if req.Tags != nil {
 		tagsJSON, _ := json.Marshal(req.Tags)
 		workflow.Tags = string(tagsJSON)
+	}
+	if req.JobConfig != nil {
+		jobConfigJSON, err := json.Marshal(req.JobConfig)
+		if err != nil {
+			middleware.ErrorResponseWithCode(c, http.StatusBadRequest,
+				types.ErrCodeInvalidJSON, "invalid job_config")
+			return
+		}
+		workflow.JobConfig = string(jobConfigJSON)
 	}
 
 	workflow.UpdatedAt = time.Now()

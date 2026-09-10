@@ -46,7 +46,11 @@ func (a *Agent) reportExecutionClaim(workflowID, executionID, delegatedTo string
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/v1/internal/workflows/%s/executions/%s/claim",
+	// 경로 주의: control-plane 의 라우트 그룹 변수명은 internal 이지만 실제 prefix 는
+	// /api/v1/workflows 다(routes.go 의 v1.Group("/workflows")). 변수명을 따라
+	// /api/v1/internal/workflows 로 쓰면 404 가 되고 접수 보고가 조용히 유실된다(실측).
+	// 결과 보고(ReceiveExecutionResult)와 같은 prefix 를 쓴다.
+	url := fmt.Sprintf("%s/api/v1/workflows/%s/executions/%s/claim",
 		a.controlPlaneURL, workflowID, executionID)
 
 	ctx, cancel := context.WithTimeout(a.ctx, claimReportTimeout)

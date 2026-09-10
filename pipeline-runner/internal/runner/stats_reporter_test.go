@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func TestStatsReporter_FailedSendKeepsBaselineForRetry(t *testing.T) {
 	r := newStatsReporter("", "wf-1") // URL 없음 → send 는 false
 	cur := types.MonitoringStats{RecordsCollected: 70}
 
-	if sent := r.send(nil, &types.HourlyStatsBucket{PipelineID: "p1"}); sent {
+	if sent := r.send(context.Background(), &types.HourlyStatsBucket{PipelineID: "p1"}); sent {
 		t.Fatal("URL 이 없으면 전송 성공으로 보고해서는 안 된다")
 	}
 

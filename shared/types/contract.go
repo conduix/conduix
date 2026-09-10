@@ -67,13 +67,13 @@ const (
 
 // ContractViolation 계약 위반 정보
 type ContractViolation struct {
-	RecordID    string            `json:"record_id,omitempty"`
-	Timestamp   time.Time         `json:"timestamp"`
-	ContractID  string            `json:"contract_id"`
-	RuleName    string            `json:"rule_name"`
-	Severity    RuleSeverity      `json:"severity"`
-	Message     string            `json:"message"`
-	FieldErrors []FieldViolation  `json:"field_errors,omitempty"`
+	RecordID     string           `json:"record_id,omitempty"`
+	Timestamp    time.Time        `json:"timestamp"`
+	ContractID   string           `json:"contract_id"`
+	RuleName     string           `json:"rule_name"`
+	Severity     RuleSeverity     `json:"severity"`
+	Message      string           `json:"message"`
+	FieldErrors  []FieldViolation `json:"field_errors,omitempty"`
 	OriginalData map[string]any   `json:"original_data,omitempty"`
 }
 
@@ -86,9 +86,9 @@ type FieldViolation struct {
 
 // ContractValidationResult 계약 검증 결과
 type ContractValidationResult struct {
-	Valid      bool                 `json:"valid"`
-	Violations []ContractViolation  `json:"violations,omitempty"`
-	Warnings   []ContractViolation  `json:"warnings,omitempty"`
+	Valid      bool                `json:"valid"`
+	Violations []ContractViolation `json:"violations,omitempty"`
+	Warnings   []ContractViolation `json:"warnings,omitempty"`
 }
 
 // ViolationAction 위반 시 처리 방식
@@ -103,38 +103,38 @@ const (
 
 // DLQRecord Dead Letter Queue 레코드
 type DLQRecord struct {
-	ID           string            `json:"id"`
-	Timestamp    time.Time         `json:"timestamp"`
-	Source       string            `json:"source"`
-	PipelineID   string            `json:"pipeline_id"`
-	WorkflowID   string            `json:"workflow_id,omitempty"`
-	ContractID   string            `json:"contract_id,omitempty"`
+	ID           string              `json:"id"`
+	Timestamp    time.Time           `json:"timestamp"`
+	Source       string              `json:"source"`
+	PipelineID   string              `json:"pipeline_id"`
+	WorkflowID   string              `json:"workflow_id,omitempty"`
+	ContractID   string              `json:"contract_id,omitempty"`
 	Violations   []ContractViolation `json:"violations"`
-	OriginalData map[string]any    `json:"original_data"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
-	RetryCount   int               `json:"retry_count"`
-	MaxRetries   int               `json:"max_retries"`
-	LastError    string            `json:"last_error,omitempty"`
+	OriginalData map[string]any      `json:"original_data"`
+	Metadata     map[string]string   `json:"metadata,omitempty"`
+	RetryCount   int                 `json:"retry_count"`
+	MaxRetries   int                 `json:"max_retries"`
+	LastError    string              `json:"last_error,omitempty"`
 }
 
 // DLQConfig Dead Letter Queue 설정
 type DLQConfig struct {
-	Enabled       bool              `json:"enabled" yaml:"enabled"`
-	Type          string            `json:"type" yaml:"type"` // kafka, file, http
-	MaxRetries    int               `json:"max_retries,omitempty" yaml:"max_retries,omitempty"`
-	RetryInterval string            `json:"retry_interval,omitempty" yaml:"retry_interval,omitempty"`
+	Enabled       bool   `json:"enabled" yaml:"enabled"`
+	Type          string `json:"type" yaml:"type"` // kafka, file, http
+	MaxRetries    int    `json:"max_retries,omitempty" yaml:"max_retries,omitempty"`
+	RetryInterval string `json:"retry_interval,omitempty" yaml:"retry_interval,omitempty"`
 
 	// Kafka DLQ
-	Brokers      []string `json:"brokers,omitempty" yaml:"brokers,omitempty"`
-	Topic        string   `json:"topic,omitempty" yaml:"topic,omitempty"`
-	RetentionMs  int64    `json:"retention_ms,omitempty" yaml:"retention_ms,omitempty"` // Kafka topic retention (ms)
+	Brokers     []string `json:"brokers,omitempty" yaml:"brokers,omitempty"`
+	Topic       string   `json:"topic,omitempty" yaml:"topic,omitempty"`
+	RetentionMs int64    `json:"retention_ms,omitempty" yaml:"retention_ms,omitempty"` // Kafka topic retention (ms)
 
 	// File DLQ
-	Path      string `json:"path,omitempty" yaml:"path,omitempty"`
-	Format    string `json:"format,omitempty" yaml:"format,omitempty"`      // json, jsonl
-	MaxSizeMB int    `json:"max_size_mb,omitempty" yaml:"max_size_mb,omitempty"` // 파일 최대 크기 (MB), 초과 시 rotation
-	MaxAgeDays int   `json:"max_age_days,omitempty" yaml:"max_age_days,omitempty"` // 보관 기간 (일)
-	MaxBackups int   `json:"max_backups,omitempty" yaml:"max_backups,omitempty"` // 최대 백업 파일 수
+	Path       string `json:"path,omitempty" yaml:"path,omitempty"`
+	Format     string `json:"format,omitempty" yaml:"format,omitempty"`             // json, jsonl
+	MaxSizeMB  int    `json:"max_size_mb,omitempty" yaml:"max_size_mb,omitempty"`   // 파일 최대 크기 (MB), 초과 시 rotation
+	MaxAgeDays int    `json:"max_age_days,omitempty" yaml:"max_age_days,omitempty"` // 보관 기간 (일)
+	MaxBackups int    `json:"max_backups,omitempty" yaml:"max_backups,omitempty"`   // 최대 백업 파일 수
 
 	// HTTP DLQ (webhook)
 	URL     string            `json:"url,omitempty" yaml:"url,omitempty"`
@@ -155,11 +155,11 @@ type DLQConfig struct {
 
 // ContractMetrics 계약 검증 메트릭
 type ContractMetrics struct {
-	ContractID     string    `json:"contract_id"`
-	TotalRecords   int64     `json:"total_records"`
-	ValidRecords   int64     `json:"valid_records"`
-	InvalidRecords int64     `json:"invalid_records"`
-	WarningRecords int64     `json:"warning_records"`
+	ContractID       string           `json:"contract_id"`
+	TotalRecords     int64            `json:"total_records"`
+	ValidRecords     int64            `json:"valid_records"`
+	InvalidRecords   int64            `json:"invalid_records"`
+	WarningRecords   int64            `json:"warning_records"`
 	ViolationsByRule map[string]int64 `json:"violations_by_rule"`
-	LastUpdated    time.Time `json:"last_updated"`
+	LastUpdated      time.Time        `json:"last_updated"`
 }

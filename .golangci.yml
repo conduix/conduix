@@ -26,6 +26,12 @@ linters:
         - (*database/sql.Rows).Close
         - (*github.com/redis/go-redis/v9.PubSub).Close
         - (*gorm.io/gorm.DB).Close
+        # HTTP 응답 본문 쓰기: 실패 시 할 수 있는 일이 없다. 이미 상태코드를 보낸 뒤이므로
+        # 다른 응답으로 바꿀 수 없고, 원인은 대개 클라이언트 연결 종료다.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*encoding/json.Encoder).Encode
 
     govet:
       disable:

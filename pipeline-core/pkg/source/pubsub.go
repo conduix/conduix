@@ -10,7 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cloud.google.com/go/pubsub" //nolint:staticcheck // v2 마이그레이션은 별도 작업 (수신 API 전면 변경)
+	// v2 마이그레이션은 별도 작업이다. v2 는 Subscription 을 Subscriber 로 바꾸면서
+	// 관리 API 를 타입에서 제거했다 — 이 파일이 쓰는 Exists/SeekToTime/CreateSnapshot 이
+	// 모두 없어져 Client.SubscriptionAdminClient(raw gRPC)로 재작성해야 하고,
+	// ReceiveSettings.Synchronous 도 제거됐다(대체 수단 확인 필요).
+	// 수신 경로만 보면 Receive/Message 는 동일해 단순하지만, 관리 API 3개 + 동기 수신
+	// 설정까지 걸려 있어 별도 작업으로 분리한다.
+	"cloud.google.com/go/pubsub" //nolint:staticcheck // v2 이관은 별도 작업 — 위 주석 참고
 	"google.golang.org/api/option"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
@@ -97,7 +103,7 @@ func (s *PubSubSource) Open(ctx context.Context) error {
 	// 서비스 계정 인증
 	if s.credentialsFile != "" {
 		// deprecated 대체재가 cloud.google.com/go/auth 전면 이전이라 별도 마이그레이션에서 처리
-		opts = append(opts, option.WithCredentialsFile(s.credentialsFile)) //nolint:staticcheck
+		opts = append(opts, option.WithAuthCredentialsFile(option.ServiceAccount, s.credentialsFile))
 	}
 	// 그 외는 기본 자격 증명 사용 (GOOGLE_APPLICATION_CREDENTIALS 환경변수, GCE 메타데이터 등)
 

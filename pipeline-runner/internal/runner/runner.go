@@ -46,7 +46,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		r.healthServer.Stop(shutdownCtx)
+		if err := r.healthServer.Stop(shutdownCtx); err != nil {
+			// 종료 실패를 삼키면 포트가 잡힌 채 남았는지 알 수 없다.
+			slog.Warn("health server shutdown failed", "error", err)
+		}
 	}()
 
 	switch r.cfg.Mode {

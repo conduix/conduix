@@ -226,4 +226,26 @@ func TestContractMetrics(t *testing.T) {
 		// WarningRecords는 Valid에 포함될 수 있음
 		t.Logf("Note: Some records may have both violations and warnings")
 	}
+
+	// 설정만 하고 검증하지 않던 필드들. gopls 가 unused write 로 잡았다 —
+	// 값을 넣어두고 확인하지 않으면 구조체 필드가 사라지거나 이름이 바뀌어도 테스트가 통과한다.
+	if metrics.ContractID != "user_events_v2" {
+		t.Errorf("ContractID = %q, want user_events_v2", metrics.ContractID)
+	}
+	if metrics.WarningRecords != 20 {
+		t.Errorf("WarningRecords = %d, want 20", metrics.WarningRecords)
+	}
+	if metrics.LastUpdated.IsZero() {
+		t.Error("LastUpdated 가 비었다 — 집계 시각이 없으면 메트릭의 신선도를 알 수 없다")
+	}
+
+	// 규칙별 위반 합계가 InvalidRecords 와 맞아야 한다. 어긋나면 어느 규칙이
+	// 위반을 만들었는지 추적할 수 없다.
+	var byRuleTotal int64
+	for _, n := range metrics.ViolationsByRule {
+		byRuleTotal += n
+	}
+	if byRuleTotal != metrics.InvalidRecords {
+		t.Errorf("ViolationsByRule 합계 %d != InvalidRecords %d", byRuleTotal, metrics.InvalidRecords)
+	}
 }

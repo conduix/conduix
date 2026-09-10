@@ -8,17 +8,17 @@ type ErrorCode string
 // 공통 에러 코드
 const (
 	// 인증/인가 에러 (AUTH_*)
-	ErrCodeUnauthorized       ErrorCode = "AUTH_UNAUTHORIZED"
-	ErrCodeInvalidToken       ErrorCode = "AUTH_INVALID_TOKEN"
-	ErrCodeTokenExpired       ErrorCode = "AUTH_TOKEN_EXPIRED"
-	ErrCodeForbidden          ErrorCode = "AUTH_FORBIDDEN"
-	ErrCodeInsufficientPerms  ErrorCode = "AUTH_INSUFFICIENT_PERMISSIONS"
+	ErrCodeUnauthorized      ErrorCode = "AUTH_UNAUTHORIZED"
+	ErrCodeInvalidToken      ErrorCode = "AUTH_INVALID_TOKEN"
+	ErrCodeTokenExpired      ErrorCode = "AUTH_TOKEN_EXPIRED"
+	ErrCodeForbidden         ErrorCode = "AUTH_FORBIDDEN"
+	ErrCodeInsufficientPerms ErrorCode = "AUTH_INSUFFICIENT_PERMISSIONS"
 
 	// 요청 에러 (REQUEST_*)
-	ErrCodeBadRequest         ErrorCode = "REQUEST_BAD_REQUEST"
-	ErrCodeValidationFailed   ErrorCode = "REQUEST_VALIDATION_FAILED"
-	ErrCodeInvalidJSON        ErrorCode = "REQUEST_INVALID_JSON"
-	ErrCodeMissingField       ErrorCode = "REQUEST_MISSING_FIELD"
+	ErrCodeBadRequest       ErrorCode = "REQUEST_BAD_REQUEST"
+	ErrCodeValidationFailed ErrorCode = "REQUEST_VALIDATION_FAILED"
+	ErrCodeInvalidJSON      ErrorCode = "REQUEST_INVALID_JSON"
+	ErrCodeMissingField     ErrorCode = "REQUEST_MISSING_FIELD"
 
 	// 리소스 에러 (RESOURCE_*)
 	ErrCodeNotFound          ErrorCode = "RESOURCE_NOT_FOUND"
@@ -28,9 +28,9 @@ const (
 	ErrCodeResourceInUse     ErrorCode = "RESOURCE_IN_USE"
 
 	// 서버 에러 (SERVER_*)
-	ErrCodeInternalError      ErrorCode = "SERVER_INTERNAL_ERROR"
-	ErrCodeDatabaseError      ErrorCode = "SERVER_DATABASE_ERROR"
-	ErrCodeExternalService    ErrorCode = "SERVER_EXTERNAL_SERVICE_ERROR"
+	ErrCodeInternalError   ErrorCode = "SERVER_INTERNAL_ERROR"
+	ErrCodeDatabaseError   ErrorCode = "SERVER_DATABASE_ERROR"
+	ErrCodeExternalService ErrorCode = "SERVER_EXTERNAL_SERVICE_ERROR"
 
 	// 비즈니스 로직 에러 (BUSINESS_*)
 	ErrCodeWorkflowRunning    ErrorCode = "BUSINESS_WORKFLOW_RUNNING"

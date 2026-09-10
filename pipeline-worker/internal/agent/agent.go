@@ -1722,8 +1722,9 @@ func (a *Agent) IsRedisHealthy() bool {
 	return a.redisHealthy
 }
 
-// GetRedisMetrics Redis 메트릭 조회
-func (a *Agent) GetRedisMetrics() *redisclient.Metrics {
+// GetRedisMetrics Redis 메트릭 조회(스냅샷).
+// Metrics 를 값으로 넘기면 sync.RWMutex 가 복사돼 호출자가 무의미한 락을 잡는다.
+func (a *Agent) GetRedisMetrics() *redisclient.MetricsSnapshot {
 	if a.redisClient == nil {
 		return nil
 	}

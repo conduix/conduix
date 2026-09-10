@@ -40,6 +40,46 @@ jobs:
         run: cd ${{ matrix.package }} && go test -v -p 4 -parallel 8 ./...
 
   # ============================================================
+  # 1a. gopls 정적 진단
+  # golangci-lint 가 잡지 않는 항목을 본다: 락 값 복사(return copies lock value),
+  # deprecated API 사용, unused write. 실제로 이 진단으로 GetMetrics 가 sync.RWMutex 를
+  # 복사 반환하던 버그를 찾았다 — 복사된 mutex 는 원본과 무관한 별개 락이라 호출자가
+  # 그것으로 동기화하면 아무것도 보호하지 못한다.
+  #
+  # 의도적으로 억제한 항목은 .goplsignore 에 이유와 함께 둔다.
+  # ============================================================
+  lint-gopls:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [shared, plugin-sdk, pipeline-core, pipeline-worker, pipeline-runner, control-plane]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: true
+          cache-dependency-path: "${{ matrix.package }}/go.*"
+
+      - name: Install gopls
+        run: go install golang.org/x/tools/gopls@latest
+
+      - name: gopls check ${{ matrix.package }}
+        run: |
+          cd ${{ matrix.package }}
+          out=$(find . -name "*.go" -not -path "./vendor/*" -print0 \
+            | xargs -0 gopls check 2>&1 \
+            | grep -vFf ../.goplsignore || true)
+          if [ -n "$out" ]; then
+            echo "$out"
+            echo "::error::gopls 진단에서 문제가 발견되었습니다 (${{ matrix.package }})"
+            exit 1
+          fi
+          echo "gopls 진단 통과"
+
+  # ============================================================
   # 1b. CDC 통합 테스트 (실 MySQL binlog + PostgreSQL logical)
   # build tag `cdcintegration` 로 분리된 테스트를 실제 DB 대상으로 실행.
   # services: 는 컨테이너에 command args(--log-bin, -c wal_level 등)를 못 넘기므로

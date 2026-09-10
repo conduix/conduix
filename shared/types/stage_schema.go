@@ -27,24 +27,24 @@ const (
 
 // StageFieldSchema 필드 스키마
 type StageFieldSchema struct {
-	Name        string         `json:"name"`                  // 필드명 (dot notation 지원: "contract.name")
-	Type        FieldType      `json:"type"`                  // 필드 타입
-	DisplayName string         `json:"display_name"`          // UI 표시명
-	Description string         `json:"description,omitempty"` // 설명/도움말
-	Required    bool           `json:"required,omitempty"`    // 필수 여부
-	Default     any            `json:"default,omitempty"`     // 기본값
-	Placeholder string         `json:"placeholder,omitempty"` // 입력 힌트
+	Name        string    `json:"name"`                  // 필드명 (dot notation 지원: "contract.name")
+	Type        FieldType `json:"type"`                  // 필드 타입
+	DisplayName string    `json:"display_name"`          // UI 표시명
+	Description string    `json:"description,omitempty"` // 설명/도움말
+	Required    bool      `json:"required,omitempty"`    // 필수 여부
+	Default     any       `json:"default,omitempty"`     // 기본값
+	Placeholder string    `json:"placeholder,omitempty"` // 입력 힌트
 
 	// 타입별 옵션
-	Options     []FieldOption `json:"options,omitempty"`      // enum 타입용 선택지
-	Min         *float64      `json:"min,omitempty"`          // number 최소값
-	Max         *float64      `json:"max,omitempty"`          // number 최대값
-	MinLength   *int          `json:"min_length,omitempty"`   // string 최소 길이
-	MaxLength   *int          `json:"max_length,omitempty"`   // string 최대 길이
-	Pattern     string        `json:"pattern,omitempty"`      // 정규식 패턴
-	Multiline   bool          `json:"multiline,omitempty"`    // textarea 사용 여부
-	Rows        int           `json:"rows,omitempty"`         // textarea 행 수
-	MonoSpace   bool          `json:"monospace,omitempty"`    // 고정폭 폰트 사용
+	Options   []FieldOption `json:"options,omitempty"`    // enum 타입용 선택지
+	Min       *float64      `json:"min,omitempty"`        // number 최소값
+	Max       *float64      `json:"max,omitempty"`        // number 최대값
+	MinLength *int          `json:"min_length,omitempty"` // string 최소 길이
+	MaxLength *int          `json:"max_length,omitempty"` // string 최대 길이
+	Pattern   string        `json:"pattern,omitempty"`    // 정규식 패턴
+	Multiline bool          `json:"multiline,omitempty"`  // textarea 사용 여부
+	Rows      int           `json:"rows,omitempty"`       // textarea 행 수
+	MonoSpace bool          `json:"monospace,omitempty"`  // 고정폭 폰트 사용
 
 	// 조건부 표시
 	ShowWhen *FieldCondition `json:"show_when,omitempty"` // 다른 필드 값에 따라 표시
@@ -96,10 +96,10 @@ type FieldCondition struct {
 
 // TestConnectionConfig 연결 테스트 버튼 설정
 type TestConnectionConfig struct {
-	Endpoint string   `json:"endpoint"`          // 테스트 API 엔드포인트
-	Fields   []string `json:"fields"`            // 테스트에 필요한 필드들
-	Label    string   `json:"label,omitempty"`   // 버튼 텍스트
-	Method   string   `json:"method,omitempty"`  // HTTP 메서드 (기본: POST)
+	Endpoint string   `json:"endpoint"`         // 테스트 API 엔드포인트
+	Fields   []string `json:"fields"`           // 테스트에 필요한 필드들
+	Label    string   `json:"label,omitempty"`  // 버튼 텍스트
+	Method   string   `json:"method,omitempty"` // HTTP 메서드 (기본: POST)
 }
 
 // StageSchemaProvider Stage Schema 제공 인터페이스

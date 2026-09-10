@@ -22,7 +22,11 @@ func TestHealthHandler(t *testing.T) {
 	}
 
 	var status Status
-	json.NewDecoder(w.Body).Decode(&status)
+	// 디코드 실패를 삼키면 status 가 빈 값이 되어 아래 검증이 "mode 불일치" 로 실패한다 —
+	// 진짜 원인(응답이 JSON 이 아님)이 가려진다.
+	if err := json.NewDecoder(w.Body).Decode(&status); err != nil {
+		t.Fatalf("응답이 JSON 이 아니다: %v", err)
+	}
 	if status.Mode != "batch" {
 		t.Errorf("expected mode batch, got %s", status.Mode)
 	}

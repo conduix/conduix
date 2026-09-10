@@ -8,11 +8,11 @@ import "time"
 type PipelineStatistics struct {
 	PipelineID       string           `json:"pipeline_id"`
 	PipelineName     string           `json:"pipeline_name"`
-	RecordsCollected int64            `json:"records_collected"`  // 수집량 - 소스에서 읽어온 레코드 수
-	RecordsProcessed int64            `json:"records_processed"`  // 처리량 - 싱크로 전송된 레코드 수
-	PerStageCounts   map[string]int64 `json:"per_stage_counts"`   // Stage별 처리량 - Stage별 통과 레코드 수
-	CollectionErrors int64            `json:"collection_errors"`  // 수집에러 - 소스 읽기 중 에러
-	ProcessingErrors int64            `json:"processing_errors"`  // 처리에러 - Stage/Sink 에러
+	RecordsCollected int64            `json:"records_collected"` // 수집량 - 소스에서 읽어온 레코드 수
+	RecordsProcessed int64            `json:"records_processed"` // 처리량 - 싱크로 전송된 레코드 수
+	PerStageCounts   map[string]int64 `json:"per_stage_counts"`  // Stage별 처리량 - Stage별 통과 레코드 수
+	CollectionErrors int64            `json:"collection_errors"` // 수집에러 - 소스 읽기 중 에러
+	ProcessingErrors int64            `json:"processing_errors"` // 처리에러 - Stage/Sink 에러
 	StartedAt        time.Time        `json:"started_at"`
 	CompletedAt      *time.Time       `json:"completed_at,omitempty"`
 	DurationMs       int64            `json:"duration_ms,omitempty"`

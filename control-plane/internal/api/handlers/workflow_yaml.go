@@ -32,6 +32,10 @@ type WorkflowSpec struct {
 	FailurePolicy *types.FailurePolicy    `json:"failure_policy,omitempty"`
 	Metadata      map[string]any          `json:"metadata,omitempty"`
 	Tags          []string                `json:"tags,omitempty"`
+	// JobConfig 는 batch 위임 pod 의 리소스·타임아웃 스펙이다. YAML export/import 로도
+	// 관리돼야 한다 — 노드 여유가 다른 환경으로 옮길 때 이 값이 빠지면 스케줄이 실패한다
+	// (실측: 2코어 노드에서 기본 500m 요청이 Insufficient cpu 로 Pending).
+	JobConfig *types.JobConfig `json:"job_config,omitempty"`
 }
 
 // ExportWorkflowYAML GET /api/v1/workflows/:id/yaml
@@ -143,6 +147,14 @@ func (h *WorkflowHandler) buildWorkflowModel(spec *WorkflowSpec, createdBy strin
 	metadataJSON, _ := json.Marshal(spec.Metadata)
 	tagsJSON, _ := json.Marshal(spec.Tags)
 
+	// JobConfig 는 선택이다. 지정 없으면 빈 문자열로 두어 agent 가 DefaultJobConfig 를 쓴다.
+	jobConfig := ""
+	if spec.JobConfig != nil {
+		if raw, err := json.Marshal(spec.JobConfig); err == nil {
+			jobConfig = string(raw)
+		}
+	}
+
 	now := time.Now()
 	workflow := &models.Workflow{
 		ID:              uuid.New().String(),
@@ -158,6 +170,7 @@ func (h *WorkflowHandler) buildWorkflowModel(spec *WorkflowSpec, createdBy strin
 		FailurePolicy:   string(failurePolicyJSON),
 		Metadata:        string(metadataJSON),
 		Tags:            string(tagsJSON),
+		JobConfig:       jobConfig,
 		CreatedBy:       createdBy,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -199,6 +212,10 @@ func workflowModelToSpec(w *models.Workflow) (*WorkflowSpec, error) {
 	}
 	if w.Tags != "" {
 		_ = json.Unmarshal([]byte(w.Tags), &spec.Tags)
+	}
+	// export 에 JobConfig 를 포함해야 export→import 왕복에서 리소스 스펙이 유실되지 않는다.
+	if w.JobConfig != "" {
+		_ = json.Unmarshal([]byte(w.JobConfig), &spec.JobConfig)
 	}
 	if w.ScheduleType != "" {
 		spec.Schedule = &types.ScheduleConfig{

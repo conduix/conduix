@@ -51,6 +51,8 @@ import { api } from '../services/api'
 import { useSnackbar } from '../hooks/useSnackbar'
 import { ConfirmDialog } from '../components/common/ConfirmDialog'
 import debounce from 'lodash/debounce'
+// 세트 판정은 목록·상세가 같은 규칙을 써야 한다 — 각자 구현하면 표시가 어긋난다.
+import { applySetTag, buildSetIndex, setNameOf } from '../utils/workflowSet'
 
 interface TabPanelProps {
   children?: React.ReactNode
@@ -144,41 +146,6 @@ interface DataType {
   parent?: DataType
 }
 
-// SET_TAG_PREFIX 는 "함께 돌아야 완성되는 워크플로우 묶음" 을 나타내는 태그 접두사다.
-// 예: tags="set:welfare-map-restroom" 을 가진 둘은 한 세트다.
-//
-// 왜 tags 인가: 워크플로우 간 의존을 표현하는 스키마가 없고, 새로 추가하면 마이그레이션과
-// 배포가 필요하다. tags 는 이미 있고 자유 문자열이라 규칙만 정하면 바로 쓸 수 있다.
-const SET_TAG_PREFIX = 'set:'
-
-// setNameOf 는 워크플로우가 속한 세트 이름을 돌려준다(없으면 null).
-function setNameOf(tags?: string): string | null {
-  if (!tags) return null
-  for (const raw of tags.split(',')) {
-    const t = raw.trim()
-    if (t.startsWith(SET_TAG_PREFIX)) {
-      const name = t.slice(SET_TAG_PREFIX.length).trim()
-      if (name) return name
-    }
-  }
-  return null
-}
-
-// buildSetIndex 는 세트 이름 → 그 세트에 속한 워크플로우 목록을 만든다.
-// 혼자만 태그를 가진 경우는 세트가 아니다 — 짝이 없으면 "세트"라는 표시가 오해를 준다.
-function buildSetIndex(workflows: { id: string; tags?: string }[]): Map<string, string[]> {
-  const byName = new Map<string, string[]>()
-  for (const w of workflows) {
-    const name = setNameOf(w.tags)
-    if (!name) continue
-    byName.set(name, [...(byName.get(name) ?? []), w.id])
-  }
-  for (const [name, ids] of byName) {
-    if (ids.length < 2) byName.delete(name)
-  }
-  return byName
-}
-
 export default function ProjectDetailPage() {
   const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
@@ -211,6 +178,9 @@ export default function ProjectDetailPage() {
     type: 'batch' as 'batch' | 'realtime',
     description: '',
     cluster_id: '', // 실행 대상 cluster (빈 값이면 서버가 default cluster로 폴백)
+    // 세트 이름. 같은 이름을 가진 워크플로우들은 함께 돌아야 데이터가 완성된다.
+    // 빈 값이면 세트에 속하지 않는다(태그에서 set: 항목 제거).
+    set_name: '',
   })
   const [clusterOptions, setClusterOptions] = useState<Array<{ id: string; name: string }>>([])
   const [workflowSaving, setWorkflowSaving] = useState(false)
@@ -374,7 +344,7 @@ export default function ProjectDetailPage() {
   // Workflow CRUD handlers
   const handleCreateWorkflow = () => {
     setEditingWorkflow(null)
-    setWorkflowForm({ name: '', slug: '', type: 'batch', description: '', cluster_id: '' })
+    setWorkflowForm({ name: '', slug: '', type: 'batch', description: '', cluster_id: '', set_name: '' })
     loadClusterOptions()
     setWorkflowModalOpen(true)
   }
@@ -387,6 +357,7 @@ export default function ProjectDetailPage() {
       type: workflow.type,
       description: workflow.description,
       cluster_id: workflow.cluster_id || '',
+      set_name: setNameOf(workflow.tags) || '',
     })
     loadClusterOptions()
     setWorkflowModalOpen(true)
@@ -396,8 +367,14 @@ export default function ProjectDetailPage() {
     try {
       setWorkflowSaving(true)
 
+      // set_name 은 UI 전용 필드다. 서버는 tags 로 받으므로 변환해 보낸다.
+      const { set_name, ...formFields } = workflowForm
+
       if (editingWorkflow) {
-        const response = await api.updateWorkflow(editingWorkflow.id, workflowForm)
+        const response = await api.updateWorkflow(editingWorkflow.id, {
+          ...formFields,
+          tags: applySetTag(editingWorkflow.tags, set_name),
+        })
         if (response.success) {
           showSuccess(t('workflow.updateSuccess'))
           setWorkflowModalOpen(false)
@@ -412,7 +389,8 @@ export default function ProjectDetailPage() {
         }
         const response = await api.createWorkflow({
           project_id: project.id,
-          ...workflowForm,
+          ...formFields,
+          tags: applySetTag(undefined, set_name),
         })
         if (response.success) {
           showSuccess(t('workflow.createSuccess'))
@@ -969,7 +947,10 @@ export default function ProjectDetailPage() {
                                   color="secondary"
                                   variant="outlined"
                                   icon={<LinkIcon fontSize="small" />}
-                                  label={t('workflow.setBadge', '세트 {{n}}개', { n: setMembers.length })}
+                                  label={t('workflow.setBadge', '세트: {{name}} ({{n}})', {
+                                    name: setName,
+                                    n: setMembers.length,
+                                  })}
                                   title={t(
                                     'workflow.setTooltip',
                                     '이 워크플로우는 "{{name}}" 세트의 일부입니다. 세트의 {{n}}개가 모두 실행되어야 데이터가 완성됩니다.',
@@ -1191,6 +1172,26 @@ export default function ProjectDetailPage() {
                 ))}
               </Select>
             </FormControl>
+            {/* 세트 이름. 같은 이름을 쓴 워크플로우들이 한 세트가 된다.
+                기존 세트를 datalist 로 제시해 오타로 새 세트가 생기는 것을 줄인다.
+                비우면 세트에서 빠진다 — 별도 "세트 해제" 버튼을 두지 않아도 된다. */}
+            <TextField
+              label={t('workflow.setNameField', '세트 이름 (선택)')}
+              value={workflowForm.set_name}
+              onChange={(e) => setWorkflowForm({ ...workflowForm, set_name: e.target.value })}
+              fullWidth
+              placeholder={t('workflow.setNamePlaceholder', '예: restroom-pipeline')}
+              helperText={t(
+                'workflow.setNameHelp',
+                '같은 세트 이름을 가진 워크플로우들은 모두 실행되어야 데이터가 완성됩니다. 비우면 세트에서 제외됩니다.',
+              )}
+              slotProps={{ htmlInput: { list: 'workflow-set-options' } }}
+            />
+            <datalist id="workflow-set-options">
+              {[...workflowSets.keys()].map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
             <TextField
               label={t('workflow.description')}
               value={workflowForm.description}

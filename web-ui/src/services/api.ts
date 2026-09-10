@@ -506,6 +506,8 @@ class ApiService {
     schedule_cron?: string
     schedule_enabled?: boolean
     job_config?: JobConfig  // Batch 워크플로우용 Kubernetes Job 설정
+    // tags: 자유 문자열 배열. "set:이름" 태그로 함께 돌아야 하는 워크플로우를 묶는다.
+    tags?: string[]
   }) {
     const response = await this.client.post('/workflows', data)
     return response.data
@@ -521,6 +523,8 @@ class ApiService {
     schedule_cron?: string
     schedule_enabled?: boolean
     job_config?: JobConfig | null  // Batch 워크플로우용 Kubernetes Job 설정
+    // tags: 전체 교체다(부분 병합 아님). set: 항목만 바꾸려면 기존 태그를 함께 보내야 한다.
+    tags?: string[]
     pipelines?: Array<{
       id: string
       name: string

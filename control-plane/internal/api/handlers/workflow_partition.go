@@ -3,7 +3,6 @@ package handlers
 import (
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -96,15 +95,17 @@ func planPartitionGroups(pipelines []types.GroupedPipeline) [][]string {
 // publishSubExecutions 는 부모 execution 아래에 파티션 그룹별 sub-execution 을 만들어 발행한다.
 // 부모는 이미 생성돼 있고(execution), 이를 "부모"로 재활용해 상태/취합의 앵커로 쓴다.
 // 각 sub-execution 은 고유 ExecutionID + AssignedPartitions 로 발행 → 여러 worker 가 나눠 claim/실행.
-func (h *WorkflowHandler) publishSubExecutions(
-	c *gin.Context,
+// publishSubExecutionsCore 는 발행만 하고 응답을 만들지 않는다.
+// 자동 빌드 완료 후 시작하는 경로에는 HTTP 요청이 이미 끝나 gin.Context 가 없으므로,
+// 발행 로직을 응답과 분리해 두 경로가 같은 코드를 쓰게 한다.
+func (h *WorkflowHandler) publishSubExecutionsCore(
 	workflowID, userID string,
 	parent *models.WorkflowExecution,
 	jobConfig string,
 	workflowConfig *types.Workflow,
 	groups [][]string,
 	runnerVersionID string,
-) {
+) []string {
 	// 부모 execution: 직접 실행하지 않고 sub-execution 결과를 취합하는 앵커.
 	h.db.Model(&models.WorkflowExecution{}).Where("id = ?", parent.ID).
 		Update("total_sub_executions", len(groups))
@@ -160,16 +161,7 @@ func (h *WorkflowHandler) publishSubExecutions(
 	h.logger.Info("published partition sub-executions",
 		"workflow_id", workflowID, "parent_execution_id", parent.ID, "sub_count", len(subIDs))
 
-	c.JSON(202, types.APIResponse[map[string]any]{
-		Success: true,
-		Data: map[string]any{
-			"execution_id":      parent.ID,
-			"workflow_id":       workflowID,
-			"status":            parent.Status,
-			"distributed":       true,
-			"sub_execution_ids": subIDs,
-		},
-	})
+	return subIDs
 }
 
 // aggregateSubExecutionResult 는 sub-execution 결과를 부모 execution 에 누적한다.

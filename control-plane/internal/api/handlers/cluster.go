@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/services"
@@ -47,6 +48,14 @@ type UpdateClusterRequest struct {
 	APIServerURL string `json:"api_server_url,omitempty"`
 	Region       string `json:"region,omitempty"`
 	Status       string `json:"status,omitempty"` // active, inactive
+	// IsDefault: 클러스터를 미지정한 워크플로우의 기본 실행 대상.
+	//
+	// 이 필드가 없던 동안, default 클러스터가 없으면 실행이 "No target cluster: ...mark a
+	// cluster as default" 로 막히는데 그 조치를 수행할 API 자체가 없었다 — 메시지는 해결책을
+	// 알려주지만 사용자는 DB 를 직접 고치는 수밖에 없었다.
+	//
+	// 포인터인 이유: false 로 명시한 해제와 "미지정"(기존값 유지)을 구분해야 한다.
+	IsDefault *bool `json:"is_default,omitempty"`
 }
 
 // ClusterResponse 클러스터 응답 (Agent 수 포함)
@@ -285,6 +294,38 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 
 	cluster.UpdatedAt = time.Now()
+
+	// default 는 전체에서 하나여야 한다(ResolveExecutionCluster 가 단일 default 를 전제).
+	// 여러 개면 어느 것이 선택될지 예측할 수 없다 — 기존 default 해제와 지정을 한 트랜잭션에서 한다.
+	if req.IsDefault != nil && *req.IsDefault && !cluster.IsDefault {
+		cluster.IsDefault = true
+		if err := h.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&models.Cluster{}).
+				Where("is_default = ? AND id != ?", true, clusterID).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+			return tx.Save(&cluster).Error
+		}); err != nil {
+			h.logger.Error("Failed to set default cluster", "request_id", requestID, "error", err)
+			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to set default cluster")
+			return
+		}
+		h.logger.Info("default cluster changed", "cluster_id", clusterID)
+		c.JSON(http.StatusOK, types.APIResponse[*models.Cluster]{Success: true, Data: &cluster})
+		return
+	}
+	if req.IsDefault != nil && !*req.IsDefault {
+		// 마지막 default 를 해제하면 클러스터 미지정 워크플로우가 전부 실행 불가가 된다.
+		var otherDefaults int64
+		h.db.Model(&models.Cluster{}).Where("is_default = ? AND id != ?", true, clusterID).Count(&otherDefaults)
+		if cluster.IsDefault && otherDefaults == 0 {
+			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeInvalidState,
+				"마지막 기본 클러스터는 해제할 수 없습니다. 다른 클러스터를 기본으로 지정한 뒤 해제하세요.")
+			return
+		}
+		cluster.IsDefault = false
+	}
 
 	if err := h.db.Save(&cluster).Error; err != nil {
 		h.logger.Error("Failed to update cluster", "request_id", requestID, "error", err)

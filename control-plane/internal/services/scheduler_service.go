@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 
+	"github.com/conduix/conduix/control-plane/internal/builder"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
@@ -36,6 +38,9 @@ type SchedulerService struct {
 	// StartWorkflow 경로만 resolve 하고 trigger/cron 경로가 누락하면, 커스텀 stage 가
 	// 기본 바이너리에서 조용히 passthrough 되는 버그가 된다 — 발행 지점에서 공통 처리.
 	runnerResolver *RunnerResolver
+	// autoBuilder: cron 트리거가 빌드 필요로 막혔을 때 빌드를 걸어둔다.
+	// 예전에는 로그만 남겨 사용자에게 전달되는 채널이 서버 로그뿐이었다.
+	autoBuilder *AutoBuilder
 }
 
 // SchedulerConfig 스케줄러 설정
@@ -68,6 +73,7 @@ func NewSchedulerService(db *database.DB, redisService *RedisService, cfg *Sched
 		refreshInterval: cfg.RefreshInterval,
 		staleGrace:      2 * time.Minute, // 실행 직후 하트비트 등록 유예
 		runnerResolver:  NewRunnerResolver(db.DB),
+		autoBuilder:     NewAutoBuilder(db.DB, builder.NewRunnerBuilder(db.DB, nil), slog.Default()),
 	}
 }
 
@@ -112,6 +118,9 @@ func (s *SchedulerService) staleExecutionLoop() {
 			return
 		case <-ticker.C:
 			s.detectStaleExecutions()
+			// batch 는 위 heartbeat 기반 감지에서 제외돼 자동 복구가 없었다.
+			// 접수 흔적을 근거로 "아무도 받지 않은 실행" 만 따로 확정한다.
+			s.detectUnclaimedExecutions()
 		}
 	}
 }
@@ -421,6 +430,31 @@ func (s *SchedulerService) TriggerNow(workflowID, userID string) (*models.Workfl
 	clusterID, err := ResolveExecutionCluster(s.db.DB, workflow.ClusterID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve execution cluster: %w", err)
+	}
+
+	// 실행 가능성을 상태 변경 전에 검증한다.
+	//
+	// 예전에는 워크플로우를 running 으로 바꾼 뒤 발행을 시도하고, 실패하면 slog.Warn 만
+	// 남겼다("Redis 실패해도 실행 레코드는 유지"). 그래서 cron 트리거가 조용히 죽고
+	// 화면에는 running 으로 보이는 상태가 됐다 — 사용자에게 전달되는 채널이 서버 로그뿐이었다.
+	//
+	// 검증을 앞으로 옮겨, 실행할 수 없으면 상태를 오염시키지 않고 사유를 반환한다.
+	// 호출자(cron 트리거)는 이 에러를 실행 이력에 남긴다.
+	if aerr := EnsureLiveAgent(s.db.DB, clusterID); aerr != nil {
+		return nil, aerr
+	}
+	if s.runnerResolver != nil {
+		if _, _, _, rerr := s.runnerResolver.ResolveRunnerVersion(&workflow); rerr != nil {
+			var bre *BuildRequiredError
+			if errors.As(rerr, &bre) && s.autoBuilder != nil {
+				// 빌드를 걸어둔다. 이번 트리거는 실행하지 않지만, 다음 cron 주기에는
+				// 빌드가 끝나 정상 실행된다 — 사용자가 수동으로 빌드하러 갈 필요가 없다.
+				s.autoBuilder.Reserve(workflow.ID, userID, func(string, string) error { return nil })
+				slog.Warn("scheduled run blocked by build requirement — build triggered",
+					"workflow_id", workflow.ID, "reason", string(bre.Reason))
+			}
+			return nil, fmt.Errorf("resolve runner version: %w", rerr)
+		}
 	}
 
 	// 실행 레코드 생성

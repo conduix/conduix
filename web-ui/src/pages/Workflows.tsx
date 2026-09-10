@@ -64,8 +64,10 @@ export default function WorkflowsPage() {
         const data = response.data
         setWorkflows(Array.isArray(data) ? data : (data.items || []))
       }
-    } catch (error) {
-      console.error('Failed to fetch workflows:', error)
+    } catch (error: unknown) {
+      // 조용히 실패하면 "워크플로우가 없음" 과 "조회 실패" 가 화면에서 구분되지 않는다.
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.loadError'))
     } finally {
       setLoading(false)
     }
@@ -74,20 +76,38 @@ export default function WorkflowsPage() {
   const handleStart = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await api.startWorkflow(id)
+      const res = await api.startWorkflow(id)
+      // 서버가 빌드를 걸고 실행을 예약한 경우 status=building 으로 온다.
+      // 이걸 구분하지 않으면 "실행됨" 으로 보이고 사용자는 왜 안 도는지 알 수 없다.
+      if (res.success && res.data?.status === 'building') {
+        showSuccess(res.message || t('workflow.buildStarted'))
+      } else if (res.success) {
+        showSuccess(t('workflow.startSuccess'))
+      } else {
+        showError(res.error?.message || t('workflow.startError'))
+      }
       fetchWorkflows()
-    } catch (error) {
-      console.error('Failed to start workflow:', error)
+    } catch (error: unknown) {
+      // console.error 만 하면 사용자는 버튼을 눌러도 아무 반응이 없다고 느낀다 —
+      // 실패 사유가 서버 응답에 들어 있는데도 화면에 전달되지 않았다.
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.startError'))
     }
   }
 
   const handleStop = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await api.stopWorkflow(id)
+      const res = await api.stopWorkflow(id)
+      if (res.success) {
+        showSuccess(t('workflow.stopSuccess'))
+      } else {
+        showError(res.error?.message || t('workflow.stopError'))
+      }
       fetchWorkflows()
-    } catch (error) {
-      console.error('Failed to stop workflow:', error)
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: { message?: string } } } }
+      showError(err.response?.data?.error?.message || t('workflow.stopError'))
     }
   }
 

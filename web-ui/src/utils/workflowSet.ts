@@ -10,11 +10,41 @@
 
 export const SET_TAG_PREFIX = 'set:'
 
+/**
+ * tags 를 태그 배열로 만든다.
+ *
+ * 저장 형식이 두 가지다:
+ * - JSON 배열 문자열 `["set:x","team-a"]` — 서버가 API 요청의 []string 을 직렬화한 것
+ * - 콤마 구분 문자열 `set:x, team-a` — DB 에 직접 넣거나 손으로 편집한 경우
+ *
+ * 한쪽만 처리하면 UI 로 설정한 세트가 화면에 안 뜬다(실측: API 저장 후 배지 미표시).
+ */
+function parseTags(tags?: string): string[] {
+  if (!tags) return []
+  const trimmed = tags.trim()
+  if (!trimmed) return []
+
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) {
+        return parsed.filter((t): t is string => typeof t === 'string').map((t) => t.trim())
+      }
+    } catch {
+      // JSON 이 깨졌으면 아래 콤마 분리로 폴백한다 — 화면이 비는 것보다 낫다.
+    }
+  }
+  // 폴백 시 JSON 잔여 문자(대괄호·따옴표)를 떼어낸다. 안 떼면 '[set:x' 처럼 남아
+  // set: 접두사 매칭이 실패한다.
+  return trimmed
+    .split(',')
+    .map((t) => t.trim().replace(/^[[\]"']+|[[\]"']+$/g, '').trim())
+    .filter((t) => t)
+}
+
 /** 워크플로우가 속한 세트 이름. 없으면 null. */
 export function setNameOf(tags?: string): string | null {
-  if (!tags) return null
-  for (const raw of tags.split(',')) {
-    const t = raw.trim()
+  for (const t of parseTags(tags)) {
     if (t.startsWith(SET_TAG_PREFIX)) {
       const name = t.slice(SET_TAG_PREFIX.length).trim()
       if (name) return name
@@ -51,10 +81,8 @@ export function buildSetIndex<T extends { id: string; tags?: string }>(
  * 세트 이름이 비면 set: 항목을 제거한다 = 세트에서 빼기.
  */
 export function applySetTag(currentTags: string | undefined, setName: string): string[] {
-  const kept = (currentTags ?? '')
-    .split(',')
-    .map((t) => t.trim())
-    .filter((t) => t && !t.startsWith(SET_TAG_PREFIX))
+  // parseTags 를 공유한다 — 여기서 따로 split 하면 JSON 형식의 기존 태그가 유실된다.
+  const kept = parseTags(currentTags).filter((t) => t && !t.startsWith(SET_TAG_PREFIX))
 
   const name = setName.trim()
   return name ? [...kept, `${SET_TAG_PREFIX}${name}`] : kept

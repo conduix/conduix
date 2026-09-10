@@ -75,3 +75,41 @@ describe('applySetTag', () => {
     expect(applySetTag('team-a, , set:old', 'x')).toEqual(['team-a', 'set:x'])
   })
 })
+
+// 서버는 tags 를 JSON 배열 문자열로 저장한다(API 요청의 []string 을 직렬화).
+// 콤마 분리만 처리하면 UI 로 설정한 세트가 화면에 안 뜬다(실측).
+describe('저장 형식 호환', () => {
+  it('JSON 배열 형식을 파싱한다 — 서버 API 저장 형식', () => {
+    expect(setNameOf('["set:child-meal"]')).toBe('child-meal')
+    expect(setNameOf('["team-a","set:welfare","urgent"]')).toBe('welfare')
+  })
+
+  it('콤마 형식도 계속 파싱한다 — DB 직접 편집분', () => {
+    expect(setNameOf('set:restroom-pipeline')).toBe('restroom-pipeline')
+  })
+
+  it('빈 JSON 배열은 세트 없음', () => {
+    expect(setNameOf('[]')).toBeNull()
+  })
+
+  it('깨진 JSON 은 콤마 분리로 폴백한다 — 화면이 비는 것보다 낫다', () => {
+    expect(setNameOf('[set:broken')).toBe('broken')
+  })
+
+  it('applySetTag 가 JSON 형식의 기존 태그를 보존한다', () => {
+    // 여기서 따로 split 하면 team-a 가 유실된다.
+    expect(applySetTag('["team-a","set:old"]', 'new')).toEqual(['team-a', 'set:new'])
+  })
+
+  it('JSON 배열에서 세트만 해제한다', () => {
+    expect(applySetTag('["team-a","set:old"]', '')).toEqual(['team-a'])
+  })
+
+  it('buildSetIndex 가 두 형식이 섞여도 같은 세트로 묶는다', () => {
+    const idx = buildSetIndex([
+      { id: 'a', tags: '["set:mixed"]' },
+      { id: 'b', tags: 'set:mixed' },
+    ])
+    expect(idx.get('mixed')?.map((w) => w.id)).toEqual(['a', 'b'])
+  })
+})

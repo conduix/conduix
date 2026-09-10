@@ -36,6 +36,7 @@ import {
   AccordionSummary,
   AccordionDetails,
   Alert,
+  AlertTitle,
   Radio,
   RadioGroup,
   FormControlLabel,
@@ -233,8 +234,28 @@ interface MonitoringPipeline {
 // api.getWorkflowExecutionMonitoring 은 envelope({success,data})를 벗긴 data 를 저장하므로
 // 여기서 pipelines 가 최상위다. data.pipelines 로 한 겹 더 들어가면 항상 undefined 가 되어
 // 라이브 모니터링이 "No monitoring data available" 로만 보인다.
+// 파이프라인 상태 색상. 실패를 default(회색)로 두면 성공과 시각적으로 구분되지 않는다.
+function monitoringPipelineColor(status: string): 'success' | 'error' | 'warning' | 'default' {
+  switch (status) {
+    case 'running':
+      return 'success'
+    case 'error':
+    case 'failed':
+      return 'error'
+    case 'paused':
+    case 'stopped':
+      return 'warning'
+    default:
+      return 'default'
+  }
+}
+
 interface MonitoringResponse {
   status?: string
+  // 스스로 끝난 파이프라인은 백엔드 statsCollectors 에서 제거되어 pipelines 에 안 나온다.
+  // 그래서 실패했는데도 화면에는 "데이터 없음" 만 뜨던 문제가 있었다(실측: DDL 정지).
+  // 사유는 이 필드로만 전달된다.
+  error_message?: string
   pipelines?: MonitoringPipeline[]
 }
 
@@ -1469,7 +1490,7 @@ export default function WorkflowDetailPage() {
                             <Typography>{pipeline.pipeline_name || pipeline.pipeline_id}</Typography>
                             <Chip
                               label={pipeline.status}
-                              color={pipeline.status === 'running' ? 'success' : 'default'}
+                              color={monitoringPipelineColor(pipeline.status)}
                               size="small"
                             />
                           </Box>
@@ -1602,6 +1623,15 @@ export default function WorkflowDetailPage() {
                       </CardContent>
                     </Card>
                   ))
+                ) : monitoringData?.error_message ? (
+                  // 실패한 파이프라인은 목록에서 사라지므로, 여기서 사유를 보여주지 않으면
+                  // 사용자는 "데이터 없음" 만 보고 실패 사실조차 알 수 없다.
+                  <Alert severity="error" sx={{ my: 2 }}>
+                    <AlertTitle>{t('workflow.monitoringFailed')}</AlertTitle>
+                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {monitoringData.error_message}
+                    </Typography>
+                  </Alert>
                 ) : (
                   <Box sx={{ textAlign: 'center', py: 6 }}>
                     <Typography sx={{

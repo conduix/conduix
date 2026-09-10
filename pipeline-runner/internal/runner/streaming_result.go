@@ -152,22 +152,19 @@ func (r *Runner) sendStreamingResult(startTime time.Time, exec *types.PipelineGr
 	return nil
 }
 
-// streamingErrorMessage 는 사용자에게 보일 사유를 만든다.
+// streamingErrorMessage 는 공용 사유 판정에 streaming 전용 폴백을 덧붙인다.
 //
-// 그룹 ErrorMessage 가 비어 있어도 파이프라인별 사유는 남아 있을 수 있다. 그때 빈 문자열을
-// 보내면 UI 에 "실패했지만 이유 없음" 이 뜬다 — 실측된 DDL 정지가 정확히 이 경우다
-// (파이프라인 result 에만 사유가 담긴다).
+// 사유 추출 정책 자체는 executor.ExecutionErrorMessage 한 곳에 둔다 — 모니터링 화면과
+// 실행 이력이 같은 사유를 보여야 하고, 여기서 따로 구현하면 둘이 어긋난다.
+//
+// 폴백이 필요한 이유: 실행 이력에는 "실패" 만 남고 이유가 비면 사용자가 원인을 찾을
+// 단서가 없다. 모니터링 응답은 status 를 별도 필드로 이미 보여주므로 폴백이 불필요하지만,
+// 종료 보고는 error_message 가 화면에 뜨는 유일한 사유다.
 func streamingErrorMessage(exec *types.PipelineGroupExecution) string {
-	if exec.ErrorMessage != "" {
-		return exec.ErrorMessage
-	}
-	for _, pr := range exec.PipelineResults {
-		if pr.ErrorMessage != "" {
-			return fmt.Sprintf("pipeline %s: %s", pr.PipelineName, pr.ErrorMessage)
-		}
+	if msg := executor.ExecutionErrorMessage(exec); msg != "" {
+		return msg
 	}
 	if exec.Status != types.PipelineGroupStatusCompleted {
-		// 사유를 못 찾았을 때도 status 만큼은 전달한다.
 		return fmt.Sprintf("streaming execution ended with status %s", exec.Status)
 	}
 	return ""

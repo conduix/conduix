@@ -1695,8 +1695,12 @@ func (e *GroupExecutor) GetMonitoringInfo() *types.ExecutionMonitoringInfo {
 		ExecutionID: execution.ID,
 		WorkflowID:  execution.WorkflowID,
 		Status:      string(status),
-		Pipelines:   make([]types.PipelineMonitoringInfo, 0),
-		UpdatedAt:   time.Now(),
+		// 스스로 끝난 파이프라인은 statsCollectors 에서 제거되어 아래 Pipelines 에
+		// 나타나지 않는다. 사유를 여기 실어야 화면이 "데이터 없음" 이 아니라 실패 이유를
+		// 보여줄 수 있다 — 그룹 메시지가 비면 파이프라인 결과의 사유를 쓴다.
+		ErrorMessage: ExecutionErrorMessage(execution),
+		Pipelines:    make([]types.PipelineMonitoringInfo, 0),
+		UpdatedAt:    time.Now(),
 	}
 
 	// 각 파이프라인의 모니터링 정보 수집
@@ -2209,4 +2213,25 @@ func (e *GroupExecutor) runPipelineBatch(
 			}
 		}
 	}
+}
+
+// ExecutionErrorMessage 는 실행 실패·정지 사유를 만든다.
+//
+// 그룹 ErrorMessage 가 비어 있어도 파이프라인 결과에는 사유가 남아 있을 수 있다.
+// DDL 방어로 정지한 경우가 정확히 그렇다 — 사유가 파이프라인 result 에만 담긴다.
+// 그때 빈 문자열을 내보내면 화면에 실패 사실만 뜨고 이유가 없다.
+//
+// 모니터링 응답(GetMonitoringInfo)과 종료 결과 보고(runner 의 streaming 경로)가 같은
+// 사유를 보여야 하므로 여기 한 곳에 둔다. 각자 구현하면 화면과 실행 이력의 사유가
+// 어긋난다.
+func ExecutionErrorMessage(execution *types.PipelineGroupExecution) string {
+	if execution.ErrorMessage != "" {
+		return execution.ErrorMessage
+	}
+	for _, pr := range execution.PipelineResults {
+		if pr.ErrorMessage != "" {
+			return fmt.Sprintf("pipeline %s: %s", pr.PipelineName, pr.ErrorMessage)
+		}
+	}
+	return ""
 }

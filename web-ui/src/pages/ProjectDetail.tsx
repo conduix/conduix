@@ -44,6 +44,7 @@ import {
   Add as AddIcon,
   Storage as StorageIcon,
   Visibility as VisibilityIcon,
+  Link as LinkIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { api } from '../services/api'
@@ -121,6 +122,9 @@ interface Workflow {
     id: string
     name: string
   }
+  // 세트 표시용. "set:이름" 태그를 가진 워크플로우들은 함께 돌아야 데이터가 완성된다.
+  // 별도 스키마 없이 기존 tags 를 쓴다 — 마이그레이션·배포 없이 즉시 적용된다.
+  tags?: string
   created_at: string
   updated_at: string
 }
@@ -140,6 +144,41 @@ interface DataType {
   parent?: DataType
 }
 
+// SET_TAG_PREFIX 는 "함께 돌아야 완성되는 워크플로우 묶음" 을 나타내는 태그 접두사다.
+// 예: tags="set:welfare-map-restroom" 을 가진 둘은 한 세트다.
+//
+// 왜 tags 인가: 워크플로우 간 의존을 표현하는 스키마가 없고, 새로 추가하면 마이그레이션과
+// 배포가 필요하다. tags 는 이미 있고 자유 문자열이라 규칙만 정하면 바로 쓸 수 있다.
+const SET_TAG_PREFIX = 'set:'
+
+// setNameOf 는 워크플로우가 속한 세트 이름을 돌려준다(없으면 null).
+function setNameOf(tags?: string): string | null {
+  if (!tags) return null
+  for (const raw of tags.split(',')) {
+    const t = raw.trim()
+    if (t.startsWith(SET_TAG_PREFIX)) {
+      const name = t.slice(SET_TAG_PREFIX.length).trim()
+      if (name) return name
+    }
+  }
+  return null
+}
+
+// buildSetIndex 는 세트 이름 → 그 세트에 속한 워크플로우 목록을 만든다.
+// 혼자만 태그를 가진 경우는 세트가 아니다 — 짝이 없으면 "세트"라는 표시가 오해를 준다.
+function buildSetIndex(workflows: { id: string; tags?: string }[]): Map<string, string[]> {
+  const byName = new Map<string, string[]>()
+  for (const w of workflows) {
+    const name = setNameOf(w.tags)
+    if (!name) continue
+    byName.set(name, [...(byName.get(name) ?? []), w.id])
+  }
+  for (const [name, ids] of byName) {
+    if (ids.length < 2) byName.delete(name)
+  }
+  return byName
+}
+
 export default function ProjectDetailPage() {
   const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
@@ -147,6 +186,8 @@ export default function ProjectDetailPage() {
   const { showSuccess, showError } = useSnackbar()
   const [project, setProject] = useState<Project | null>(null)
   const [workflows, setWorkflows] = useState<Workflow[]>([])
+  // 세트 인덱스는 목록이 바뀔 때만 다시 만든다 — 행마다 전체를 훑으면 O(n²) 이 된다.
+  const workflowSets = useMemo(() => buildSetIndex(workflows), [workflows])
   const [loading, setLoading] = useState(true)
   const [tabValue, setTabValue] = useState(0)
   const [editModalOpen, setEditModalOpen] = useState(false)
@@ -772,7 +813,7 @@ export default function ProjectDetailPage() {
                     <TableRow>
                       <TableCell>{t('dataModel.name')}</TableCell>
                       <TableCell sx={{ width: 140 }}>{t('dataModel.category')}</TableCell>
-                      <TableCell>{t('common.description')}</TableCell>
+                      <TableCell sx={{ maxWidth: 280 }}>{t('common.description')}</TableCell>
                       <TableCell sx={{ width: 160 }}>{t('common.updatedAt')}</TableCell>
                       <TableCell sx={{ width: 150 }}>{t('common.actions')}</TableCell>
                     </TableRow>
@@ -815,7 +856,17 @@ export default function ProjectDetailPage() {
                           <TableCell>
                             <Chip label={categoryConfig.text} color={categoryConfig.color} size="small" />
                           </TableCell>
-                          <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {/* textOverflow 만으로는 말줄임이 안 된다 — whiteSpace: nowrap 이 없으면
+                              여러 줄 설명이 그대로 펼쳐져 행 높이가 늘어난다. title 로 전문을 보여준다. */}
+                          <TableCell
+                            sx={{
+                              maxWidth: 280,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                            title={dataType.description || ''}
+                          >
                             {dataType.description || '-'}
                           </TableCell>
                           <TableCell>{new Date(dataType.updated_at).toLocaleString()}</TableCell>
@@ -888,13 +939,16 @@ export default function ProjectDetailPage() {
                       <TableCell sx={{ width: 100 }}>{t('workflow.type')}</TableCell>
                       <TableCell sx={{ width: 100 }}>{t('common.status')}</TableCell>
                       <TableCell sx={{ width: 80 }}>{t('workflow.enabled')}</TableCell>
-                      <TableCell>{t('common.description')}</TableCell>
+                      {/* Description 은 목록에서 뺀다. 여러 줄 설명이 들어오면 행 높이가
+                          늘어나 표를 읽을 수 없게 된다(실측). 상세 화면에서만 보여준다. */}
                       <TableCell sx={{ width: 120 }}>{t('common.actions')}</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {workflows.map((workflow) => {
                       const statusConfig = getWorkflowStatusConfig(workflow.status)
+                      const setName = setNameOf(workflow.tags)
+                      const setMembers = setName ? workflowSets.get(setName) : undefined
                       return (
                         <TableRow key={workflow.id}>
                           <TableCell>
@@ -906,6 +960,24 @@ export default function ProjectDetailPage() {
                               >
                                 {workflow.name}
                               </Link>
+                              {/* 세트 배지: 이 워크플로우 혼자로는 데이터가 완성되지 않는다는
+                                  사실을 목록에서 바로 알 수 있게 한다. 짝이 없으면(1개뿐)
+                                  세트로 표시하지 않는다 — 오해를 만든다. */}
+                              {setMembers && (
+                                <Chip
+                                  size="small"
+                                  color="secondary"
+                                  variant="outlined"
+                                  icon={<LinkIcon fontSize="small" />}
+                                  label={t('workflow.setBadge', '세트 {{n}}개', { n: setMembers.length })}
+                                  title={t(
+                                    'workflow.setTooltip',
+                                    '이 워크플로우는 "{{name}}" 세트의 일부입니다. 세트의 {{n}}개가 모두 실행되어야 데이터가 완성됩니다.',
+                                    { name: setName, n: setMembers.length },
+                                  )}
+                                  sx={{ ml: 1 }}
+                                />
+                              )}
                               <Typography
                                 variant="caption"
                                 sx={{
@@ -932,9 +1004,6 @@ export default function ProjectDetailPage() {
                               color={workflow.schedule_enabled ? 'success' : 'default'}
                               size="small"
                             />
-                          </TableCell>
-                          <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {workflow.description || '-'}
                           </TableCell>
                           <TableCell>
                             <Box sx={{ display: 'flex', gap: 0.5 }}>

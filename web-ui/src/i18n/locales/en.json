@@ -306,7 +306,10 @@
     "jobResourceSettings": "Resource Settings",
     "jobBehaviorSettings": "Behavior Settings",
     "runnerVersion": "Runner Version",
-    "runnerVersionStale": "Older than latest ready build ({{latest}})"
+    "runnerVersionStale": "Older than latest ready build ({{latest}})",
+    "setBadge": "set of {{n}}",
+    "setTooltip": "This workflow is part of the \"{{name}}\" set. All {{n}} workflows must run for the data to be complete.",
+    "setMembers": "Set members"
   },
   "agent": {
     "title": "Agents",

@@ -306,7 +306,10 @@
     "jobResourceSettings": "리소스 설정",
     "jobBehaviorSettings": "동작 설정",
     "runnerVersion": "Runner 버전",
-    "runnerVersionStale": "최신 빌드({{latest}})보다 이전 버전"
+    "runnerVersionStale": "최신 빌드({{latest}})보다 이전 버전",
+    "setBadge": "세트 {{n}}개",
+    "setTooltip": "이 워크플로우는 \"{{name}}\" 세트의 일부입니다. 세트의 {{n}}개가 모두 실행되어야 데이터가 완성됩니다.",
+    "setMembers": "세트 구성"
   },
   "agent": {
     "title": "에이전트",

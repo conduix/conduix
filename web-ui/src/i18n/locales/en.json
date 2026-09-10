@@ -307,9 +307,15 @@
     "jobBehaviorSettings": "Behavior Settings",
     "runnerVersion": "Runner Version",
     "runnerVersionStale": "Older than latest ready build ({{latest}})",
-    "setBadge": "set of {{n}}",
+    "setBadge": "set: {{name}} ({{n}})",
     "setTooltip": "This workflow is part of the \"{{name}}\" set. All {{n}} workflows must run for the data to be complete.",
-    "setMembers": "Set members"
+    "setMembers": "Set members",
+    "setName": "Set",
+    "setNamePlaceholder": "e.g. restroom-pipeline",
+    "setNameHelp": "Workflows sharing a set name must all run for the data to be complete. Leave empty to remove from the set.",
+    "setRunsWith": "Runs with:",
+    "setAlone": "No other workflow in this set",
+    "setNameField": "Set name (optional)"
   },
   "agent": {
     "title": "Agents",

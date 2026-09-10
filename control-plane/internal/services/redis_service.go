@@ -353,7 +353,7 @@ func (s *RedisService) GetPipelineMetrics(pipelineID string) (*types.PipelineMet
 }
 
 // GetMetrics Redis 서비스 메트릭 조회
-func (s *RedisService) GetMetrics() redisclient.Metrics {
+func (s *RedisService) GetMetrics() redisclient.MetricsSnapshot {
 	return s.client.GetMetrics()
 }
 

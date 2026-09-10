@@ -642,7 +642,7 @@ func (rc *ResilientClient) subscribeLoop(ctx context.Context, info *subscription
 
 		// 재연결 대기
 		if rc.config.OnError != nil {
-			rc.config.OnError(fmt.Errorf("subscription to %s lost, reconnecting...", info.channel))
+			rc.config.OnError(fmt.Errorf("subscription to %s lost, reconnecting", info.channel))
 		}
 
 		select {
@@ -743,11 +743,42 @@ func (rc *ResilientClient) recordLatency(d time.Duration) {
 	}
 }
 
-// GetMetrics 메트릭 조회
-func (rc *ResilientClient) GetMetrics() Metrics {
+// MetricsSnapshot 은 특정 시점의 메트릭 사본이다.
+//
+// Metrics 를 값으로 반환하면 sync.RWMutex 가 함께 복사된다. 복사된 mutex 는 원본과
+// 무관한 별개 락이므로, 호출자가 그것으로 동기화하면 아무것도 보호하지 못한다
+// (gopls: "return copies lock value"). 그래서 락을 제외한 스냅샷 타입을 따로 둔다.
+//
+// 필드는 읽기 전용이다 — 갱신은 ResilientClient 내부에서만 일어난다.
+type MetricsSnapshot struct {
+	TotalRequests       int64
+	SuccessfulRequests  int64
+	FailedRequests      int64
+	CacheHits           int64
+	CacheMisses         int64
+	ReconnectAttempts   int64
+	CircuitBreakerTrips int64
+	LastError           error
+	LastErrorTime       time.Time
+	AverageLatencyMs    float64
+}
+
+// GetMetrics 메트릭 조회(스냅샷).
+func (rc *ResilientClient) GetMetrics() MetricsSnapshot {
 	rc.metrics.mu.RLock()
 	defer rc.metrics.mu.RUnlock()
-	return *rc.metrics
+	return MetricsSnapshot{
+		TotalRequests:       rc.metrics.TotalRequests,
+		SuccessfulRequests:  rc.metrics.SuccessfulRequests,
+		FailedRequests:      rc.metrics.FailedRequests,
+		CacheHits:           rc.metrics.CacheHits,
+		CacheMisses:         rc.metrics.CacheMisses,
+		ReconnectAttempts:   rc.metrics.ReconnectAttempts,
+		CircuitBreakerTrips: rc.metrics.CircuitBreakerTrips,
+		LastError:           rc.metrics.LastError,
+		LastErrorTime:       rc.metrics.LastErrorTime,
+		AverageLatencyMs:    rc.metrics.AverageLatencyMs,
+	}
 }
 
 // Close 클라이언트 종료

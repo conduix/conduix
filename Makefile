@@ -15,8 +15,14 @@ ARCH=$(shell go env GOARCH)
 SHARED := ./shared
 PIPELINE_CORE := ./pipeline-core
 PIPELINE_WORKER := ./pipeline-worker
+PIPELINE_RUNNER := ./pipeline-runner
+PLUGIN_SDK := ./plugin-sdk
 CONTROL_PLANE := ./control-plane
 WEB_UI := ./web-ui
+
+# Go 모듈 전체 목록. lint/vet/gopls 가 같은 목록을 써야 한 모듈만 검사에서 빠지는 일이 없다
+# (pipeline-runner 와 plugin-sdk 가 lint-go/vet 에서 누락돼 있었다).
+GO_MODULES := $(SHARED) $(PLUGIN_SDK) $(PIPELINE_CORE) $(PIPELINE_RUNNER) $(PIPELINE_WORKER) $(CONTROL_PLANE)
 BUILD_DIR := ./build
 TARGET_DIR := ./target
 
@@ -134,9 +140,9 @@ lint: lint-go lint-web ## 전체 린트 실행
 
 lint-go: ## Go 린트 실행
 	@echo "==> Go 린트 실행 중..."
-	@for dir in $(SHARED) $(PIPELINE_CORE) $(PIPELINE_WORKER) $(CONTROL_PLANE); do \
+	@for dir in $(GO_MODULES); do \
 		echo "Linting $$dir..."; \
-		cd $$dir && golangci-lint run && cd ..; \
+		(cd $$dir && golangci-lint run) || exit 1; \
 	done
 
 lint-web: ## Web UI 린트 실행
@@ -158,12 +164,32 @@ fmt-web: ## Web UI 포맷팅
 
 vet: ## Go vet 실행
 	@echo "==> Go vet 실행 중..."
-	cd $(SHARED) && go vet ./...
-	cd $(PIPELINE_CORE) && go vet ./...
-	cd $(PIPELINE_WORKER) && go vet ./...
-	cd $(CONTROL_PLANE) && go vet ./...
+	@for dir in $(GO_MODULES); do \
+		echo "Vetting $$dir..."; \
+		(cd $$dir && go vet ./...) || exit 1; \
+	done
 
-check: vet lint test ## 전체 체크 (vet + lint + test)
+lint-gopls: ## gopls 정적 진단 (golangci-lint 가 안 잡는 항목: 락 복사, deprecated API, unused write)
+	@echo "==> gopls 진단 실행 중..."
+	@command -v gopls >/dev/null 2>&1 || { \
+		echo "gopls 미설치. 설치: go install golang.org/x/tools/gopls@latest"; \
+		exit 1; \
+	}
+	@fail=0; \
+	for dir in $(GO_MODULES); do \
+		echo "Checking $$dir..."; \
+		out=$$(cd $$dir && find . -name "*.go" -not -path "./vendor/*" -print0 \
+			| xargs -0 gopls check 2>&1 \
+			| grep -vFf ../.goplsignore 2>/dev/null || true); \
+		if [ -n "$$out" ]; then echo "$$out"; fail=1; fi; \
+	done; \
+	if [ $$fail -ne 0 ]; then \
+		echo "gopls 진단에서 문제가 발견되었습니다"; \
+		exit 1; \
+	fi; \
+	echo "gopls 진단 통과"
+
+check: vet lint lint-gopls test ## 전체 체크 (vet + lint + gopls + test)
 
 # ============================================================================
 # 개발 모드

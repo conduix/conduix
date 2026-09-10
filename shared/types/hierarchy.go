@@ -6,22 +6,22 @@ import "time"
 // 워크플로우 내 모든 파이프라인은 함께 시작/중지됨 (개별 제어 없음)
 // 프로젝트 내에 realtime, batch 워크플로우 존재
 type Workflow struct {
-	ID            string         `json:"id"`
-	ProjectID     string         `json:"project_id"` // 상위 Project ID
-	Name          string         `json:"name"`
-	Description   string         `json:"description,omitempty"`
-	Type          WorkflowType   `json:"type"`               // realtime 또는 batch (고정)
-	ExecutionMode ExecutionMode  `json:"execution_mode"`     // parallel, sequential, dag
-	Status        WorkflowStatus `json:"status"`             // 워크플로우 전체 상태
-	Enabled       bool           `json:"enabled"`            // 워크플로우 활성화 여부 (수집 on/off)
-	Schedule      *ScheduleConfig     `json:"schedule,omitempty"` // 배치용 스케줄
-	Pipelines     []WorkflowPipeline  `json:"pipelines"`          // Pipelines in workflow (Config only, no individual control)
-	FailurePolicy *FailurePolicy      `json:"failure_policy,omitempty"`
-	Metadata      map[string]any      `json:"metadata,omitempty"`
-	Tags          []string            `json:"tags,omitempty"`
-	CreatedBy     string              `json:"created_by"`
-	CreatedAt     time.Time           `json:"created_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
+	ID            string             `json:"id"`
+	ProjectID     string             `json:"project_id"` // 상위 Project ID
+	Name          string             `json:"name"`
+	Description   string             `json:"description,omitempty"`
+	Type          WorkflowType       `json:"type"`               // realtime 또는 batch (고정)
+	ExecutionMode ExecutionMode      `json:"execution_mode"`     // parallel, sequential, dag
+	Status        WorkflowStatus     `json:"status"`             // 워크플로우 전체 상태
+	Enabled       bool               `json:"enabled"`            // 워크플로우 활성화 여부 (수집 on/off)
+	Schedule      *ScheduleConfig    `json:"schedule,omitempty"` // 배치용 스케줄
+	Pipelines     []WorkflowPipeline `json:"pipelines"`          // Pipelines in workflow (Config only, no individual control)
+	FailurePolicy *FailurePolicy     `json:"failure_policy,omitempty"`
+	Metadata      map[string]any     `json:"metadata,omitempty"`
+	Tags          []string           `json:"tags,omitempty"`
+	CreatedBy     string             `json:"created_by"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 // WorkflowType 워크플로우 유형 (데이터 제공자당 2개만 존재)
@@ -122,20 +122,20 @@ const (
 // PipelineBatchConfig 파이프라인 레벨 배치 처리 설정
 // Stage는 항상 병렬 처리, Output만 bulk/individual 선택
 type PipelineBatchConfig struct {
-	Enabled       bool       `json:"enabled"`                    // 배치 모드 활성화
-	OutputMode    OutputMode `json:"output_mode,omitempty"`      // Output 처리 모드: bulk (배치 전송) 또는 individual (개별 전송)
-	Size          int        `json:"size,omitempty"`             // 배치 크기 - 한 번에 처리할 레코드 수 (기본: 100)
-	Workers       int        `json:"workers,omitempty"`          // Stage 병렬 워커 수 (기본: Size와 동일, 최대 100)
-	FlushInterval string     `json:"flush_interval,omitempty"`   // 시간 기반 플러시 주기 (기본: 5s)
+	Enabled       bool       `json:"enabled"`                  // 배치 모드 활성화
+	OutputMode    OutputMode `json:"output_mode,omitempty"`    // Output 처리 모드: bulk (배치 전송) 또는 individual (개별 전송)
+	Size          int        `json:"size,omitempty"`           // 배치 크기 - 한 번에 처리할 레코드 수 (기본: 100)
+	Workers       int        `json:"workers,omitempty"`        // Stage 병렬 워커 수 (기본: Size와 동일, 최대 100)
+	FlushInterval string     `json:"flush_interval,omitempty"` // 시간 기반 플러시 주기 (기본: 5s)
 }
 
 // RateLimitConfig 레이트 리밋 설정
 type RateLimitConfig struct {
 	Enabled  bool   `json:"enabled"`
-	Rate     int    `json:"rate"`                // 단위 시간당 처리량
-	Interval string `json:"interval"`            // second, minute, hour
-	Burst    int    `json:"burst,omitempty"`     // 버스트 허용량 (토큰 버킷)
-	Strategy string `json:"strategy,omitempty"`  // token_bucket, sliding_window, fixed_window
+	Rate     int    `json:"rate"`               // 단위 시간당 처리량
+	Interval string `json:"interval"`           // second, minute, hour
+	Burst    int    `json:"burst,omitempty"`    // 버스트 허용량 (토큰 버킷)
+	Strategy string `json:"strategy,omitempty"` // token_bucket, sliding_window, fixed_window
 }
 
 // PartitionConfig 파티션 설정
@@ -182,7 +182,6 @@ type Output struct {
 	PreStages []Stage        `json:"pre_stages,omitempty"` // Output 전용 변환 단계
 	Config    map[string]any `json:"config"`               // Output별 설정
 }
-
 
 // ScheduleConfig 스케줄 설정
 type ScheduleConfig struct {
@@ -271,7 +270,7 @@ type PipelineExecutionResult struct {
 	RecordsFailed    int64               `json:"records_failed"`    // 실패량
 	ErrorCount       int64               `json:"error_count"`       // 총 에러 (backward compat)
 	ErrorMessage     string              `json:"error_message,omitempty"`
-	Offset           int64               `json:"offset,omitempty"`      // 실시간용 오프셋
+	Offset           int64               `json:"offset,omitempty"`     // 실시간용 오프셋
 	Checkpoint       map[string]any      `json:"checkpoint,omitempty"` // 체크포인트 (오프셋 포함 가능)
 	Statistics       *PipelineStatistics `json:"statistics,omitempty"` // 상세 통계
 }

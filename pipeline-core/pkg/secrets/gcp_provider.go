@@ -57,14 +57,18 @@ func NewGCPSecretManagerProvider(cfg *GCPConfig) (*GCPSecretManagerProvider, err
 	// 클라이언트 옵션
 	var opts []option.ClientOption
 
-	// 인증 설정
-	// deprecated 대체재가 cloud.google.com/go/auth 전면 이전이라 별도 마이그레이션에서 처리
+	// 인증 설정: 자격 증명 타입을 ServiceAccount 로 고정한다.
+	//
+	// WithCredentialsFile/JSON 은 타입을 검증하지 않아 deprecated 됐다 — 통제되지 않은
+	// 소스에서 온 설정을 그대로 로드하면 의도하지 않은 자격 증명 타입(예: 외부 계정
+	// impersonation)이 실릴 수 있다. conduix 는 사용자가 넣은 설정을 그대로 쓰므로
+	// 이 위험이 실재한다. 서비스 계정만 받겠다고 명시해 예상 밖 타입을 차단한다.
 	if cfg.CredentialsJSON != "" {
-		opts = append(opts, option.WithCredentialsJSON([]byte(cfg.CredentialsJSON))) //nolint:staticcheck
+		opts = append(opts, option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(cfg.CredentialsJSON)))
 	} else if cfg.CredentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile)) //nolint:staticcheck
+		opts = append(opts, option.WithAuthCredentialsFile(option.ServiceAccount, cfg.CredentialsFile))
 	} else if credFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credFile != "" {
-		opts = append(opts, option.WithCredentialsFile(credFile)) //nolint:staticcheck
+		opts = append(opts, option.WithAuthCredentialsFile(option.ServiceAccount, credFile))
 	}
 	// 그렇지 않으면 Application Default Credentials 사용
 

@@ -1,34 +1,39 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
-func clearEnv() {
+// t.Setenv 를 쓴다 — os.Setenv 는 에러를 반환하고(errcheck), 테스트 종료 시 값을
+// 되돌리지 않아 뒤 테스트에 값이 새어 나간다. t.Setenv 는 자동 복원하므로
+// defer 로 지우는 코드도 필요 없다.
+func clearEnv(t *testing.T) {
+	t.Helper()
 	for _, key := range []string{
 		"EXECUTION_MODE", "WORKFLOW_ID", "EXECUTION_ID",
 		"PIPELINES_CONFIG", "CONTROL_PLANE_URL", "CALLBACK_URL",
 		"CHECKPOINT_ENDPOINT", "TIMEOUT_SECONDS", "HEALTH_PORT",
 	} {
-		os.Unsetenv(key)
+		// 로더는 os.Getenv 만 쓰므로 빈 문자열과 미설정을 구분하지 않는다 —
+		// 빈 값으로 두면 "설정 안 됨" 과 같은 효과다.
+		t.Setenv(key, "")
 	}
 }
 
-func setRequiredEnv(mode string) {
-	os.Setenv("EXECUTION_MODE", mode)
-	os.Setenv("WORKFLOW_ID", "wf-001")
-	os.Setenv("PIPELINES_CONFIG", `[{"id":"p1","name":"test-pipeline"}]`)
-	os.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
+func setRequiredEnv(t *testing.T, mode string) {
+	t.Helper()
+	t.Setenv("EXECUTION_MODE", mode)
+	t.Setenv("WORKFLOW_ID", "wf-001")
+	t.Setenv("PIPELINES_CONFIG", `[{"id":"p1","name":"test-pipeline"}]`)
+	t.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
 	if mode == "batch" {
-		os.Setenv("EXECUTION_ID", "exec-001")
+		t.Setenv("EXECUTION_ID", "exec-001")
 	}
 }
 
 func TestLoadFromEnvBatch(t *testing.T) {
-	clearEnv()
-	setRequiredEnv("batch")
-	defer clearEnv()
+	clearEnv(t)
+	setRequiredEnv(t, "batch")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -53,9 +58,8 @@ func TestLoadFromEnvBatch(t *testing.T) {
 }
 
 func TestLoadFromEnvStreaming(t *testing.T) {
-	clearEnv()
-	setRequiredEnv("streaming")
-	defer clearEnv()
+	clearEnv(t)
+	setRequiredEnv(t, "streaming")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -68,11 +72,10 @@ func TestLoadFromEnvStreaming(t *testing.T) {
 }
 
 func TestLoadFromEnvMissingWorkflowID(t *testing.T) {
-	clearEnv()
-	os.Setenv("EXECUTION_MODE", "batch")
-	os.Setenv("PIPELINES_CONFIG", `[]`)
-	os.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
-	defer clearEnv()
+	clearEnv(t)
+	t.Setenv("EXECUTION_MODE", "batch")
+	t.Setenv("PIPELINES_CONFIG", `[]`)
+	t.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
 
 	_, err := LoadFromEnv()
 	if err == nil {
@@ -81,12 +84,11 @@ func TestLoadFromEnvMissingWorkflowID(t *testing.T) {
 }
 
 func TestLoadFromEnvMissingExecutionIDForBatch(t *testing.T) {
-	clearEnv()
-	os.Setenv("EXECUTION_MODE", "batch")
-	os.Setenv("WORKFLOW_ID", "wf-001")
-	os.Setenv("PIPELINES_CONFIG", `[{"id":"p1"}]`)
-	os.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
-	defer clearEnv()
+	clearEnv(t)
+	t.Setenv("EXECUTION_MODE", "batch")
+	t.Setenv("WORKFLOW_ID", "wf-001")
+	t.Setenv("PIPELINES_CONFIG", `[{"id":"p1"}]`)
+	t.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
 
 	_, err := LoadFromEnv()
 	if err == nil {
@@ -95,12 +97,11 @@ func TestLoadFromEnvMissingExecutionIDForBatch(t *testing.T) {
 }
 
 func TestLoadFromEnvInvalidMode(t *testing.T) {
-	clearEnv()
-	os.Setenv("EXECUTION_MODE", "invalid")
-	os.Setenv("WORKFLOW_ID", "wf-001")
-	os.Setenv("PIPELINES_CONFIG", `[]`)
-	os.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
-	defer clearEnv()
+	clearEnv(t)
+	t.Setenv("EXECUTION_MODE", "invalid")
+	t.Setenv("WORKFLOW_ID", "wf-001")
+	t.Setenv("PIPELINES_CONFIG", `[]`)
+	t.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
 
 	_, err := LoadFromEnv()
 	if err == nil {
@@ -109,9 +110,8 @@ func TestLoadFromEnvInvalidMode(t *testing.T) {
 }
 
 func TestLoadFromEnvCallbackURLDefault(t *testing.T) {
-	clearEnv()
-	setRequiredEnv("batch")
-	defer clearEnv()
+	clearEnv(t)
+	setRequiredEnv(t, "batch")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -125,10 +125,9 @@ func TestLoadFromEnvCallbackURLDefault(t *testing.T) {
 }
 
 func TestLoadFromEnvCustomTimeout(t *testing.T) {
-	clearEnv()
-	setRequiredEnv("batch")
-	os.Setenv("TIMEOUT_SECONDS", "7200")
-	defer clearEnv()
+	clearEnv(t)
+	setRequiredEnv(t, "batch")
+	t.Setenv("TIMEOUT_SECONDS", "7200")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -141,9 +140,8 @@ func TestLoadFromEnvCustomTimeout(t *testing.T) {
 }
 
 func TestLoadFromEnvDefaultHealthPort(t *testing.T) {
-	clearEnv()
-	setRequiredEnv("batch")
-	defer clearEnv()
+	clearEnv(t)
+	setRequiredEnv(t, "batch")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -156,13 +154,12 @@ func TestLoadFromEnvDefaultHealthPort(t *testing.T) {
 }
 
 func TestLoadFromEnvWorkflowJSON(t *testing.T) {
-	clearEnv()
-	os.Setenv("EXECUTION_MODE", "batch")
-	os.Setenv("WORKFLOW_ID", "wf-full")
-	os.Setenv("EXECUTION_ID", "exec-full")
-	os.Setenv("PIPELINES_CONFIG", `{"id":"wf-full","name":"Full Workflow","type":"batch","pipelines":[{"id":"p1","name":"pipe1"}]}`)
-	os.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
-	defer clearEnv()
+	clearEnv(t)
+	t.Setenv("EXECUTION_MODE", "batch")
+	t.Setenv("WORKFLOW_ID", "wf-full")
+	t.Setenv("EXECUTION_ID", "exec-full")
+	t.Setenv("PIPELINES_CONFIG", `{"id":"wf-full","name":"Full Workflow","type":"batch","pipelines":[{"id":"p1","name":"pipe1"}]}`)
+	t.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -175,31 +172,29 @@ func TestLoadFromEnvWorkflowJSON(t *testing.T) {
 }
 
 func TestGetEnv(t *testing.T) {
-	os.Unsetenv("TEST_KEY_LOADER")
+	t.Setenv("TEST_KEY_LOADER", "")
 	if v := getEnv("TEST_KEY_LOADER", "default"); v != "default" {
 		t.Errorf("expected default, got %s", v)
 	}
 
-	os.Setenv("TEST_KEY_LOADER", "custom")
-	defer os.Unsetenv("TEST_KEY_LOADER")
+	t.Setenv("TEST_KEY_LOADER", "custom")
 	if v := getEnv("TEST_KEY_LOADER", "default"); v != "custom" {
 		t.Errorf("expected custom, got %s", v)
 	}
 }
 
 func TestGetEnvInt64(t *testing.T) {
-	os.Unsetenv("TEST_INT_LOADER")
+	t.Setenv("TEST_INT_LOADER", "")
 	if v := getEnvInt64("TEST_INT_LOADER", 42); v != 42 {
 		t.Errorf("expected 42, got %d", v)
 	}
 
-	os.Setenv("TEST_INT_LOADER", "100")
-	defer os.Unsetenv("TEST_INT_LOADER")
+	t.Setenv("TEST_INT_LOADER", "100")
 	if v := getEnvInt64("TEST_INT_LOADER", 42); v != 100 {
 		t.Errorf("expected 100, got %d", v)
 	}
 
-	os.Setenv("TEST_INT_LOADER", "invalid")
+	t.Setenv("TEST_INT_LOADER", "invalid")
 	if v := getEnvInt64("TEST_INT_LOADER", 42); v != 42 {
 		t.Errorf("expected 42 for invalid, got %d", v)
 	}

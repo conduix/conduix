@@ -11,6 +11,9 @@
 
 **둘 다 필요하다. 어느 쪽도 없애지 않는다.**
 
+**소유 경계**: conduix 저장소는 플랫폼과 그 샘플만 갖는다.
+사용처(복지맵 등)의 파이프라인 정의는 **그 프로젝트 저장소가 소유한다.**
+
 ---
 
 ## 현재 상태 — 환경 분리 자체는 이미 맞다
@@ -63,25 +66,40 @@ ArgoCD 로 관리한다는 것은 **Git 이 정본**이라는 뜻이다.
 
 **샘플·서비스 파이프라인 정의를 YAML 로 옮기고, seed 가 그것을 읽게 한다.**
 
+**conduix 저장소에는 샘플만 둔다.**
+
 ```
-deploy/helm/conduix/pipelines/          (또는 config/pipelines/)
-├── samples/                            values.yaml 의 seed.samples=true 일 때만
-│   ├── bulk-mysql-to-mysql.yaml
-│   ├── bulk-rest-to-mysql.yaml
-│   ├── bulk-rest-to-postgres.yaml
-│   ├── cdc-rest-polling-to-mysql.yaml
-│   ├── cdc-kafka-to-mysql.yaml
-│   └── cdc-mysql-to-mysql.yaml
-└── welfare-map/                        서비스 환경에 항상 배포
-    ├── bulk-공중화장실-geocode-sweep.yaml
-    └── cdc-restrooms-지오코딩.yaml
+deploy/helm/conduix/pipelines/samples/     seed.samples=true 일 때만
+├── batch-mysql-to-mysql.yaml
+├── batch-rest-to-mysql.yaml
+├── batch-rest-to-postgres.yaml
+├── realtime-rest-polling-to-mysql.yaml
+├── realtime-kafka-to-mysql.yaml
+└── realtime-mysql-cdc-to-mysql.yaml
 ```
+
+**사용처의 파이프라인은 그 프로젝트가 소유한다.**
+
+복지맵 파이프라인 3종은 `modu-welfare-map` 저장소에 둔다.
+conduix 는 플랫폼이고 복지맵은 그것을 쓰는 쪽이다 — 특정 사용처의 정의가
+플랫폼 저장소에 섞이면 안 된다. 다른 사용자가 복지맵 파이프라인을 받을 이유가 없다.
+
+```
+modu-welfare-map/pipelines/            (복지맵 저장소)
+├── batch-공중화장실-geocode-sweep.yaml
+├── batch-아동복지급식-가맹점.yaml
+└── realtime-restrooms-지오코딩.yaml
+```
+
+**등록 경로**: conduix 의 seed 는 자기 샘플만 시딩한다.
+사용처 파이프라인은 **API 로 등록**한다(`POST /api/v1/workflows`) — 복지맵 저장소의
+CI 나 배포 스크립트가 자기 YAML 을 읽어 올린다.
 
 **설계 포인트**
 - `seed.go` 는 YAML 을 **읽어서** 등록만 한다 (정의를 코드에 두지 않는다)
 - ConfigMap 으로 마운트하거나 이미지에 포함 — 어느 쪽이든 **Git 이 원본**
 - 접속정보는 지금처럼 `${VAR}` / `SEED_*` env 로 주입 (환경별로 다르므로)
-- 샘플 여부는 values 로 제어: 서비스 환경은 복지맵만, e2e 는 샘플까지
+- 샘플 시딩 여부는 values 로 제어 (`seed.samples`): 서비스 환경은 끄고, e2e 는 켠다
 
 > 기존 `configs/v2/*.yaml` 과 형식을 통일할지, 별도 스키마로 갈지는 판단이 필요하다.
 > 통일하는 편이 낫지만, `StepV2` 에 `type` 필드가 없어 커스텀 stage 를 못 쓴다
@@ -89,28 +107,31 @@ deploy/helm/conduix/pipelines/          (또는 config/pipelines/)
 
 ---
 
-## 문제 2 — 복지맵 프로젝트가 서비스 환경에 없다
+## 문제 2 — 복지맵 파이프라인의 소유처가 없다
 
-e2e 에만 만들어져 있다. 서비스용이므로 `conduix` 에 있어야 한다.
+`conduix` 서비스 환경의 DB 에만 있다. Git 에 정본이 없으니 환경을 다시 올리면 사라진다.
 
-**백업해 둔 정의** (환경 정리 전에 추출함):
+**이 저장소(conduix)에 두면 안 된다.** 복지맵은 플랫폼을 쓰는 쪽이고,
+그 파이프라인은 복지맵 프로젝트의 자산이다.
+
+→ **`modu-welfare-map` 저장소가 소유한다.** conduix 쪽 작업은
+"사용처가 자기 파이프라인을 등록할 수 있는 경로를 제공하는 것" 까지다.
+
+**백업해 둔 정의** (환경 정리 전 추출):
 
 ```
-<scratchpad>/rescue/
-├── samples/       6종 (bulk 3 + cdc 3)
-└── welfare-map/
-    ├── bulk-공중화장실-MySQL-geocode-sweep.json
-    └── cdc-restrooms-지오코딩-MySQL.json
+<scratchpad>/rescue/welfare-map/
+├── batch-공중화장실-MySQL-geocode-sweep.json
+└── realtime-restrooms-지오코딩-MySQL.json
 ```
 
-문제 1 을 해결하면서 이 정의를 YAML 로 옮기면 된다.
+`[batch] 아동복지급식 가맹점 → MySQL` 은 백업 이후 생성돼 이 목록에 없다.
+현재 서비스 DB 에 있으므로 거기서 추출한다.
 
 **주의**: 복지맵 파이프라인은 mock 이 아니라 **실제 공공데이터 API** 를 호출한다.
 서비스 환경에는 mock 이 없으므로(`mocks.enabled: false`) 그대로 맞다.
 다만 `KAKAO_REST_KEY`, `cache_dsn` 등 시크릿이 서비스 환경에 있어야 한다
 (`deploy/helm/conduix/templates/pipeline-secrets.yaml` 확인).
-
----
 
 ## 문제 3 — e2e 환경 수명 관리
 
@@ -152,7 +173,8 @@ web-ui 접속이 `Empty reply from server` 로 실패했다.
    └ configs/v2 형식과 통일할지 결정 (StepV2 의 type 필드 부재 제약 확인)
 2. seed.go 를 "YAML 읽어 등록" 으로 리팩터
    └ 정의를 코드에서 제거, 샘플/서비스 분리를 values 로 제어
-3. 복지맵 파이프라인 2종을 YAML 로 작성 (백업본 기반)
+3. 사용처 등록 경로 확인 — API 로 워크플로를 만들 수 있는지
+   (복지맵 YAML 작성은 modu-welfare-map 저장소 작업이다)
 4. 서비스 환경 시크릿 확인 (KAKAO_REST_KEY 등)
 5. main 머지 → ArgoCD 자동 동기화 확인
 6. e2e 데이터 처리 방침 결정 후 정리

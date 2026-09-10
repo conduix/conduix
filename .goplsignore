@@ -1,0 +1,11 @@
+# gopls 진단 중 의도적으로 억제한 항목 (부분 문자열 매칭, grep -F)
+#
+# 여기에 넣는 기준: 판단이 끝났고 코드에 nolint 주석과 이유가 남아 있는 것만.
+# "지금 고치기 번거롭다" 는 이유로 넣지 않는다 — 그러면 이 파일이 진단을 무력화한다.
+
+# pubsub v1 → v2: v2 는 Subscription 을 Subscriber 로 바꾸며 관리 API 를 타입에서 제거했다.
+# 이 파일이 쓰는 Exists/SeekToTime/CreateSnapshot 이 모두 없어져 SubscriptionAdminClient
+# (raw gRPC)로 재작성해야 하고, ReceiveSettings.Synchronous 도 제거됐다.
+# 수신 경로(Receive/Message)는 동일하지만 관리 API 3개 + 동기 수신 설정이 걸려 별도 작업으로 분리.
+# 상세 근거는 pipeline-core/pkg/source/pubsub.go 의 import 주석 참고.
+"cloud.google.com/go/pubsub" is deprecated

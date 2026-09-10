@@ -43,6 +43,18 @@ type SchedulerService struct {
 	autoBuilder *AutoBuilder
 }
 
+// newSchedulerAutoBuilder 는 cron 경로용 AutoBuilder 를 만든다.
+// 핸들러 경로와 같은 분산 락을 써야 cron 과 수동 실행이 서로 중복 예약하지 않는다.
+func newSchedulerAutoBuilder(db *database.DB, redisService *RedisService) *AutoBuilder {
+	ab := NewAutoBuilder(db.DB, builder.NewRunnerBuilder(db.DB, nil), slog.Default())
+	if redisService != nil {
+		if client := redisService.GetClient(); client != nil {
+			return ab.WithLocker(client)
+		}
+	}
+	return ab
+}
+
 // SchedulerConfig 스케줄러 설정
 type SchedulerConfig struct {
 	RefreshInterval time.Duration // DB 변경 감지 주기 (기본: 30초)
@@ -73,7 +85,7 @@ func NewSchedulerService(db *database.DB, redisService *RedisService, cfg *Sched
 		refreshInterval: cfg.RefreshInterval,
 		staleGrace:      2 * time.Minute, // 실행 직후 하트비트 등록 유예
 		runnerResolver:  NewRunnerResolver(db.DB),
-		autoBuilder:     NewAutoBuilder(db.DB, builder.NewRunnerBuilder(db.DB, nil), slog.Default()),
+		autoBuilder:     newSchedulerAutoBuilder(db, redisService),
 	}
 }
 
@@ -440,7 +452,7 @@ func (s *SchedulerService) TriggerNow(workflowID, userID string) (*models.Workfl
 	//
 	// 검증을 앞으로 옮겨, 실행할 수 없으면 상태를 오염시키지 않고 사유를 반환한다.
 	// 호출자(cron 트리거)는 이 에러를 실행 이력에 남긴다.
-	if aerr := EnsureLiveAgent(s.db.DB, clusterID); aerr != nil {
+	if aerr := EnsureLiveAgent(s.redisService, clusterID); aerr != nil {
 		return nil, aerr
 	}
 	if s.runnerResolver != nil {

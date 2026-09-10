@@ -30,8 +30,14 @@ type AutoBuilder struct {
 
 	// 같은 워크플로우에 대한 중복 예약을 막는다. 사용자가 실행을 연달아 누르면
 	// 빌드 대기가 여러 개 쌓여 빌드 후 같은 워크플로우가 여러 번 시작된다.
+	//
+	// in-process 맵만으로는 부족하다 — control-plane 이 다중 레플리카로 도는 환경에서
+	// 두 요청이 서로 다른 pod 로 가면 각 pod 가 자기 맵만 보고 둘 다 예약한다
+	// (실측: 2 레플리카에서 newly_reserved=true 가 두 번, 빌드 후 실행 2건 생성).
+	// 그래서 Redis 분산 락을 1차 관문으로 쓰고, 맵은 같은 pod 내 경합만 막는다.
 	mu       sync.Mutex
 	reserved map[string]struct{}
+	locker   ReservationLocker
 
 	// 테스트에서 대기 시간을 줄이기 위해 주입 가능하게 둔다.
 	pollInterval time.Duration
@@ -56,6 +62,26 @@ const (
 // ErrBuildWaitTimeout 은 빌드가 상한 안에 끝나지 않았을 때 반환한다.
 var ErrBuildWaitTimeout = errors.New("runner build did not finish within the wait timeout")
 
+// ReservationLocker 는 레플리카 간 중복 예약을 막는 분산 락이다.
+// RedisService 의 ResilientClient 가 구현하며(SetNX/Del), 테스트에서는 대역을 넣는다.
+type ReservationLocker interface {
+	SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) (bool, error)
+	Del(ctx context.Context, keys ...string) error
+}
+
+// reservationTTL 은 예약 락의 수명이다.
+//
+// 빌드 대기 상한(20분)보다 길어야 한다 — 짧으면 빌드 도중 락이 풀려 다른 레플리카가
+// 중복 예약한다. 반대로 무한이면 pod 가 죽었을 때 그 워크플로우가 영구히 예약 불가가
+// 되므로, 상한을 넘긴 여유값으로 자동 만료시킨다.
+const reservationTTL = 25 * time.Minute
+
+func reservationKey(workflowID string) string {
+	return "autobuild:reserve:" + workflowID
+}
+
+// NewAutoBuilder 는 locker 없이 만든다(단일 프로세스·테스트용).
+// 다중 레플리카 환경에서는 WithLocker 로 분산 락을 넣어야 중복 예약이 막힌다.
 func NewAutoBuilder(db *gorm.DB, builder RunnerBuildRunner, logger *slog.Logger) *AutoBuilder {
 	if logger == nil {
 		logger = slog.Default()
@@ -68,6 +94,12 @@ func NewAutoBuilder(db *gorm.DB, builder RunnerBuildRunner, logger *slog.Logger)
 		pollInterval: defaultBuildPollInterval,
 		waitTimeout:  defaultBuildWaitTimeout,
 	}
+}
+
+// WithLocker 는 레플리카 간 중복 예약을 막는 분산 락을 주입한다.
+func (a *AutoBuilder) WithLocker(l ReservationLocker) *AutoBuilder {
+	a.locker = l
+	return a
 }
 
 // StartFn 은 빌드 완료 후 실행을 시작하는 콜백이다.
@@ -90,11 +122,23 @@ func (a *AutoBuilder) Reserve(workflowID, userID string, start StartFn) bool {
 	a.reserved[workflowID] = struct{}{}
 	a.mu.Unlock()
 
+	// 레플리카 간 중복 차단. 락을 못 잡으면 다른 pod 가 이미 예약했으므로 물러난다 —
+	// 그 pod 가 빌드 후 실행을 시작한다.
+	if !a.acquireReservation(workflowID) {
+		a.mu.Lock()
+		delete(a.reserved, workflowID)
+		a.mu.Unlock()
+		a.logger.Info("auto-build reserved by another replica, skipping duplicate",
+			"workflow_id", workflowID)
+		return false
+	}
+
 	go func() {
 		defer func() {
 			a.mu.Lock()
 			delete(a.reserved, workflowID)
 			a.mu.Unlock()
+			a.releaseReservation(workflowID)
 		}()
 
 		if err := a.buildAndWait(userID); err != nil {
@@ -202,3 +246,42 @@ func isBuildInProgressErr(err error) bool {
 
 // buildInProgressMessage 는 builder.Build 가 동시 호출을 거부할 때 쓰는 문구다.
 const buildInProgressMessage = "another build is already in progress"
+
+// acquireReservation 은 이 워크플로우의 예약 소유권을 잡는다.
+//
+// locker 가 없으면(단일 프로세스 구성) 통과시킨다 — in-process 맵이 이미 막았다.
+// Redis 조회가 실패하면 통과시킨다: 락을 못 잡았다고 실행을 포기하면 정상 요청이
+// 조용히 사라진다. 중복 실행보다 실행 누락이 더 나쁘고, 빌더의 DB building 체크가
+// 중복 빌드는 이미 막는다.
+func (a *AutoBuilder) acquireReservation(workflowID string) bool {
+	if a.locker == nil {
+		return true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	acquired, err := a.locker.SetNX(ctx, reservationKey(workflowID), "1", reservationTTL)
+	if err != nil {
+		a.logger.Warn("reservation lock unavailable, proceeding without it",
+			"workflow_id", workflowID, "error", err)
+		return true
+	}
+	return acquired
+}
+
+// releaseReservation 은 예약을 해제해 다음 요청이 즉시 예약할 수 있게 한다.
+// 해제에 실패해도 TTL 로 자연 만료되므로 영구 잠금은 되지 않는다.
+func (a *AutoBuilder) releaseReservation(workflowID string) {
+	if a.locker == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := a.locker.Del(ctx, reservationKey(workflowID)); err != nil {
+		a.logger.Warn("failed to release reservation lock (will expire by TTL)",
+			"workflow_id", workflowID, "error", err)
+	}
+}

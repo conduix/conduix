@@ -150,13 +150,20 @@ func (r *RunnerResolver) ResolveRunnerImage(workflow *models.Workflow) (string, 
 // - 변경분 있어 빌드 필요 → ("", "", true, *BuildRequiredError)
 // - native 있으나 ready 바이너리 없음 → BuildRequiredError(바이너리 없는 ready 는 실행 불가 — 함정 회피)
 func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string, string, bool, error) {
-	nativePlugins, err := r.findNativePluginsInWorkflow(workflow)
+	// 빌드는 워크플로 단위가 아니라 "활성 native plugin 전체" 를 한 바이너리로 만든다
+	// (runner_builder.go). 따라서 pending/코어변경 판정도 같은 집합으로 해야 한다 —
+	// 워크플로가 참조하는 플러그인만 보면 CombinedSourceHash 가 빌더와 달라져
+	// 항상 coreChanged 로 오판한다.
+	nativePlugins, err := r.findAllActiveNativePlugins()
 	if err != nil {
 		return "", "", false, fmt.Errorf("failed to find native plugins: %w", err)
 	}
-	if len(nativePlugins) == 0 {
-		return "", DefaultRunnerImage, false, nil
-	}
+	// native plugin 이 없어도 최신 ready 바이너리로 실행한다.
+	// 예전에는 여기서 DefaultRunnerImage 로 조기 반환했는데, 그러면 이미지에 구워진
+	// 낡은 바이너리로 돌아 코어(pipeline-core/shared/plugin-sdk) 수정이 영영 반영되지
+	// 않았다(실측: initContainer 미주입 → 이미지 ENTRYPOINT 실행). 실행 이력에도
+	// runner_version_id 가 남지 않아 무엇으로 돌았는지 추적할 수 없었다.
+	// nativePlugins 는 이제 "무엇이 pending 인지" 판정에만 쓰인다.
 
 	var pendingPlugins []models.Plugin
 	for _, p := range nativePlugins {
@@ -216,6 +223,17 @@ func (r *RunnerResolver) coreChangedSince(version *models.RunnerVersion, plugins
 }
 
 // findNativePluginsInWorkflow 워크플로우의 파이프라인 설정에서 native plugin stage를 찾아 해당 Plugin 모델을 반환
+// findAllActiveNativePlugins 는 빌드 대상과 같은 집합을 돌려준다.
+// 빌더(runner_builder.go)가 type=native AND status=active 전체를 컴파일하므로,
+// 리졸버의 해시 판정도 같은 기준이어야 한다.
+func (r *RunnerResolver) findAllActiveNativePlugins() ([]models.Plugin, error) {
+	var plugins []models.Plugin
+	if err := r.db.Where("type = ? AND status = ?", "native", "active").Find(&plugins).Error; err != nil {
+		return nil, err
+	}
+	return plugins, nil
+}
+
 func (r *RunnerResolver) findNativePluginsInWorkflow(workflow *models.Workflow) ([]models.Plugin, error) {
 	if workflow.PipelinesConfig == "" {
 		return nil, nil

@@ -205,21 +205,21 @@ func sampleWorkflows(projectID string) []*models.Workflow {
 	ep := loadEndpoints()
 	return []*models.Workflow{
 		// --- Bulk ---
-		newWorkflow(projectID, "[bulk] MySQL → MySQL", "MySQL 소스를 커스텀 변환 후 MySQL에 적재", types.PipelineGroupTypeBatch,
+		newWorkflow(projectID, "[batch] MySQL → MySQL", "MySQL 소스를 커스텀 변환 후 MySQL에 적재", types.PipelineGroupTypeBatch,
 			[]types.GroupedPipeline{{
 				Name:    "mysql-to-mysql",
 				Input:   mysqlInput(ep, "orders"),
 				Stages:  []types.Stage{textToNumberStage(), jsonTransformStage()},
 				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "orders_out")},
 			}}),
-		newWorkflow(projectID, "[bulk] REST → MySQL", "REST API를 폴링해 JSON 추출 후 MySQL 적재", types.PipelineGroupTypeBatch,
+		newWorkflow(projectID, "[batch] REST → MySQL", "REST API를 폴링해 JSON 추출 후 MySQL 적재", types.PipelineGroupTypeBatch,
 			[]types.GroupedPipeline{{
 				Name:    "rest-to-mysql",
 				Input:   restInput(ep.restBaseURL + "/orders"),
 				Stages:  []types.Stage{jsonExtractStage(), textToNumberStage()},
 				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "orders_out")},
 			}}),
-		newWorkflow(projectID, "[bulk] REST → PostgreSQL", "REST API를 폴링해 가공 후 PostgreSQL 적재", types.PipelineGroupTypeBatch,
+		newWorkflow(projectID, "[batch] REST → PostgreSQL", "REST API를 폴링해 가공 후 PostgreSQL 적재", types.PipelineGroupTypeBatch,
 			[]types.GroupedPipeline{{
 				Name:    "rest-to-postgres",
 				Input:   restInput(ep.restBaseURL + "/events"),
@@ -228,7 +228,7 @@ func sampleWorkflows(projectID string) []*models.Workflow {
 			}}),
 
 		// --- CDC / streaming ---
-		newWorkflow(projectID, "[cdc] REST(polling) → MySQL", "REST 변경분을 폴링해 숫자 변환 후 MySQL 적재", types.PipelineGroupTypeRealtime,
+		newWorkflow(projectID, "[realtime] REST(polling) → MySQL", "REST 변경분을 폴링해 숫자 변환 후 MySQL 적재", types.PipelineGroupTypeRealtime,
 			[]types.GroupedPipeline{{
 				Name: "rest-cdc-to-mysql",
 				Input: types.WorkflowInput{
@@ -238,7 +238,7 @@ func sampleWorkflows(projectID string) []*models.Workflow {
 				Stages:  []types.Stage{jsonExtractStage(), textToNumberStage()},
 				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "changes_out")},
 			}}),
-		newWorkflow(projectID, "[cdc] Kafka → MySQL", "Kafka CDC 이벤트를 가공/추출 후 MySQL 적재", types.PipelineGroupTypeRealtime,
+		newWorkflow(projectID, "[realtime] Kafka → MySQL", "Kafka CDC 이벤트를 가공/추출 후 MySQL 적재", types.PipelineGroupTypeRealtime,
 			[]types.GroupedPipeline{{
 				Name: "kafka-cdc-to-mysql",
 				Input: types.WorkflowInput{
@@ -250,7 +250,7 @@ func sampleWorkflows(projectID string) []*models.Workflow {
 				Stages:  []types.Stage{jsonExtractStage(), jsonTransformStage()},
 				Outputs: []types.Output{sqlOutput("mysql-sink", "mysql", ep.targetDSN, "orders_cdc")},
 			}}),
-		newWorkflow(projectID, "[cdc] MySQL CDC → MySQL", "MySQL binlog CDC를 커스텀 변환 후 MySQL 적재", types.PipelineGroupTypeRealtime,
+		newWorkflow(projectID, "[realtime] MySQL CDC → MySQL", "MySQL binlog CDC를 커스텀 변환 후 MySQL 적재", types.PipelineGroupTypeRealtime,
 			[]types.GroupedPipeline{{
 				Name: "mysql-cdc-to-mysql",
 				Input: types.WorkflowInput{

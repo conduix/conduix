@@ -152,14 +152,35 @@ func TestRegistry_TouchesLivenessOnStart(t *testing.T) {
 // 없는 실행 제어는 오류여야 한다. 조용히 성공하면 사라진 실행을 계속 추적한다.
 func TestRegistry_ControlsUnknownExecution(t *testing.T) {
 	reg := newStreamingRegistry("", "")
-	if err := reg.Stop("missing"); err == nil {
-		t.Error("없는 실행 stop 이 성공했다")
-	}
+	// pause/resume 은 "돌고 있는 실행" 을 전제하므로 없으면 잘못된 요청이다.
 	if err := reg.Pause("missing"); err == nil {
 		t.Error("없는 실행 pause 가 성공했다")
 	}
 	if err := reg.Resume("missing"); err == nil {
 		t.Error("없는 실행 resume 이 성공했다")
+	}
+}
+
+// stop 은 멱등이다 — 없는 실행을 멈추라는 요청은 이미 목표가 달성된 상태다.
+//
+// 에러로 돌려주면 agent 의 sweep 이 "정리 실패" 로 보고 같은 실행에 stop 을
+// 무한 재시도한다. 실측: DB 에 없는 실행 fe178b86 에 대해 sweep 이 1분마다
+// stop 을 보냈고 파드는 매번 500 을 돌려줘 루프가 끊기지 않았다.
+func TestRegistry_StopIsIdempotent(t *testing.T) {
+	reg := newStreamingRegistry("", "")
+	if err := reg.Stop("missing"); err != nil {
+		t.Errorf("없는 실행 stop 은 성공이어야 한다(멱등): %v", err)
+	}
+
+	// 실제로 돌던 실행을 두 번 멈춰도 두 번째가 실패하면 안 된다.
+	if err := reg.Start(context.Background(), newTestCommand("ex-1", "wf-1")); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if err := reg.Stop("ex-1"); err != nil {
+		t.Fatalf("첫 stop 실패: %v", err)
+	}
+	if err := reg.Stop("ex-1"); err != nil {
+		t.Errorf("두 번째 stop 도 성공이어야 한다(멱등): %v", err)
 	}
 }
 
@@ -188,5 +209,41 @@ func newTestCommand(executionID, workflowID string) *types.WorkflowExecutionComm
 			Name: "test-" + executionID,
 			Type: types.WorkflowTypeRealtime,
 		},
+	}
+}
+
+// 보고하는 실행 id 는 레지스트리 키(control-plane 이 발급한 id)여야 한다.
+//
+// GroupExecutor 는 내부적으로 자체 실행 id 를 만든다. 그것이 그대로 새어 나가면
+// 파드가 "돈다" 고 알리는 id 와 파드가 stop 을 받는 id 가 달라진다. 실측 결과
+// GET /monitoring 은 fe178b86(GroupExecutor id)을 보고했는데 stop 은
+// 8bada8cb(레지스트리 키)로만 먹혀서, agent sweep 이 매분 stop 을 보내고 매번
+// 500 을 받는 무한 루프가 생겼다. control-plane 은 DB 에 없는 실행이 도는 것으로 봤다.
+func TestRegistry_MonitoringReportsRegistryID(t *testing.T) {
+	reg := newStreamingRegistry("", "")
+	ctx := context.Background()
+
+	for _, id := range []string{"cp-id-1", "cp-id-2"} {
+		if err := reg.Start(ctx, newTestCommand(id, "wf-"+id)); err != nil {
+			t.Fatalf("start %s: %v", id, err)
+		}
+	}
+
+	all := reg.MonitoringAll()
+	if len(all) != 2 {
+		t.Fatalf("MonitoringAll = %d건, want 2", len(all))
+	}
+	seen := map[string]bool{}
+	for _, info := range all {
+		seen[info.ExecutionID] = true
+	}
+	for _, want := range []string{"cp-id-1", "cp-id-2"} {
+		if !seen[want] {
+			t.Errorf("보고된 id 에 %q 가 없다 — GroupExecutor 자체 id 가 새어나갔다: %v", want, seen)
+		}
+		// 보고한 id 로 실제 제어가 되어야 한다(같은 id 여야 한다는 뜻).
+		if reg.Monitoring(want) == nil {
+			t.Errorf("%q 로 단건 조회가 안 된다", want)
+		}
 	}
 }

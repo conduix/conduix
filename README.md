@@ -60,16 +60,37 @@ Conduix is a scalable, Kubernetes-native data pipeline platform: native-Go conne
                     REST API + Redis Pub/Sub
                               │
 ┌─────────────────────────────────────────────────────────────┐
-│                   Pipeline Agent Cluster                     │
-│  ┌───────────────────────────────────────────────────┐      │
-│  │  Agent (Parallel Processing + Native Connectors)  │      │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐           │      │
-│  │  │  Input  │→ │  Stage  │→ │ Output  │           │      │
-│  │  │ (Kafka) │  │ (remap) │  │  (ES)   │           │      │
-│  │  └─────────┘  └─────────┘  └─────────┘           │      │
-│  └───────────────────────────────────────────────────┘      │
+│              Execution Cluster (Kubernetes)                  │
+│                                                              │
+│  ┌────────────────────────────────────────────────────┐     │
+│  │  Agent (pipeline-worker) — orchestrator, resident  │     │
+│  │  Receives commands, delegates to K8s. Does not     │     │
+│  │  run pipelines itself.                             │     │
+│  └────────────────────────────────────────────────────┘     │
+│         │ creates                    │ assigns              │
+│         ▼                            ▼                      │
+│  ┌──────────────────┐   ┌──────────────────────────────┐   │
+│  │ batch: K8s Job   │   │ realtime: resident Pod       │   │
+│  │ one Job = one    │   │ ONE pod per cluster          │   │
+│  │ execution, exits │   │ (conduix-rt) — every         │   │
+│  │ when done        │   │ execution is a goroutine     │   │
+│  │                  │   │ inside it, assigned over     │   │
+│  │ ┌──────────────┐ │   │ REST. Pod stays up with      │   │
+│  │ │Input→Stage→  │ │   │ zero executions.             │   │
+│  │ │  Output      │ │   │ ┌──────┐ ┌──────┐ ┌──────┐  │   │
+│  │ └──────────────┘ │   │ │exec 1│ │exec 2│ │exec N│  │   │
+│  │                  │   │ └──────┘ └──────┘ └──────┘  │   │
+│  └──────────────────┘   └──────────────────────────────┘   │
+│         both run the same binary: pipeline-runner           │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Why realtime uses one resident pod:** a realtime execution follows a change
+stream on a single thread — it is small and long-lived. Giving each one its own
+Deployment meant 10 pipelines cost 10 pods of idle overhead. Batch is the
+opposite: a heavy, finite unit of work, so it still gets one Job per execution.
+
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the delegation flow in detail.
 
 ## Pipeline Design
 
@@ -476,7 +497,7 @@ Conduix has built-in resilience mechanisms for various fault scenarios.
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                  │
 │  ┌──────────────────────────────────────────────────────────────────────────┐   │
-│  │                  Actor Supervisor (Kafka/Source Common)                   │   │
+│  │                 GroupExecutor (Kafka/Source Common)                       │   │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │   │
 │  │  │  Checkpoint  │  │   Restart    │  │   Backoff    │  │    Offset    │  │   │
 │  │  │   Recovery   │  │   Strategy   │  │   Strategy   │  │   Tracking   │  │   │
@@ -639,7 +660,7 @@ Kafka is used in Input (data collection) and Output (data transmission).
 │                                                                              │
 │  [Fault Recovery]                                                            │
 │                                                                              │
-│  1. Agent or Actor restart                                                   │
+│  1. Runner pod or execution restart                                          │
 │  2. Query checkpoint from Redis                                              │
 │  3. Seek Kafka Consumer to saved offset                                      │
 │  4. Resume processing from that point                                        │
@@ -715,7 +736,8 @@ pipelines:
 
 ```
 1. Control Plane ↔ Agent network separation
-2. Agent continues pipeline execution independently
+2. Runner pods keep processing — they are already running and do not
+   need the Control Plane to continue
 3. Store local checkpoint (file if Redis unavailable)
 4. Sync state with Control Plane on network recovery
 5. Leader Election check to prevent duplicate execution

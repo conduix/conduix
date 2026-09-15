@@ -199,3 +199,35 @@ func TestGetEnvInt64(t *testing.T) {
 		t.Errorf("expected 42 for invalid, got %d", v)
 	}
 }
+
+// streaming 상주 파드는 기동 시 담당 실행이 없다. 실행 정보는 나중에
+// POST /executions 로 배정되므로, 기동 조건으로 WORKFLOW_ID/PIPELINES_CONFIG 를
+// 요구하면 파드가 CrashLoopBackOff 에 빠진다(실제로 그렇게 죽었다).
+func TestLoadFromEnv_StreamingStartsWithoutExecutionEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EXECUTION_MODE", "streaming")
+	t.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("streaming pod must start without WORKFLOW_ID/PIPELINES_CONFIG: %v", err)
+	}
+	if cfg.WorkflowID != "" {
+		t.Errorf("expected empty WorkflowID, got %q", cfg.WorkflowID)
+	}
+	// nil 이어야 runner 가 부트스트랩을 건너뛰고 배정을 기다린다.
+	if cfg.Workflow != nil {
+		t.Errorf("expected nil Workflow, got %+v", cfg.Workflow)
+	}
+}
+
+// batch 는 Job 하나가 실행 하나라 실행 정보가 없으면 시작할 수 없다.
+func TestLoadFromEnv_BatchStillRequiresExecutionEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("EXECUTION_MODE", "batch")
+	t.Setenv("CONTROL_PLANE_URL", "http://localhost:8080")
+
+	if _, err := LoadFromEnv(); err == nil {
+		t.Fatal("batch mode must reject missing WORKFLOW_ID")
+	}
+}

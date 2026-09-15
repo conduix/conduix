@@ -57,14 +57,19 @@ func LoadFromEnv() (*RunnerConfig, error) {
 		return nil, fmt.Errorf("invalid EXECUTION_MODE: %s (expected batch or streaming)", mode)
 	}
 
+	// streaming 은 cluster 당 상주 파드다. 기동 시점에는 담당 실행이 없고,
+	// 실행은 나중에 POST /executions 로 배정된다 — 그래서 실행에 종속된
+	// WORKFLOW_ID/PIPELINES_CONFIG 를 기동 조건으로 요구하면 안 된다.
+	// batch 는 Job 하나가 실행 하나라 여전히 필수다.
 	workflowID := os.Getenv("WORKFLOW_ID")
-	if workflowID == "" {
-		return nil, fmt.Errorf("WORKFLOW_ID environment variable is required")
-	}
-
 	pipelinesConfig := os.Getenv("PIPELINES_CONFIG")
-	if pipelinesConfig == "" {
-		return nil, fmt.Errorf("PIPELINES_CONFIG environment variable is required")
+	if mode == ModeBatch {
+		if workflowID == "" {
+			return nil, fmt.Errorf("WORKFLOW_ID environment variable is required")
+		}
+		if pipelinesConfig == "" {
+			return nil, fmt.Errorf("PIPELINES_CONFIG environment variable is required")
+		}
 	}
 
 	controlPlaneURL := os.Getenv("CONTROL_PLANE_URL")
@@ -94,12 +99,15 @@ func LoadFromEnv() (*RunnerConfig, error) {
 		return nil, fmt.Errorf("EXECUTION_ID is required for batch mode")
 	}
 
-	// 파이프라인 설정 파싱
-	workflow, err := parsePipelinesConfig(pipelinesConfig, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse pipelines config: %w", err)
+	// 상주 streaming 파드는 기동 시 담당 워크플로가 없다. 설정은 배정 요청이
+	// 실어 오므로 여기서는 파싱할 것이 없고, 빈 값을 파싱하면 실패한다.
+	if pipelinesConfig != "" {
+		workflow, err := parsePipelinesConfig(pipelinesConfig, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse pipelines config: %w", err)
+		}
+		cfg.Workflow = workflow
 	}
-	cfg.Workflow = workflow
 
 	return cfg, nil
 }

@@ -28,7 +28,7 @@ import { api } from '../services/api'
 // 이 화면이 없던 동안 /agents 는 실행 개수(숫자)만, /runner 는 바이너리 버전만 보여줬다.
 // 어느 파드가 도는지·바쁜지는 볼 수 없었고, 작업이 없을 때 "없다"는 것도 알 수 없었다.
 
-interface ExecutionRow {
+export interface ExecutionRow {
   id: string
   workflow_id: string
   workflow?: { name?: string; type?: string }
@@ -45,6 +45,15 @@ interface ExecutionRow {
 
 const RUNNING = 'running'
 
+// 목록 API 는 { executions, total, limit, offset } 을 준다.
+// 한때 여기서 items 를 읽어, 실행이 있어도 화면이 늘 비어 있었다(실측).
+// 응답 모양이 바뀌면 화면이 조용히 빈 채로 남으므로 이 변환만 따로 테스트한다.
+export function parseExecutionList(data: unknown): ExecutionRow[] {
+  if (Array.isArray(data)) return data as ExecutionRow[]
+  const list = (data as { executions?: unknown })?.executions
+  return Array.isArray(list) ? (list as ExecutionRow[]) : []
+}
+
 export default function ExecutionsPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -55,9 +64,7 @@ export default function ExecutionsPage() {
   const fetchExecutions = useCallback(async () => {
     try {
       const res = await api.getAllExecutions({ status: RUNNING, limit: 200 })
-      const data = res?.data
-      const items = Array.isArray(data) ? data : (data?.items ?? [])
-      setRows(items as ExecutionRow[])
+      setRows(parseExecutionList(res?.data))
       setError(null)
     } catch (err: unknown) {
       // 조용히 실패하면 "실행 없음" 과 "조회 실패" 가 화면에서 구분되지 않는다.

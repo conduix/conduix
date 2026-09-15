@@ -22,58 +22,6 @@ const streamingWatchInterval = time.Second
 // 종료 보고에 쓰는 타임아웃. 파드가 곧 사라질 수 있으므로 길게 잡지 않는다.
 const streamingReportTimeout = 10 * time.Second
 
-// watchStreamingCompletion 은 streaming 실행이 스스로 종료됐는지 감시한다.
-//
-// 왜 필요한가: streaming 은 ctx 취소(SIGTERM/stop 명령)로만 끝나는 것으로 가정돼 있었지만,
-// GroupExecutor 는 스스로 끝나는 경로를 갖고 있다 — 대표적으로 DDL 방어
-// (group_executor.go 의 schema_changed)와 소스 오류다.
-//
-// 그 경우 기존 코드는 아무것도 하지 않고 ctx.Done() 을 계속 기다렸다. 결과:
-//   - control-plane 의 workflow_executions.status 가 영구히 "running"
-//   - 그 status 를 근거로 agent 의 sweepAbandonedDeployments 가 live 로 판정 → 파드가 영구 잔존
-//   - web-ui 는 running 으로 보이는데 모니터링 데이터는 비어 있음(정지한 파이프라인은
-//     statsCollectors 에서 제거되므로) → 사용자에게 성공도 실패도 안 보임
-//
-// 실측: restrooms realtime 파이프라인이 무관한 테이블 DDL 로 정지한 뒤 9분간
-// 1/1 Running 좀비로 남았고 UI 에는 아무 표시도 없었다.
-//
-// 종료가 감지되면 결과를 control-plane 에 보고하고 cancel 로 종료 경로를 태운다.
-// 파드가 실제로 죽어야 K8s 가 Deployment 를 재시작하거나 agent 가 회수할 수 있다.
-func (r *Runner) watchStreamingCompletion(ctx context.Context, groupExec *executor.GroupExecutor, startTime time.Time, cancel context.CancelFunc) {
-	ticker := time.NewTicker(streamingWatchInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return // 정상 종료(stop/SIGTERM) — 이 경로는 runStreaming 이 처리한다
-		case <-ticker.C:
-			exec := groupExec.Execution()
-			if exec == nil {
-				continue
-			}
-			if !streamingEnded(exec.Status) {
-				continue
-			}
-
-			slog.Warn("streaming execution ended on its own — reporting and shutting down",
-				"workflow_id", r.cfg.WorkflowID, "execution_id", r.cfg.ExecutionID,
-				"status", exec.Status, "error", exec.ErrorMessage)
-
-			if err := r.sendStreamingResult(startTime, exec); err != nil {
-				// 보고 실패해도 종료는 진행한다 — 살아있는 좀비보다 죽은 파드가 낫다.
-				// (파드가 사라지면 agent 의 회수 경로가 불일치를 잡을 수 있다.)
-				slog.Error("failed to report streaming result",
-					"workflow_id", r.cfg.WorkflowID, "execution_id", r.cfg.ExecutionID, "error", err)
-			}
-
-			r.healthServer.SetStatus("error")
-			cancel()
-			return
-		}
-	}
-}
-
 // streamingEnded 는 이 status 가 "더 이상 데이터를 흘리지 않는 상태"인지 판정한다.
 //
 // running/paused 만 계속 사는 상태다. paused 는 resume 을 기다리는 정상 상태이므로

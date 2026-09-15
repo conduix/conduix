@@ -199,6 +199,11 @@ const livenessBeatInterval = 15 * time.Second
 const livenessTimeout = 90 * time.Second
 
 // Stop 은 실행 하나만 멈춘다. 파드와 다른 실행은 유지된다.
+//
+// 없는 실행에 대한 stop 은 성공으로 본다 — 멱등. "멈춰라" 의 목표는 "돌고 있지
+// 않은 상태" 이고, 이미 없으면 그 목표는 달성돼 있다. 에러로 돌려주면 agent 의
+// sweep 이 정리 실패로 오해해 같은 실행을 영원히 재시도한다(실측: 없는 실행
+// fe178b86 에 대해 sweep 이 1분마다 stop 을 반복, 매번 500 으로 실패).
 func (r *streamingRegistry) Stop(executionID string) error {
 	r.mu.Lock()
 	e, ok := r.byID[executionID]
@@ -208,7 +213,9 @@ func (r *streamingRegistry) Stop(executionID string) error {
 	r.mu.Unlock()
 
 	if !ok {
-		return fmt.Errorf("execution %s not found in this pod", executionID)
+		slog.Info("stop for execution not in this pod — already gone, treating as success",
+			"execution_id", executionID)
+		return nil
 	}
 
 	if e.exec != nil {
@@ -257,14 +264,14 @@ func (r *streamingRegistry) Monitoring(executionID string) *types.ExecutionMonit
 		if e == nil || e.exec == nil {
 			return nil
 		}
-		return e.exec.GetMonitoringInfo()
+		return withRegistryID(e.exec.GetMonitoringInfo(), e)
 	}
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, e := range r.byID {
 		if e.exec != nil {
-			return e.exec.GetMonitoringInfo()
+			return withRegistryID(e.exec.GetMonitoringInfo(), e)
 		}
 	}
 	return nil
@@ -286,10 +293,32 @@ func (r *streamingRegistry) MonitoringAll() []*types.ExecutionMonitoringInfo {
 			continue
 		}
 		if info := e.exec.GetMonitoringInfo(); info != nil {
-			out = append(out, info)
+			out = append(out, withRegistryID(info, e))
 		}
 	}
 	return out
+}
+
+// withRegistryID 는 보고할 실행 id 를 레지스트리 키(= control-plane 이 발급한 id)로
+// 맞춘다.
+//
+// GroupExecutor 는 자기 실행 객체에 **자체 id** 를 만든다. 그대로 내보내면 파드가
+// 바깥에 알리는 id 와 파드가 제어에 쓰는 id 가 서로 달라진다. 실측 결과:
+//   - GET /monitoring 은 GroupExecutor id(fe178b86)를 보고
+//   - stop 은 레지스트리 키(8bada8cb)로 찾으므로 "not found in this pod" 500
+//   - agent sweep 은 모니터링의 id 를 근거로 stop 을 보내 매분 실패 → 무한 루프
+//   - control-plane 은 그 id 를 모르니 DB 에 없는 실행이 도는 것처럼 보임
+//
+// 제어·보고·DB 가 같은 id 를 쓰게 하는 것이 이 함수의 유일한 목적이다.
+func withRegistryID(info *types.ExecutionMonitoringInfo, e *streamingExecution) *types.ExecutionMonitoringInfo {
+	if info == nil || e == nil {
+		return info
+	}
+	info.ExecutionID = e.executionID
+	if info.WorkflowID == "" {
+		info.WorkflowID = e.workflowID
+	}
+	return info
 }
 
 // IDs 는 이 파드가 들고 있는 실행 목록이다(heartbeat·정리용).

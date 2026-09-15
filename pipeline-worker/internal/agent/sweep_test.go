@@ -7,84 +7,79 @@ import (
 	"github.com/conduix/conduix/pipeline-worker/internal/k8s"
 )
 
-// failIfStuckUnhealthy 는 유예 안에서는 아무것도 하지 않는다.
-// 첫 기동은 이미지 pull + initContainer 바이너리 다운로드로 느릴 수 있다.
-func TestFailIfStuckUnhealthy_WithinGraceDoesNothing(t *testing.T) {
+// 상주 파드 모델에서의 건강 판정.
+//
+// 예전에는 "Deployment 1개 = 실행 1개" 라 Deployment 하나의 readiness 가 곧 그 실행의
+// 성패였다. 파드가 하나로 합쳐지면서 판정 단위가 바뀌었다 — 파드가 못 뜨면 그 안의
+// 실행이 전부 못 도는 것이므로, CP 가 running 으로 보는 실행 전체를 함께 확정한다.
+
+// 유예 안에서는 아무것도 하지 않는다.
+// 첫 기동은 이미지 pull + initContainer 바이너리 다운로드(32MB)로 느릴 수 있다.
+func TestFailIfPodStuckUnhealthy_WithinGraceDoesNothing(t *testing.T) {
 	a, _ := newTestAgent(t)
 	a.runningExecs = map[string]*RunningExecution{
-		"exec-young": {ExecutionID: "exec-young"},
+		"exec-young": {ExecutionID: "exec-young", StreamingDeployment: k8s.StreamingPodName},
 	}
+	live := map[string]struct{}{"exec-young": {}}
 
-	a.failIfStuckUnhealthy(k8s.StreamingExecution{
-		ExecutionID:     "exec-young",
-		ReadyReplicas:   0,
-		DesiredReplicas: 1,
-		CreatedAt:       time.Now().Add(-time.Minute), // 유예(5m) 안
-	})
+	// jobManager 가 없으면 조기 반환한다 — K8s 없이 로컬 정리가 일어나지 않아야 한다.
+	a.failIfPodStuckUnhealthy(live)
 
 	if _, ok := a.runningExecs["exec-young"]; !ok {
-		t.Fatal("유예 안에서는 실행을 정리하지 않아야 한다")
+		t.Fatal("K8s 클라이언트가 없으면 실행을 정리하지 않아야 한다")
 	}
 }
 
-// 준비된 실행은 나이와 무관하게 건드리지 않는다.
-func TestFailIfStuckUnhealthy_HealthyIsUntouched(t *testing.T) {
+// in-process 실행은 파드와 무관하므로 파드 상태로 판정하면 안 된다.
+func TestFailIfPodStuckUnhealthy_IgnoresInProcessExecutions(t *testing.T) {
 	a, _ := newTestAgent(t)
 	a.runningExecs = map[string]*RunningExecution{
-		"exec-ok": {ExecutionID: "exec-ok"},
+		// StreamingDeployment 가 비면 agent 프로세스 안에서 도는 실행이다.
+		"in-process": {ExecutionID: "in-process"},
 	}
+	live := map[string]struct{}{"in-process": {}}
 
-	a.failIfStuckUnhealthy(k8s.StreamingExecution{
-		ExecutionID:     "exec-ok",
-		ReadyReplicas:   1,
-		DesiredReplicas: 1,
-		CreatedAt:       time.Now().Add(-time.Hour),
-	})
+	a.failIfPodStuckUnhealthy(live)
 
-	if _, ok := a.runningExecs["exec-ok"]; !ok {
-		t.Fatal("정상 실행을 정리해서는 안 된다")
+	if _, ok := a.runningExecs["in-process"]; !ok {
+		t.Fatal("in-process 실행은 파드 건강 판정의 대상이 아니다")
 	}
 }
 
-// 유예를 넘겨 계속 unhealthy 하면 로컬 추적과 claim 을 정리한다.
-// (CP 보고·Deployment 삭제는 K8s/HTTP 의존이라 여기서는 로컬 정리만 검증한다.)
-func TestFailIfStuckUnhealthy_StuckClearsLocalState(t *testing.T) {
-	a, mr := newTestAgent(t)
-	const exec = "exec-stuck"
-
-	if !a.claimExecution(exec) {
-		t.Fatal("expected to acquire claim")
+// Healthy() 판정: ready 가 desired 이상이어야 건강하다.
+// 이 판정이 틀리면 정상 파드의 실행을 죽이거나, 죽은 파드를 방치한다.
+func TestStreamingExecutionHealthy(t *testing.T) {
+	cases := []struct {
+		name  string
+		ready int32
+		want  bool
+	}{
+		{"ready 가 desired 와 같으면 건강", 1, true},
+		{"ready 가 0 이면 불건강", 0, false},
 	}
-	a.runningExecs = map[string]*RunningExecution{exec: {ExecutionID: exec}}
-
-	a.failIfStuckUnhealthy(k8s.StreamingExecution{
-		ExecutionID:     exec,
-		ReadyReplicas:   0,
-		DesiredReplicas: 1,
-		CreatedAt:       time.Now().Add(-unhealthyGrace - time.Minute),
-	})
-
-	if _, ok := a.runningExecs[exec]; ok {
-		t.Fatal("좀비 실행은 로컬 추적에서 제거돼야 한다")
-	}
-	if _, err := mr.Get(executionClaimKey(exec)); err == nil {
-		t.Fatal("claim 이 해제돼야 다른 agent 가 재시도할 수 있다")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := k8s.StreamingExecution{ReadyReplicas: tc.ready, DesiredReplicas: 1}
+			if got := d.Healthy(); got != tc.want {
+				t.Errorf("Healthy() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-// label 이 없으면 판정 근거가 없으므로 건드리지 않는다.
-func TestFailIfStuckUnhealthy_NoExecutionIDIsIgnored(t *testing.T) {
-	a, _ := newTestAgent(t)
-	a.runningExecs = map[string]*RunningExecution{"other": {ExecutionID: "other"}}
+// desired 가 0 이면 건강으로 보지 않는다 — 스케일 다운된 파드를 정상으로 오판하면
+// 실행이 안 도는데도 아무도 알아채지 못한다.
+func TestStreamingExecutionHealthy_ZeroDesiredIsNotHealthy(t *testing.T) {
+	d := k8s.StreamingExecution{ReadyReplicas: 0, DesiredReplicas: 0}
+	if d.Healthy() {
+		t.Error("desired=0 을 건강으로 판정했다")
+	}
+}
 
-	a.failIfStuckUnhealthy(k8s.StreamingExecution{
-		ExecutionID:     "",
-		ReadyReplicas:   0,
-		DesiredReplicas: 1,
-		CreatedAt:       time.Now().Add(-time.Hour),
-	})
-
-	if len(a.runningExecs) != 1 {
-		t.Fatal("execution-id 없는 Deployment 때문에 다른 실행이 영향받아서는 안 된다")
+// 유예 상수가 기동 시간보다 충분히 길어야 한다.
+// 짧으면 이미지 pull 중인 정상 파드를 죽인다.
+func TestUnhealthyGraceIsLongEnough(t *testing.T) {
+	if unhealthyGrace < 3*time.Minute {
+		t.Errorf("unhealthyGrace = %s — 이미지 pull + 32MB 바이너리 다운로드에 부족하다", unhealthyGrace)
 	}
 }

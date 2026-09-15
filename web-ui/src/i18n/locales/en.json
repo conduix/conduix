@@ -53,7 +53,8 @@
     "settings": "Settings",
     "users": "Users",
     "plugins": "Stages",
-    "runner": "Runner"
+    "runner": "Runner",
+    "executions": "Executions"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -1401,5 +1402,20 @@
     "staleRunning": "{{count}} running execution(s) use an older runner than the latest build ({{latest}}). Restart them to pick up the new binary.",
     "deployingNow": "{{count}} execution(s) are still being placed on a node.",
     "loadPartialError": "Some data could not be loaded"
+  },
+  "executions": {
+    "title": "Executions",
+    "empty": "No pipelines are running",
+    "loadError": "Failed to load executions",
+    "podCount": "{{count}} pod(s)",
+    "execCount": "{{count}} execution(s)",
+    "realtimeCount": "realtime {{count}}",
+    "batchCount": "batch {{count}}",
+    "inProcess": "(in-process)",
+    "workflow": "Workflow",
+    "type": "Type",
+    "records": "Records",
+    "failed": "Failed",
+    "startedAt": "Started"
   }
 }

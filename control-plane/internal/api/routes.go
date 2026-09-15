@@ -172,6 +172,9 @@ func (s *Server) setupRoutes() {
 			// 실행 pod 가 시간 버킷 통계를 보낸다. realtime 은 종료 콜백이 없어(무한 실행)
 			// 이 경로가 유일한 통계 수집 수단이다. job-result 와 같은 신뢰 모델(클러스터 내부).
 			internalJob.POST("/stats/hourly", s.statsIngestHandler.IngestHourlyStats)
+			// 상주 realtime 파드가 실행별 상태·통계를 주기적으로 올린다.
+			// pull 이면 파드가 느릴 때 "죽었다" 로 오판하기 쉬워 push 로 받는다.
+			internalJob.POST("/streaming/pod-status", s.workflowHandler.ReceiveStreamingPodStatus)
 		}
 
 		// 파이프라인 체크포인트 내부 API (Agent/streaming pod 에서 호출 — 인증 불필요, 클러스터 내부).

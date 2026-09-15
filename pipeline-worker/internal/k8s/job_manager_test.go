@@ -434,8 +434,9 @@ func TestCreateStreamingDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateStreamingDeployment failed: %v", err)
 	}
-	if dep.Name != "conduix-rt-rt-exec-1" {
-		t.Errorf("deployment name = %q, want conduix-rt-rt-exec-1", dep.Name)
+	// 상주 파드는 이름이 고정이다. execution 단위 이름이면 realtime 10개에 파드 10개가 뜬다.
+	if dep.Name != StreamingPodName {
+		t.Errorf("deployment name = %q, want %q (상주 파드는 고정 이름)", dep.Name, StreamingPodName)
 	}
 	if *dep.Spec.Replicas != 1 {
 		t.Errorf("replicas = %d, want 1", *dep.Spec.Replicas)
@@ -450,8 +451,12 @@ func TestCreateStreamingDeployment(t *testing.T) {
 	if envMap["EXECUTION_MODE"] != "streaming" {
 		t.Errorf("EXECUTION_MODE = %q, want streaming", envMap["EXECUTION_MODE"])
 	}
-	if envMap["ASSIGNED_PARTITIONS"] != "0,1" {
-		t.Errorf("ASSIGNED_PARTITIONS = %q, want 0,1", envMap["ASSIGNED_PARTITIONS"])
+	// 실행 정보는 env 에 넣지 않는다 — env 는 프로세스당 하나뿐이라 두 번째 실행을
+	// 담을 수 없다. 상주 파드는 POST /executions 로 실행을 배정받는다.
+	for _, k := range []string{"EXECUTION_ID", "WORKFLOW_ID", "PIPELINES_CONFIG", "ASSIGNED_PARTITIONS"} {
+		if envMap[k] != "" {
+			t.Errorf("%s = %q — 실행 정보는 env 가 아니라 배정 API 로 전달해야 한다", k, envMap[k])
+		}
 	}
 	// native stage 바이너리 주입: RunnerVersionID 지정 시 initContainer 가 붙는다.
 	if len(ps.InitContainers) == 0 {
@@ -464,9 +469,13 @@ func TestCreateStreamingDeployment(t *testing.T) {
 		t.Errorf("expected health container port %d", streamingHealthPort)
 	}
 
-	// execution-id 셀렉터로 조회 가능해야 한다(명령 전송 시 pod 발견 경로).
-	if dep.Spec.Selector.MatchLabels["conduix.io/execution-id"] != "rt-exec-1" {
-		t.Errorf("selector execution-id = %q, want rt-exec-1", dep.Spec.Selector.MatchLabels["conduix.io/execution-id"])
+	// component 셀렉터로 찾는다. execution-id 라벨은 K8s 라벨이 단일값이라
+	// 여러 실행을 담는 상주 파드를 표현할 수 없다.
+	if dep.Spec.Selector.MatchLabels["app.kubernetes.io/component"] != "streaming-runner" {
+		t.Errorf("selector = %v, want component=streaming-runner", dep.Spec.Selector.MatchLabels)
+	}
+	if dep.Spec.Selector.MatchLabels["conduix.io/execution-id"] != "" {
+		t.Error("상주 파드에 execution-id 셀렉터가 붙으면 첫 실행에 묶인다")
 	}
 
 	deps, _ := fakeClient.AppsV1().Deployments("conduix").List(ctx, metav1.ListOptions{})
@@ -586,7 +595,10 @@ func TestStreamingCommandURL(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "rt-pod-1",
 			Namespace: "conduix",
-			Labels:    map[string]string{"conduix.io/execution-id": "rt-exec-1"},
+			Labels: map[string]string{
+				"app.kubernetes.io/component": "streaming-runner",
+				labelManagedByKey:             managedByValue,
+			},
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.1.2.3"},
 	}, metav1.CreateOptions{})
@@ -594,18 +606,20 @@ func TestStreamingCommandURL(t *testing.T) {
 		t.Fatalf("create pod failed: %v", err)
 	}
 
-	url, err := jm.StreamingCommandURL(ctx, "conduix", "rt-exec-1")
+	// 상주 파드는 component 라벨로 찾는다 — execution-id 라벨은 단일값이라
+	// 여러 실행을 담는 파드를 표현할 수 없다.
+	url, err := jm.StreamingPodURL(ctx, "conduix", "/commands")
 	if err != nil {
-		t.Fatalf("StreamingCommandURL failed: %v", err)
+		t.Fatalf("StreamingPodURL failed: %v", err)
 	}
 	want := fmt.Sprintf("http://10.1.2.3:%d/commands", streamingHealthPort)
 	if url != want {
 		t.Errorf("url = %q, want %q", url, want)
 	}
 
-	// 매칭 pod 없으면 에러.
-	if _, err := jm.StreamingCommandURL(ctx, "conduix", "no-such-exec"); err == nil {
-		t.Error("expected error when no running pod matches execution-id")
+	// 파드가 없는 네임스페이스면 에러.
+	if _, err := jm.StreamingPodURL(ctx, "empty-ns", "/commands"); err == nil {
+		t.Error("expected error when no running streaming pod exists")
 	}
 }
 

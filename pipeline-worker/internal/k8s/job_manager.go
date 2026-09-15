@@ -425,9 +425,22 @@ type StreamingSpec struct {
 	RunnerVersionID    string
 }
 
-// streamingDeploymentName realtime Deployment 이름. execution 단위(파티션 sub-execution 포함)로 고유.
+// StreamingPodName 은 이 cluster 의 상주 realtime 파드 이름이다.
+//
+// 예전에는 conduix-rt-<executionID> 로 실행마다 Deployment 를 만들었다. realtime 10개면
+// 파드 10개가 뜨고 파드당 500m CPU/512Mi + 32MB 바이너리 다운로드가 각각 들었다.
+// realtime 은 소스를 따라가는 가벼운 작업이라 이 비용이 작업 자체보다 컸다.
+//
+// 파드를 실행마다 나눴던 유일한 이유는 native stage 바이너리 주입이었다(실행 격리가 아니다).
+// 바이너리는 RunnerVersion 단위이고 같은 시점의 모든 실행이 같은 버전을 쓰므로,
+// 파드 하나가 그 버전을 들고 여러 실행을 고루틴으로 수용하면 된다.
+// 바이너리가 갱신되면 파드를 교체한다(그 안의 실행들은 재시작되어 새 버전으로 재개).
+const StreamingPodName = "conduix-rt"
+
+// streamingDeploymentName 상주 realtime 파드 이름(고정).
+// 인자는 호환을 위해 남기지만 이름에 반영하지 않는다.
 func (m *JobManager) streamingDeploymentName(workflowID, executionID string) string {
-	return "conduix-rt-" + sanitizeName(executionID)
+	return StreamingPodName
 }
 
 // CreateStreamingDeployment realtime 파이프라인용 K8s Deployment 생성(무한 실행, RestartPolicy=Always).
@@ -450,29 +463,25 @@ func (m *JobManager) CreateStreamingDeployment(ctx context.Context, spec *Stream
 		namespace = m.client.Namespace()
 	}
 
+	// 상주 파드는 특정 실행에 속하지 않는다. execution-id 라벨을 붙이면 K8s 라벨이 단일값이라
+	// 두 번째 실행부터 표현할 수 없고, selector 도 그 실행에 묶여버린다.
 	labels := map[string]string{
 		"app.kubernetes.io/name":      "conduix-worker",
 		"app.kubernetes.io/component": "streaming-runner",
 		labelManagedByKey:             managedByValue,
-		"conduix.io/workflow-id":      sanitizeLabel(spec.WorkflowID),
-		"conduix.io/execution-id":     sanitizeLabel(spec.ExecutionID),
 	}
-	selector := map[string]string{"conduix.io/execution-id": sanitizeLabel(spec.ExecutionID)}
+	selector := map[string]string{"app.kubernetes.io/component": "streaming-runner"}
 
 	callbackURL := fmt.Sprintf("%s/api/v1/internal/job-result", m.controlPlaneURL)
+	// 실행 정보는 env 로 넣지 않는다 — env 는 프로세스당 하나뿐이라 두 번째 실행을 담을 수
+	// 없다. 상주 파드는 POST /executions 로 실행을 배정받는다(AssignExecution).
 	envVars := []corev1.EnvVar{
 		{Name: "EXECUTION_MODE", Value: "streaming"},
-		{Name: "EXECUTION_ID", Value: spec.ExecutionID},
-		{Name: "WORKFLOW_ID", Value: spec.WorkflowID},
-		{Name: "PIPELINES_CONFIG", Value: spec.PipelinesConfig},
 		{Name: "CONTROL_PLANE_URL", Value: m.controlPlaneURL},
 		{Name: "CALLBACK_URL", Value: callbackURL},
 	}
 	if spec.AgentID != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENT_ID", Value: spec.AgentID})
-	}
-	if len(spec.AssignedPartitions) > 0 {
-		envVars = append(envVars, corev1.EnvVar{Name: "ASSIGNED_PARTITIONS", Value: strings.Join(spec.AssignedPartitions, ",")})
 	}
 
 	pullPolicy := resolvePullPolicy(cfg.ImagePullPolicy)
@@ -734,11 +743,6 @@ func (m *JobManager) ExecutionPodURL(ctx context.Context, namespace, executionID
 		}
 	}
 	return "", fmt.Errorf("no running pod with IP for execution=%s", executionID)
-}
-
-// StreamingCommandURL 은 streaming pod 의 command REST 엔드포인트 URL 이다.
-func (m *JobManager) StreamingCommandURL(ctx context.Context, namespace, executionID string) (string, error) {
-	return m.ExecutionPodURL(ctx, namespace, executionID, "/commands")
 }
 
 // DeleteCronJob CronJob 삭제

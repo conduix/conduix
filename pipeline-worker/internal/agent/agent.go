@@ -70,7 +70,7 @@ type Agent struct {
 	// heartbeat 가 참조하는 K8s streaming Deployment 스냅샷(짧게 캐시).
 	// 로컬 추적이 비어도 실물이 있으면 running 으로 보고해 orphan 오판을 막는다.
 	streamingCacheMu sync.Mutex
-	streamingCache   []k8s.StreamingExecution
+	streamingCache   []types.RunningExecutionInfo
 	streamingCacheAt time.Time
 
 	// claimRenewInterval: claim 갱신 주기(0이면 기본 claimRenewInterval). 테스트에서 단축용.
@@ -414,26 +414,31 @@ func (a *Agent) RollGroupExecution(executionID, workflowID, runnerVersionID stri
 		return fmt.Errorf("no K8s client to roll streaming deployment")
 	}
 
-	var firstErr error
-	rolled := 0
+	// 상주 파드는 하나뿐이다. 실행마다 교체할 대상이 따로 있는 게 아니라, 파드 하나를
+	// 새 바이너리로 갈아끼우면 그 안의 모든 realtime 실행이 체크포인트를 남기고 종료됐다가
+	// 새 버전으로 재개된다 — 커스텀 stage 를 추가해 빌드하면 이 경로로 반영된다.
+	//
+	// Deployment 전략이 Recreate 라 구 파드가 완전히 끝난 뒤 새 파드가 뜬다(이중 소비 방지).
+	// 실행 재개는 CP 의 reconcile 백스톱이 담당한다 — DB 의 running execution 을 다시 배정한다.
+	var namespace string
 	for _, exec := range execs {
-		if exec.StreamingDeployment == "" {
-			continue // in-process 실행은 rolling 대상 아님
+		if exec.StreamingDeployment != "" {
+			namespace = exec.StreamingNamespace
+			break
 		}
-		if err := jm.UpdateStreamingDeployment(a.ctx, exec.StreamingNamespace, exec.StreamingDeployment, runnerVersionID); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		rolled++
-		slog.Info("rolled streaming execution to new runner version",
-			"execution_id", exec.ExecutionID, "deployment", exec.StreamingDeployment, "runner_version_id", runnerVersionID)
 	}
-	if rolled == 0 && firstErr == nil {
+	if namespace == "" {
 		return fmt.Errorf("no streaming execution to roll for workflow=%s (in-process executions are not rollable)", workflowID)
 	}
-	return firstErr
+
+	if err := jm.UpdateStreamingDeployment(a.ctx, namespace, k8s.StreamingPodName, runnerVersionID); err != nil {
+		return err
+	}
+
+	slog.Info("rolled streaming pod to new runner version",
+		"pod", k8s.StreamingPodName, "runner_version_id", runnerVersionID,
+		"executions_affected", len(execs))
+	return nil
 }
 
 // stopStreamingExecution 은 streaming pod 를 graceful 종료 후 Deployment 를 삭제하고 추적을 정리한다.
@@ -481,18 +486,22 @@ func (a *Agent) stopOrphanStreamingDeployment(executionID, workflowID string) er
 	return firstErr
 }
 
+// stopStreamingExecution 은 상주 파드에서 실행 하나만 멈춘다.
+//
+// 예전에는 Deployment 를 삭제했다("실행 1개 = 파드 1개" 전제). 파드가 상주하며 여러
+// 실행을 담는 지금 그렇게 하면 무관한 실행들까지 함께 죽는다. 파드는 그대로 두고
+// REST 로 그 실행만 종료한다.
 func (a *Agent) stopStreamingExecution(exec *RunningExecution) error {
-	if err := a.sendStreamingCommand(exec, "stop"); err != nil {
-		slog.Warn("streaming stop command failed, proceeding to delete deployment",
-			"error", err, "execution_id", exec.ExecutionID, "deployment", exec.StreamingDeployment)
-	}
-
 	jm := a.getJobManager()
 	if jm == nil {
-		return fmt.Errorf("cannot delete streaming deployment %s: no K8s client", exec.StreamingDeployment)
+		return fmt.Errorf("cannot stop streaming execution %s: no K8s client", exec.ExecutionID)
 	}
-	if err := jm.DeleteStreamingDeployment(a.ctx, exec.StreamingNamespace, exec.StreamingDeployment); err != nil {
-		return fmt.Errorf("failed to delete streaming deployment %s: %w", exec.StreamingDeployment, err)
+
+	if err := jm.SendStreamingCommand(a.ctx, exec.StreamingNamespace, exec.ExecutionID, "stop"); err != nil {
+		// 파드가 응답 불능이면 실행은 파드와 함께 죽는다. 로컬 추적만 정리하고
+		// 파드 자체는 건드리지 않는다 — 다른 실행이 살아 있을 수 있다.
+		slog.Warn("streaming stop command failed; clearing local tracking only",
+			"error", err, "execution_id", exec.ExecutionID)
 	}
 
 	a.execMu.Lock()
@@ -500,40 +509,20 @@ func (a *Agent) stopStreamingExecution(exec *RunningExecution) error {
 	a.execMu.Unlock()
 	a.releaseClaim(exec.ExecutionID)
 
-	slog.Info("stopped streaming execution", "execution_id", exec.ExecutionID, "deployment", exec.StreamingDeployment)
+	slog.Info("stopped streaming execution", "execution_id", exec.ExecutionID)
 	return nil
 }
 
-// sendStreamingCommand 는 execution 의 streaming pod 를 찾아 command REST(stop/pause/resume)를 POST 한다.
+// sendStreamingCommand 는 상주 파드의 특정 실행에 제어 명령을 보낸다.
+//
+// 실행 id 를 본문에 실어야 한다 — 파드가 여러 실행을 담으므로 이것이 없으면 파드는
+// 어느 실행을 제어할지 알 수 없다(예전에는 파드=실행이라 필요 없었다).
 func (a *Agent) sendStreamingCommand(exec *RunningExecution, command string) error {
 	jm := a.getJobManager()
 	if jm == nil {
 		return fmt.Errorf("no K8s client to reach streaming pod for execution=%s", exec.ExecutionID)
 	}
-	url, err := jm.StreamingCommandURL(a.ctx, exec.StreamingNamespace, exec.ExecutionID)
-	if err != nil {
-		return err
-	}
-
-	body, _ := json.Marshal(map[string]string{"command": command})
-	reqCtx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to build command request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send %s to streaming pod: %w", command, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("streaming pod returned %d for %s: %s", resp.StatusCode, command, string(b))
-	}
-	return nil
+	return jm.SendStreamingCommand(a.ctx, exec.StreamingNamespace, exec.ExecutionID, command)
 }
 
 // GetStatus 에이전트 상태 조회
@@ -559,7 +548,7 @@ const streamingCacheTTL = 20 * time.Second
 // liveStreamingExecutions 는 이 cluster 에 실재하는 streaming Deployment 를 반환한다(짧게 캐시).
 // 조회 실패 시 마지막 성공 결과를 그대로 쓴다 — 일시적 API 실패로 heartbeat 에서 실행이 빠져
 // orphan 오판이 나는 것을 막는다.
-func (a *Agent) liveStreamingExecutions() []k8s.StreamingExecution {
+func (a *Agent) liveStreamingExecutions() []types.RunningExecutionInfo {
 	a.streamingCacheMu.Lock()
 	defer a.streamingCacheMu.Unlock()
 
@@ -571,16 +560,32 @@ func (a *Agent) liveStreamingExecutions() []k8s.StreamingExecution {
 	if jm == nil {
 		return nil
 	}
-	deps, err := jm.ListStreamingDeployments(a.ctx, "")
+
+	// 상주 파드에 직접 묻는다. 예전에는 "Deployment 목록 = 실행 목록" 이었지만
+	// 파드가 하나로 합쳐지면서 그 등식이 깨졌다 — K8s 라벨은 단일값이라 여러 실행을
+	// 표현할 수 없다. 파드만이 자기가 무엇을 돌리는지 안다.
+	ids, err := jm.StreamingPodExecutions(a.ctx, "")
 	if err != nil {
-		slog.Debug("heartbeat: list streaming deployments failed, reusing last snapshot",
+		slog.Debug("heartbeat: streaming pod not reachable, reusing last snapshot",
 			"error", err, "agent_id", a.ID)
 		return a.streamingCache
 	}
 
-	a.streamingCache = deps
+	// workflow id 는 로컬 추적에서 채운다(파드 응답에 없을 수 있다).
+	a.execMu.RLock()
+	out := make([]types.RunningExecutionInfo, 0, len(ids))
+	for _, id := range ids {
+		info := types.RunningExecutionInfo{ExecutionID: id}
+		if e, ok := a.runningExecs[id]; ok {
+			info.WorkflowID = e.WorkflowID
+		}
+		out = append(out, info)
+	}
+	a.execMu.RUnlock()
+
+	a.streamingCache = out
 	a.streamingCacheAt = time.Now()
-	return deps
+	return out
 }
 
 // heartbeatLoop 하트비트 루프
@@ -631,10 +636,7 @@ func (a *Agent) sendHeartbeat() {
 		if _, ok := seen[d.ExecutionID]; ok {
 			continue
 		}
-		runningExecs = append(runningExecs, types.RunningExecutionInfo{
-			ExecutionID: d.ExecutionID,
-			WorkflowID:  d.WorkflowID,
-		})
+		runningExecs = append(runningExecs, d)
 	}
 
 	heartbeat := types.AgentHeartbeat{
@@ -940,21 +942,33 @@ func (a *Agent) reconcileOnce() {
 				live[cmd.ExecutionID] = struct{}{}
 				continue // in-process — 로컬이 authoritative
 			}
+			// 파드가 아니라 "그 실행이 파드 안에서 돌고 있는가" 를 본다.
+			//
+			// 상주 파드는 여러 실행을 담으므로 Deployment 존재만으로는 부족하다 —
+			// 파드는 살아 있는데 그 안의 실행만 죽은 경우를 놓치면, 아무도 복구하지 않는
+			// 새로운 좀비가 된다. 파드에 직접 물어 실행 목록을 확인한다.
 			if jm := a.getJobManager(); jm != nil {
-				exists, err := jm.StreamingDeploymentExists(a.ctx, local.StreamingNamespace, cmd.WorkflowID, cmd.ExecutionID)
+				ids, err := jm.StreamingPodExecutions(a.ctx, local.StreamingNamespace)
 				if err != nil {
-					slog.Warn("reconcile: deployment existence check failed, skipping this round",
+					slog.Warn("reconcile: streaming pod query failed, skipping this round",
 						"error", err, "execution_id", cmd.ExecutionID)
 					live[cmd.ExecutionID] = struct{}{} // 확인 불가 — sweep 대상에서 제외(보수적)
 					continue
 				}
-				if exists {
+				found := false
+				for _, id := range ids {
+					if id == cmd.ExecutionID {
+						found = true
+						break
+					}
+				}
+				if found {
 					live[cmd.ExecutionID] = struct{}{}
-					continue // Deployment 살아있음 — 정상
+					continue // 파드 안에서 돌고 있음 — 정상
 				}
 			}
 			// Deployment 유실 확인 → 로컬 추적·claim 을 정리해 아래 재실행이 새로 claim·생성하게 한다.
-			slog.Warn("reconcile: streaming deployment missing, will recover",
+			slog.Warn("reconcile: execution not running in streaming pod, will recover",
 				"execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
 			a.execMu.Lock()
 			delete(a.runningExecs, cmd.ExecutionID)
@@ -987,77 +1001,104 @@ func (a *Agent) sweepAbandonedDeployments(live map[string]struct{}) {
 		return
 	}
 
-	deps, err := jm.ListStreamingDeployments(a.ctx, "")
+	// 상주 파드에 물어 실제로 도는 실행을 얻는다.
+	//
+	// 예전에는 "Deployment 목록 = 실행 목록" 이었다(파드 1개 = 실행 1개). 파드가 하나로
+	// 합쳐지면서 그 등식이 깨졌다 — K8s 라벨은 단일값이라 여러 실행을 표현할 수 없다.
+	// 파드가 응답하지 않으면 판정 근거가 없으므로 이 라운드는 건너뛴다(오판으로 정상
+	// 실행을 죽이는 것보다 한 번 거르는 편이 안전하다).
+	actual, err := jm.StreamingPodExecutions(a.ctx, "")
 	if err != nil {
-		slog.Warn("sweep: list streaming deployments failed", "error", err, "agent_id", a.ID)
+		slog.Debug("sweep: streaming pod not reachable, skipping round", "error", err)
 		return
 	}
 
-	for _, d := range deps {
-		if d.ExecutionID == "" {
-			continue // label 없는 것은 판정 근거가 없어 건드리지 않는다.
-		}
-		if _, ok := live[d.ExecutionID]; ok {
-			// CP 가 running 으로 인정한다. 다만 pod 이 계속 못 뜨는 상태라면(CrashLoop,
-			// 이미지 pull 실패) Deployment 는 RestartPolicy=Always 로 영원히 재시작만 하고
-			// 실패가 어디에도 드러나지 않는다 — 그 상태로 방치하면 running 인 채 아무 일도
-			// 일어나지 않는 좀비가 된다. 유예를 넘겨도 unhealthy 면 실패로 확정한다.
-			a.failIfStuckUnhealthy(d)
+	for _, execID := range actual {
+		if execID == "" {
 			continue
 		}
+		if _, ok := live[execID]; ok {
+			continue // CP 가 running 으로 인정한다
+		}
 
-		// CP 가 running 으로 안 보는데 실물이 살아있다 → 방치하면 이중 소비.
-		if err := jm.DeleteStreamingDeployment(a.ctx, d.Namespace, d.Name); err != nil {
-			slog.Error("sweep: failed to delete abandoned streaming deployment",
-				"deployment", d.Name, "execution_id", d.ExecutionID, "error", err)
+		// CP 가 running 으로 안 보는데 파드에서 돌고 있다 → 방치하면 이중 소비.
+		// 파드는 그대로 두고 그 실행만 멈춘다 — 파드를 지우면 무관한 실행까지 죽는다.
+		if err := jm.SendStreamingCommand(a.ctx, "", execID, "stop"); err != nil {
+			slog.Error("sweep: failed to stop abandoned execution", "execution_id", execID, "error", err)
 			continue
 		}
 		a.execMu.Lock()
-		delete(a.runningExecs, d.ExecutionID)
+		delete(a.runningExecs, execID)
 		a.execMu.Unlock()
-		a.releaseClaim(d.ExecutionID)
-		slog.Warn("sweep: deleted abandoned streaming deployment (not running per control-plane)",
-			"deployment", d.Name, "execution_id", d.ExecutionID, "workflow_id", d.WorkflowID, "agent_id", a.ID)
+		a.releaseClaim(execID)
+		slog.Warn("sweep: stopped abandoned execution (not running per control-plane)",
+			"execution_id", execID, "agent_id", a.ID)
 	}
+
+	// 파드 자체가 못 뜨는 상태(CrashLoop, 이미지 pull 실패)를 확정한다.
+	a.failIfPodStuckUnhealthy(live)
 }
 
 // unhealthyGrace 는 streaming pod 이 준비되지 않은 채 버틸 수 있는 시간이다.
 // 이미지 pull + initContainer 바이너리 다운로드가 있어 첫 기동이 느릴 수 있으므로 넉넉히 둔다.
 const unhealthyGrace = 5 * time.Minute
 
-// failIfStuckUnhealthy 는 준비되지 않은 채 유예를 넘긴 streaming 실행을 실패로 확정하고
-// Deployment 를 지운다. 확정하지 않으면 DB 는 running, pod 은 CrashLoop 로 무한 재시작하는
-// 좀비가 되어 아무도 문제를 알아채지 못한다.
-func (a *Agent) failIfStuckUnhealthy(d k8s.StreamingExecution) {
-	if d.Healthy() || time.Since(d.CreatedAt) < unhealthyGrace {
+// failIfPodStuckUnhealthy 는 상주 파드가 유예를 넘겨도 준비되지 않으면 그 파드에 배정된
+// 실행들을 실패로 확정한다.
+//
+// 확정하지 않으면 DB 는 running, pod 은 CrashLoop 로 무한 재시작하는 좀비가 되어 아무도
+// 문제를 알아채지 못한다. 상주 파드에서 달라지는 점: 파드가 못 뜨면 그 안의 실행이
+// 전부 못 도는 것이므로, CP 가 running 으로 보는 실행 전체를 함께 실패 처리한다.
+func (a *Agent) failIfPodStuckUnhealthy(live map[string]struct{}) {
+	jm := a.getJobManager()
+	if jm == nil {
+		return
+	}
+	deps, err := jm.ListStreamingDeployments(a.ctx, "")
+	if err != nil || len(deps) == 0 {
 		return
 	}
 
-	slog.Error("streaming execution stuck unhealthy, failing it",
-		"deployment", d.Name, "execution_id", d.ExecutionID, "workflow_id", d.WorkflowID,
-		"ready", d.ReadyReplicas, "desired", d.DesiredReplicas, "age", time.Since(d.CreatedAt).String())
+	for _, d := range deps {
+		if d.Healthy() || time.Since(d.CreatedAt) < unhealthyGrace {
+			continue
+		}
 
-	completedAt := time.Now()
-	_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
-		ExecutionID: d.ExecutionID,
-		WorkflowID:  d.WorkflowID,
-		Status:      types.PipelineGroupStatusError,
-		StartedAt:   d.CreatedAt,
-		CompletedAt: &completedAt,
-		ErrorMessage: fmt.Sprintf(
-			"streaming pod never became ready within %s (ready=%d/%d) — check pod events and runner build",
-			unhealthyGrace, d.ReadyReplicas, d.DesiredReplicas),
-	})
+		slog.Error("streaming pod stuck unhealthy, failing its executions",
+			"pod", d.Name, "ready", d.ReadyReplicas, "desired", d.DesiredReplicas,
+			"age", time.Since(d.CreatedAt).String())
 
-	if jm := a.getJobManager(); jm != nil {
-		if err := jm.DeleteStreamingDeployment(a.ctx, d.Namespace, d.Name); err != nil {
-			slog.Error("failed to delete unhealthy streaming deployment", "deployment", d.Name, "error", err)
+		// 이 agent 가 추적 중이면서 CP 도 running 으로 보는 실행들을 실패로 확정한다.
+		a.execMu.RLock()
+		var stuck []*RunningExecution
+		for id, e := range a.runningExecs {
+			if e.StreamingDeployment == "" {
+				continue // in-process 실행은 파드와 무관
+			}
+			if _, ok := live[id]; ok {
+				stuck = append(stuck, e)
+			}
+		}
+		a.execMu.RUnlock()
+
+		completedAt := time.Now()
+		for _, e := range stuck {
+			_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+				ExecutionID: e.ExecutionID,
+				WorkflowID:  e.WorkflowID,
+				Status:      types.PipelineGroupStatusError,
+				StartedAt:   e.StartedAt,
+				CompletedAt: &completedAt,
+				ErrorMessage: fmt.Sprintf(
+					"streaming pod never became ready within %s (ready=%d/%d) — check pod events and runner build",
+					unhealthyGrace, d.ReadyReplicas, d.DesiredReplicas),
+			})
+			a.execMu.Lock()
+			delete(a.runningExecs, e.ExecutionID)
+			a.execMu.Unlock()
+			a.releaseClaim(e.ExecutionID)
 		}
 	}
-	a.execMu.Lock()
-	delete(a.runningExecs, d.ExecutionID)
-	a.execMu.Unlock()
-	a.releaseClaim(d.ExecutionID)
 }
 
 // fetchRunningExecutions 는 CP reconcile API 에서 이 cluster 의 running execution 명령 목록을 받는다.
@@ -1306,14 +1347,15 @@ func (a *Agent) delegateStreamingDeployment(cmd *types.GroupExecutionCommand) {
 		return
 	}
 
+	// 상주 파드를 확보한다. 이미 있으면 그대로 쓰고(AlreadyExists → adopt), 없으면 만든다.
+	// 예전에는 실행마다 Deployment 를 만들어 realtime 10개면 파드 10개가 떴다.
 	dep, err := jm.CreateStreamingDeployment(a.ctx, &k8s.StreamingSpec{
-		ExecutionID:        cmd.ExecutionID,
-		WorkflowID:         cmd.WorkflowID,
-		AgentID:            a.ID,
-		PipelinesConfig:    string(pipelinesJSON),
-		JobConfig:          jobConfig,
-		AssignedPartitions: cmd.AssignedPartitions,
-		RunnerVersionID:    cmd.RunnerVersionID,
+		ExecutionID:     cmd.ExecutionID,
+		WorkflowID:      cmd.WorkflowID,
+		AgentID:         a.ID,
+		PipelinesConfig: string(pipelinesJSON),
+		JobConfig:       jobConfig,
+		RunnerVersionID: cmd.RunnerVersionID,
 	})
 	if err != nil {
 		completedAt := time.Now()
@@ -1323,14 +1365,30 @@ func (a *Agent) delegateStreamingDeployment(cmd *types.GroupExecutionCommand) {
 			Status:       types.PipelineGroupStatusError,
 			StartedAt:    startTime,
 			CompletedAt:  &completedAt,
-			ErrorMessage: fmt.Sprintf("failed to create streaming deployment: %v", err),
+			ErrorMessage: fmt.Sprintf("failed to ensure streaming pod: %v", err),
 		})
 		a.releaseClaim(cmd.ExecutionID)
 		return
 	}
 
-	// 제어(stop/pause/resume)·정리(Deployment 삭제)를 위해 위임 실행을 추적한다.
-	// GroupExecutor 는 pod 안에서 돌므로 nil — 제어는 StreamingDeployment 로 라우팅한다(W4).
+	// 파드가 뜰 때까지 기다린 뒤 실행을 배정한다. 파드는 상주하므로 대개 이미 Running 이고,
+	// 첫 실행일 때만 기동을 기다린다.
+	if err := a.assignToStreamingPod(jm, dep.Namespace, cmd); err != nil {
+		completedAt := time.Now()
+		_ = a.reportGroupExecutionResult(&types.GroupExecutionResult{
+			ExecutionID:  cmd.ExecutionID,
+			WorkflowID:   cmd.WorkflowID,
+			Status:       types.PipelineGroupStatusError,
+			StartedAt:    startTime,
+			CompletedAt:  &completedAt,
+			ErrorMessage: fmt.Sprintf("failed to assign execution to streaming pod: %v", err),
+		})
+		a.releaseClaim(cmd.ExecutionID)
+		return
+	}
+
+	// 제어(stop/pause/resume)를 위해 위임 실행을 추적한다.
+	// GroupExecutor 는 pod 안에서 돌므로 nil — 제어는 파드 REST 로 실행 id 를 실어 라우팅한다.
 	a.execMu.Lock()
 	a.runningExecs[cmd.ExecutionID] = &RunningExecution{
 		ExecutionID:         cmd.ExecutionID,
@@ -1341,11 +1399,40 @@ func (a *Agent) delegateStreamingDeployment(cmd *types.GroupExecutionCommand) {
 	}
 	a.execMu.Unlock()
 
-	// realtime 도 같은 배선을 쓴다 — 어느 노드가 이 실행을 받았는지 실행 중에 알 수 있어야
-	// 분산 현황이 보이고, 접수 흔적으로 유실 판정도 정확해진다.
+	// 어느 노드가 이 실행을 받았는지 실행 중에 알 수 있어야 분산 현황이 보이고,
+	// 접수 흔적으로 유실 판정도 정확해진다.
 	a.reportExecutionClaim(cmd.WorkflowID, cmd.ExecutionID, dep.Name)
 
-	slog.Info("delegated streaming deployment", "deployment", dep.Name, "namespace", dep.Namespace, "execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
+	slog.Info("assigned execution to streaming pod",
+		"pod", dep.Name, "namespace", dep.Namespace,
+		"execution_id", cmd.ExecutionID, "workflow_id", cmd.WorkflowID)
+}
+
+// streamingPodReadyTimeout 은 상주 파드 기동을 기다리는 상한이다.
+// 이미지 pull + initContainer 바이너리 다운로드(32MB)가 있어 첫 기동은 느릴 수 있다.
+const streamingPodReadyTimeout = 3 * time.Minute
+
+// assignToStreamingPod 은 파드가 응답할 때까지 기다렸다가 실행을 배정한다.
+//
+// 파드는 상주하므로 두 번째 실행부터는 즉시 성공한다. 첫 실행만 기동을 기다린다.
+func (a *Agent) assignToStreamingPod(jm *k8s.JobManager, namespace string, cmd *types.GroupExecutionCommand) error {
+	deadline := time.Now().Add(streamingPodReadyTimeout)
+	var lastErr error
+	for {
+		err := jm.AssignExecution(a.ctx, namespace, cmd)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return fmt.Errorf("streaming pod not ready within %s: %w", streamingPodReadyTimeout, lastErr)
+		}
+		select {
+		case <-a.ctx.Done():
+			return a.ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // getJobManager는 batch 위임용 JobManager를 지연 생성한다(in-cluster K8s 클라이언트).

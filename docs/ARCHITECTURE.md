@@ -97,15 +97,37 @@ control-plane: workflow.cluster_id(없으면 default, 없으면 실행 거부)�
              → cluster:<id>:execute 로 실행 명령 발행 (K8s Job 직접 생성 안 함)
 worker(그룹 중 SETNX claim으로 1대):
     type==realtime + native stage(RunnerVersionID 有)
-                   → streaming Deployment 위임 생성 (delegateStreamingDeployment) → 상주 Pod
+                   → 상주 streaming Pod 에 실행 배정 (delegateStreamingDeployment)
+                     · 파드는 cluster 당 1개(conduix-rt), 여러 실행을 고루틴으로 수용
+                     · 파드가 없으면 만들고, 있으면 재사용 후 POST /executions 로 배정
     type==realtime + non-native
                    → in-process 상주 실행 (executeGroup)  ※ 비-K8s standalone 폴백
     type==batch    → in-cluster로 K8s Job 생성 (delegateBatchJob) → 일회성 Pod
 ```
 
-> realtime+native 를 별도 streaming Deployment 로 분리한 이유: web-ui 로 만든 native custom
-> stage 를 realtime 에도 반영하려면 "매 실행 새 Pod = 최신 stage 바이너리 주입"(bulk 와 동일
-> 인프라)이 필요한데, in-process 는 이미 켜진 worker 에 컴파일된 stage 만 쓸 수 있기 때문이다.
+> realtime+native 를 streaming Pod 로 분리한 이유: web-ui 로 만든 native custom stage 를
+> realtime 에도 반영하려면 "새 Pod = 최신 stage 바이너리 주입"(bulk 와 동일 인프라)이
+> 필요한데, in-process 는 이미 켜진 worker 에 컴파일된 stage 만 쓸 수 있기 때문이다.
+>
+> **파드는 실행마다가 아니라 cluster 당 하나다**(2026-09-15 변경). 예전에는
+> `conduix-rt-<executionID>` 로 실행마다 Deployment 를 만들어 realtime 10개면 파드 10개
+> (500m CPU/512Mi 씩 + 32MB 바이너리 각각 다운로드)가 떴다. realtime 은 소스를 따라가는
+> 가벼운 작업이라 이 비용이 작업 자체보다 컸다. 파드를 나눈 이유는 바이너리 주입이지
+> 실행 격리가 아니었고, 바이너리는 RunnerVersion 단위라 파드 하나가 그 버전을 들고
+> 여러 실행을 담으면 된다(원 설계도 "낭비되면 그룹핑" 을 후속 과제로 남겨뒀다).
+>
+> 그에 따라 달라진 배선:
+> - 제어: `POST /commands` 에 `execution_id` 를 실어 그 실행만 stop/pause/resume
+>   (예전에는 stop 이 프로세스 전체를 죽였다)
+> - 모니터링: `GET /monitoring?execution_id=` — 지정 없으면 파드의 전체 실행 목록
+> - 회수: "Deployment 삭제 = 실행 중지" 가 성립하지 않으므로, 파드에 실행 목록을 물어
+>   CP 가 running 으로 안 보는 것만 골라 stop 한다
+> - 자가 감시: 파드가 30초마다 실행별 생존·통계를 `POST /internal/streaming/pod-status`
+>   로 올린다. 생존 신호가 끊긴 실행은 파드가 스스로 정리하고, CP 가 실패로 확정해
+>   reconcile 이 체크포인트에서 재개한다
+> - 바이너리 갱신: 파드 하나를 교체(Recreate)하면 그 안의 모든 실행이 체크포인트를
+>   남기고 종료됐다가 새 버전으로 재개된다
+>
 > 상세: `archive/REALTIME_STREAMING_POD.md`. 유실 명령 복구는 reconcile 백스톱(worker 가
 > 주기적으로 CP 의 running execution 을 재조회해 안 도는 것을 복구).
 

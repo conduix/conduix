@@ -115,7 +115,7 @@ func TestMonitoringHandler(t *testing.T) {
 	}
 
 	// nil 반환: 404
-	s.SetMonitoringHandler(func() any { return nil })
+	s.SetMonitoringHandler(func(string) any { return nil })
 	w = httptest.NewRecorder()
 	s.monitoringHandler(w, httptest.NewRequest(http.MethodGet, "/monitoring", nil))
 	if w.Code != http.StatusNotFound {
@@ -123,7 +123,7 @@ func TestMonitoringHandler(t *testing.T) {
 	}
 
 	// 정상: 200 + JSON 본문
-	s.SetMonitoringHandler(func() any {
+	s.SetMonitoringHandler(func(string) any {
 		return map[string]any{"execution_id": "e1", "total_records": 42}
 	})
 	w = httptest.NewRecorder()

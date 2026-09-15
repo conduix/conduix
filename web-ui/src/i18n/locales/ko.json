@@ -53,7 +53,8 @@
     "settings": "설정",
     "users": "사용자",
     "plugins": "Stage",
-    "runner": "Runner"
+    "runner": "Runner",
+    "executions": "실행 현황"
   },
   "dashboard": {
     "title": "대시보드",
@@ -1404,5 +1405,20 @@
     "staleRunning": "실행 중 {{count}}건이 최신 빌드({{latest}})보다 이전 runner 를 씁니다. 재시작하면 새 바이너리로 교체됩니다.",
     "deployingNow": "{{count}}건이 아직 노드에 배치되는 중입니다.",
     "loadPartialError": "일부 데이터를 불러오지 못했습니다"
+  },
+  "executions": {
+    "title": "실행 현황",
+    "empty": "실행 중인 파이프라인이 없습니다",
+    "loadError": "실행 목록을 불러오지 못했습니다",
+    "podCount": "파드 {{count}}개",
+    "execCount": "실행 {{count}}개",
+    "realtimeCount": "realtime {{count}}",
+    "batchCount": "batch {{count}}",
+    "inProcess": "(agent 내부 실행)",
+    "workflow": "워크플로우",
+    "type": "종류",
+    "records": "처리 건수",
+    "failed": "실패",
+    "startedAt": "시작"
   }
 }

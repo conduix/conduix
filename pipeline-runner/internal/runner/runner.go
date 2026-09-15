@@ -13,7 +13,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/conduix/conduix/pipeline-core/pkg/checkpoint"
 	"github.com/conduix/conduix/pipeline-core/pkg/executor"
 	"github.com/conduix/conduix/pipeline-core/pkg/link"
 	"github.com/conduix/conduix/pipeline-runner/internal/config"
@@ -26,6 +25,9 @@ type Runner struct {
 	cfg          *config.RunnerConfig
 	healthServer *health.Server
 	httpClient   *http.Client
+	// registry 는 streaming 모드에서 이 파드가 수용한 실행들이다.
+	// 상주 파드가 여러 realtime 실행을 고루틴으로 돌린다(batch 모드에서는 nil).
+	registry *streamingRegistry
 }
 
 // New Runner 생성
@@ -86,101 +88,133 @@ func (r *Runner) runBatch(ctx context.Context) error {
 	return r.sendBatchResult(startTime, podName, result, nil)
 }
 
-// runStreaming 스트리밍 모드 실행 (지속 실행)
+// runStreaming 스트리밍 모드 실행.
+//
+// 이 파드는 상주 인프라다 — 실행마다 뜨는 것이 아니라 하나가 계속 떠서 여러 realtime
+// 실행을 고루틴으로 수용한다(streamingRegistry). 예전에는 Deployment 이름이
+// conduix-rt-<executionID> 라 realtime 10개면 파드 10개가 떴고, 파드당 500m CPU/512Mi 와
+// 32MB 바이너리 다운로드가 각각 들었다. realtime 은 소스를 따라가는 가벼운 작업이라
+// 이 비용이 작업 자체보다 컸다.
+//
+// 기동 시 env 에 실행 정보가 있으면(구 경로 호환) 그것을 첫 실행으로 받아들이고,
+// 이후 실행은 POST /executions 로 받는다.
 func (r *Runner) runStreaming(ctx context.Context) error {
-	slog.Info("starting streaming execution", "workflow_id", r.cfg.WorkflowID)
+	slog.Info("starting streaming pod (resident, multi-execution)")
 
-	// 체크포인트 클라이언트 생성
-	var cpClient *checkpoint.Client
-	cpEndpoint := r.cfg.CheckpointEndpoint
-	if cpEndpoint == "" {
-		cpEndpoint = r.cfg.ControlPlaneURL
-	}
-	if cpEndpoint != "" {
-		cpClient = checkpoint.NewClient(cpEndpoint)
-		cpClient.StartPeriodicFlush(ctx, 30*time.Second)
-	}
-
-	// GroupExecutor 생성
-	var opts []executor.GroupExecutorOption
-	if r.cfg.ControlPlaneURL != "" {
-		opts = append(opts, executor.WithLinkClient(link.NewClient(r.cfg.ControlPlaneURL)))
-	}
-	if cpClient != nil {
-		opts = append(opts, executor.WithCheckpointClient(cpClient))
-	}
-	// 파티션 분산: batch sub-execution 이면 배정된 파티션만 실행(비면 전체 — 현행).
-	if len(r.cfg.AssignedPartitions) > 0 {
-		opts = append(opts, executor.WithAssignedPartitions(r.cfg.AssignedPartitions))
-	}
-
-	groupExec := executor.NewGroupExecutor(r.cfg.Workflow, opts...)
-
-	// stop 명령으로 무한 대기를 풀기 위한 취소 컨텍스트.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// REST /monitoring → 이 pod 의 실시간 진행 정보. agent 가 label 로 pod 를 찾아 pull 한다.
-	r.healthServer.SetMonitoringHandler(r.monitoringHandler(groupExec))
+	reg := newStreamingRegistry(r.cfg.ControlPlaneURL, r.cfg.CheckpointEndpoint)
+	r.registry = reg
 
-	// 시간 버킷 통계 전송. realtime 은 종료 콜백이 영구히 발생하지 않으므로 이 경로가
-	// 없으면 시간당 수집량·에러량이 어디에도 남지 않는다.
-	go newStatsReporter(r.cfg.ControlPlaneURL, r.cfg.WorkflowID).run(ctx, groupExec)
+	// REST /executions → 새 실행 배정. 상주 파드가 실행을 받아들이는 유일한 경로다.
+	r.healthServer.SetAssignHandler(func(body []byte) error {
+		var cmd types.WorkflowExecutionCommand
+		if err := json.Unmarshal(body, &cmd); err != nil {
+			return fmt.Errorf("decode execution command: %w", err)
+		}
+		if err := reg.Start(ctx, &cmd); err != nil {
+			return err
+		}
+		// 실행별 통계 리포터. realtime 은 종료 콜백이 영구히 발생하지 않으므로
+		// 이 경로가 없으면 시간당 수집량·에러량이 어디에도 남지 않는다.
+		go r.runStatsReporter(ctx, reg, cmd.ExecutionID, cmd.WorkflowID)
+		go r.watchExecutionCompletion(ctx, reg, cmd.ExecutionID, cmd.WorkflowID, time.Now())
+		return nil
+	})
 
-	// REST /commands → GroupExecutor 제어 연결(stop/pause/resume). C1: pod 가 REST 로 명령 수신.
-	r.healthServer.SetCommandHandler(func(cmd string) error {
+	// REST /commands → 실행 단위 제어. executionID 가 비면 파드의 단일 실행에 적용한다
+	// (구 agent 호환). 예전에는 stop 이 프로세스 전체를 죽여 다른 실행까지 끊겼다.
+	r.healthServer.SetCommandHandler(func(executionID, cmd string) error {
+		if executionID == "" {
+			ids := reg.IDs()
+			if len(ids) == 1 {
+				executionID = ids[0]
+			} else if len(ids) == 0 {
+				return fmt.Errorf("no execution running in this pod")
+			} else {
+				return fmt.Errorf("execution_id required: %d executions in this pod", len(ids))
+			}
+		}
 		switch cmd {
 		case "stop":
-			slog.Info("stop command received", "workflow_id", r.cfg.WorkflowID)
-			cancel() // 무한 대기 해제 → graceful shutdown 경로로
-			return nil
+			slog.Info("stop command received", "execution_id", executionID)
+			return reg.Stop(executionID)
 		case "pause":
-			slog.Info("pause command received", "workflow_id", r.cfg.WorkflowID)
-			return groupExec.Pause()
+			slog.Info("pause command received", "execution_id", executionID)
+			return reg.Pause(executionID)
 		case "resume":
-			slog.Info("resume command received", "workflow_id", r.cfg.WorkflowID)
-			return groupExec.Resume()
+			slog.Info("resume command received", "execution_id", executionID)
+			return reg.Resume(executionID)
 		default:
 			return fmt.Errorf("unknown command: %s", cmd)
 		}
 	})
 
-	r.healthServer.SetStatus("running")
+	// REST /monitoring → 실행별 진행 정보. agent 가 execution_id 로 지정해 pull 한다.
+	r.healthServer.SetMonitoringHandler(func(executionID string) any {
+		if executionID == "" {
+			// 지정이 없으면 파드 전체를 보여준다 — "이 파드에서 몇 개가 도는가" 에 답한다.
+			all := reg.MonitoringAll()
+			if len(all) == 1 {
+				return r.withAgentID(all[0])
+			}
+			if len(all) == 0 {
+				return nil
+			}
+			for _, info := range all {
+				r.withAgentID(info)
+			}
+			return all
+		}
+		return r.withAgentID(reg.Monitoring(executionID))
+	})
 
-	startTime := time.Now()
-	_, err := groupExec.Start(ctx, "streaming-runner")
-	if err != nil {
-		r.healthServer.SetStatus("error")
-		return fmt.Errorf("failed to start streaming execution: %w", err)
+	// 구 경로 호환: env 에 실행 정보가 실려 오면 첫 실행으로 받아들인다.
+	// agent 가 /executions 로 배정하도록 바뀌면 이 경로는 비게 된다.
+	if r.cfg.WorkflowID != "" && r.cfg.Workflow != nil {
+		boot := &types.WorkflowExecutionCommand{
+			ExecutionID:        r.cfg.ExecutionID,
+			WorkflowID:         r.cfg.WorkflowID,
+			WorkflowConfig:     r.cfg.Workflow,
+			AssignedPartitions: r.cfg.AssignedPartitions,
+		}
+		if boot.ExecutionID == "" {
+			boot.ExecutionID = r.cfg.WorkflowID // env 경로에 execution id 가 없을 때의 폴백
+		}
+		if err := reg.Start(ctx, boot); err != nil {
+			r.healthServer.SetStatus("error")
+			return fmt.Errorf("failed to start bootstrap execution: %w", err)
+		}
+		go r.runStatsReporter(ctx, reg, boot.ExecutionID, boot.WorkflowID)
+		go r.watchExecutionCompletion(ctx, reg, boot.ExecutionID, boot.WorkflowID, time.Now())
 	}
 
-	// streaming 도 스스로 끝날 수 있다(DDL 방어의 schema_changed, 소스 오류 등).
-	// 감시가 없으면 실행은 죽었는데 파드는 사는 좀비가 되고, control-plane 의 status 가
-	// running 에 머물러 UI 에 성공도 실패도 안 보인다(실측).
-	go r.watchStreamingCompletion(ctx, groupExec, startTime, cancel)
+	// 감시·보고 루프: 멈춘 실행을 찾아 정리하고(체크포인트에서 재개된다),
+	// 실행별 상태·통계를 control-plane 에 주기적으로 올린다.
+	go r.superviseExecutions(ctx, reg)
 
-	slog.Info("streaming pipeline running, waiting for context cancellation", "workflow_id", r.cfg.WorkflowID)
+	r.healthServer.SetStatus("running")
+	slog.Info("streaming pod ready, waiting for executions", "bootstrapped", reg.Count())
 
-	// 컨텍스트 종료 대기 (SIGTERM 또는 stop 명령)
 	<-ctx.Done()
 
-	slog.Info("shutting down streaming pipeline", "workflow_id", r.cfg.WorkflowID)
+	slog.Info("shutting down streaming pod", "executions", reg.Count())
 	r.healthServer.SetStatus("stopping")
-
-	if err := groupExec.Stop(); err != nil {
-		slog.Error("error stopping execution", "workflow_id", r.cfg.WorkflowID, "error", err)
-	}
-
-	// 최종 체크포인트 flush
-	if cpClient != nil {
-		flushCtx, flushCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer flushCancel()
-		if err := cpClient.FlushCheckpoints(flushCtx); err != nil {
-			slog.Error("final checkpoint flush error", "workflow_id", r.cfg.WorkflowID, "error", err)
-		}
-	}
-
+	reg.StopAll()
 	return nil
+}
+
+// withAgentID 는 모니터링 응답에 이 파드를 띄운 agent(노드)를 덧붙인다.
+// realtime 은 종료 결과 콜백이 없어 agent_id 를 남길 다른 경로가 없다.
+func (r *Runner) withAgentID(info *types.ExecutionMonitoringInfo) *types.ExecutionMonitoringInfo {
+	if info == nil {
+		return nil
+	}
+	if info.AgentID == "" {
+		info.AgentID = r.cfg.AgentID
+	}
+	return info
 }
 
 // executeWorkflow 워크플로우 실행 및 완료 대기
@@ -239,8 +273,10 @@ func (r *Runner) executeWorkflow(ctx context.Context) (*types.PipelineGroupExecu
 // realtime(streaming) 은 무한 실행이라 종료 결과 콜백(sendBatchResult)이 영구히 발생하지
 // 않아 agent_id 를 DB 에 남길 다른 경로가 없다. batch 도 실행 중에는 결과 콜백 전이므로
 // 같은 배선을 쓴다.
-func (r *Runner) monitoringHandler(groupExec *executor.GroupExecutor) func() any {
-	return func() any {
+// monitoringHandler batch 경로용. 실행이 하나뿐이라 executionID 는 무시한다
+// (streaming 은 레지스트리 기반으로 별도 처리).
+func (r *Runner) monitoringHandler(groupExec *executor.GroupExecutor) func(string) any {
+	return func(string) any {
 		info := groupExec.GetMonitoringInfo()
 		if info == nil {
 			return nil

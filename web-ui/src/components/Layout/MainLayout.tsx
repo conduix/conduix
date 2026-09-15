@@ -25,6 +25,7 @@ import {
   AccountTree as BranchesIcon,
   Schedule as ScheduleIcon,
   Dns as ClusterIcon,
+  PlayCircleOutlined as PlayCircleIcon,
   Computer as DesktopIcon,
   History as HistoryIcon,
   Person as UserIcon,
@@ -81,6 +82,11 @@ export default function MainLayout() {
       key: '/clusters',
       icon: <ClusterIcon />,
       label: t('nav.clusters'),
+    },
+    {
+      key: '/executions',
+      icon: <PlayCircleIcon />,
+      label: t('nav.executions'),
     },
     {
       key: '/agents',

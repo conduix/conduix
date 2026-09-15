@@ -116,6 +116,22 @@ func (r *Runner) checkAndCollect(reg *streamingRegistry) PodStatusReport {
 				st.FailedRecords = execution.FailedRecords
 				st.ErrorMessage = execution.ErrorMessage
 			}
+			// execution.TotalRecords 는 파이프라인이 **끝날 때** result.RecordsWritten 을
+			// 누적해 만든다. realtime 은 끝나지 않으므로 그 값은 영원히 0 이고, 화면의
+			// Records 열이 계속 0 으로 보인다(실측: 3건을 처리했는데 0 표시).
+			//
+			// 실시간 통계(statsCollector)는 같은 수를 이미 들고 있으므로 그것으로 채운다.
+			// 0 일 때만 보완한다 — 완료값이 들어온 실행(스스로 끝난 realtime)은
+			// 그쪽이 최종값이므로 덮어쓰지 않는다.
+			if st.TotalRecords == 0 || st.FailedRecords == 0 {
+				live, liveFailed := liveRecordCounts(e.exec.GetMonitoringInfo())
+				if st.TotalRecords == 0 {
+					st.TotalRecords = live
+				}
+				if st.FailedRecords == 0 {
+					st.FailedRecords = liveFailed
+				}
+			}
 		}
 
 		// 생존 판정: 신호가 끊긴 실행은 정리한다.
@@ -178,5 +194,30 @@ func (r *Runner) sendPodStatus(ctx context.Context, report PodStatusReport) erro
 	return nil
 }
 
-// 컴파일 시 타입 확인용(보고 구조가 모니터링 타입과 어긋나지 않게).
-var _ = types.ExecutionMonitoringInfo{}
+// liveRecordCounts 는 진행 중 실행의 처리량을 실시간 통계에서 읽는다.
+//
+// 왜 필요한가: execution.TotalRecords 는 파이프라인 완료 결과의 누적이라
+// 끝나지 않는 realtime 에서는 늘 0 이다. statsCollector 가 같은 수를 실시간으로
+// 세고 있으므로(MonitoringStats) 그 값을 쓴다.
+//
+// statistics 가 없는 파이프라인은 stage 의 output_count 로 대체한다 — 마지막
+// stage 의 출력이 그 파이프라인이 내보낸 레코드 수다.
+func liveRecordCounts(info *types.ExecutionMonitoringInfo) (total, failed int64) {
+	if info == nil {
+		return 0, 0
+	}
+	for _, p := range info.Pipelines {
+		if p.Statistics != nil {
+			total += p.Statistics.RecordsProcessed
+			failed += p.Statistics.ProcessingErrors + p.Statistics.CollectionErrors
+			continue
+		}
+		if n := len(p.Stages); n > 0 {
+			total += p.Stages[n-1].OutputCount
+			for _, s := range p.Stages {
+				failed += s.ErrorCount
+			}
+		}
+	}
+	return total, failed
+}

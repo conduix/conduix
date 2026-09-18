@@ -58,6 +58,11 @@ type InputV2 struct {
 	Path   string   `yaml:"path,omitempty"`
 	Paths  []string `yaml:"paths,omitempty"`
 	Format string   `yaml:"format,omitempty"` // json, csv, lines
+	// Encoding 은 파일의 문자 인코딩이다(기본 utf-8).
+	// 국내 공공데이터 CSV 는 대부분 cp949 라 이 옵션 없이 읽으면 한글이 깨진다
+	// (실측: 공중화장실정보.csv 53,582행이 전부 무효 UTF-8 로 들어왔다).
+	// euc-kr 로 읽으면 확장 한글에서 변환이 끊기므로 cp949 를 쓴다.
+	Encoding string `yaml:"encoding,omitempty"` // utf-8(기본), cp949, euc-kr
 
 	// SQL (query-based)
 	Driver      string             `yaml:"driver,omitempty"` // mysql, postgres

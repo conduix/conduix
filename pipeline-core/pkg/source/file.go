@@ -9,7 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/korean"
+	"golang.org/x/text/transform"
 
 	"github.com/conduix/conduix/pipeline-core/pkg/config"
 )
@@ -18,7 +22,28 @@ import (
 type FileSource struct {
 	paths     []string
 	format    string // json, csv, lines
+	encoding  string // utf-8(기본), cp949, euc-kr
 	csvHeader bool   //nolint:unused
+}
+
+// decodedReader 는 파일 인코딩을 UTF-8 로 바꿔 준다.
+//
+// 왜 필요한가: 국내 공공데이터 CSV 는 대부분 cp949 다. 그대로 읽으면 행 파싱은
+// 되는데 한글만 깨져 들어간다(실측: 공중화장실정보.csv 53,582행 전량이 무효 UTF-8).
+// 그 상태로 적재하면 DB 에 깨진 문자가 그대로 쌓인다.
+//
+// euc-kr 이 아니라 cp949 를 기본으로 권하는 이유: euc-kr 로 디코딩하면 확장 한글
+// (똠, 뷁 등 8,822자)에서 변환이 끊긴다 — 같은 파일이 53,775행에서 4,722행으로
+// 잘리는 것을 실측했다. cp949 는 euc-kr 의 상위 호환이라 둘 다 안전하게 읽는다.
+func decodedReader(r io.Reader, encoding string) (io.Reader, error) {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "", "utf-8", "utf8":
+		return r, nil
+	case "cp949", "euc-kr", "euckr", "ks_c_5601-1987", "windows-949":
+		return transform.NewReader(r, korean.EUCKR.NewDecoder()), nil
+	default:
+		return nil, fmt.Errorf("unsupported encoding: %s (supported: utf-8, cp949, euc-kr)", encoding)
+	}
 }
 
 // NewFileSource 파일 소스 생성
@@ -50,9 +75,16 @@ func NewFileSource(cfg config.SourceV2) (*FileSource, error) {
 		format = "json"
 	}
 
+	// 인코딩은 여기서 한 번 검증한다 — 읽는 중에 실패하면 어느 파일 몇 행에서
+	// 깨졌는지 알기 어렵고, 이미 일부가 적재된 뒤일 수 있다.
+	if _, err := decodedReader(strings.NewReader(""), cfg.Encoding); err != nil {
+		return nil, err
+	}
+
 	return &FileSource{
-		paths:  expandedPaths,
-		format: format,
+		paths:    expandedPaths,
+		format:   format,
+		encoding: cfg.Encoding,
 	}, nil
 }
 
@@ -177,7 +209,11 @@ func (s *FileSource) readJSON(ctx context.Context, file *os.File, path string, r
 }
 
 func (s *FileSource) readCSV(ctx context.Context, file *os.File, path string, records chan<- Record) error {
-	reader := csv.NewReader(file)
+	src, err := decodedReader(file, s.encoding)
+	if err != nil {
+		return err
+	}
+	reader := csv.NewReader(src)
 
 	// 헤더 읽기
 	headers, err := reader.Read()

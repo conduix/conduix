@@ -46,6 +46,10 @@ type RunnerConfig struct {
 	// 헬스체크 포트
 	HealthPort int `json:"health_port,omitempty"`
 
+	// PipelineExecMode 는 파이프라인 실행 모드(parallel/sequential/dag)다.
+	// 비면 GroupExecutor 가 기본값(parallel)으로 떨어진다.
+	PipelineExecMode string `json:"pipeline_exec_mode,omitempty"`
+
 	// 파티션 분산: 이 batch sub-execution 이 처리할 파티션 ID 부분집합(비면 전체 — 현행).
 	AssignedPartitions []string `json:"assigned_partitions,omitempty"`
 }
@@ -91,6 +95,7 @@ func LoadFromEnv() (*RunnerConfig, error) {
 		CheckpointEndpoint: os.Getenv("CHECKPOINT_ENDPOINT"),
 		TimeoutSeconds:     getEnvInt64("TIMEOUT_SECONDS", 3600),
 		HealthPort:         int(getEnvInt64("HEALTH_PORT", 8082)),
+		PipelineExecMode:   os.Getenv("PIPELINE_EXEC_MODE"),
 		AssignedPartitions: splitAndTrim(os.Getenv("ASSIGNED_PARTITIONS")),
 	}
 
@@ -131,11 +136,15 @@ func parsePipelinesConfig(raw string, cfg *RunnerConfig) (*types.Workflow, error
 		wfType = types.WorkflowTypeRealtime
 	}
 
+	// ExecutionMode 를 채우지 않으면 GroupExecutor 의 모드 분기가 default(parallel)로
+	// 떨어져 runDAG 가 영영 호출되지 않는다 — depends_on 을 걸어도 무시된다(실측:
+	// dag 로 설정했는데 두 파이프라인이 0.1초 차로 동시 시작).
 	return &types.Workflow{
-		ID:        cfg.WorkflowID,
-		Name:      fmt.Sprintf("runner-%s", cfg.WorkflowID),
-		Type:      wfType,
-		Pipelines: pipelines,
+		ID:            cfg.WorkflowID,
+		Name:          fmt.Sprintf("runner-%s", cfg.WorkflowID),
+		Type:          wfType,
+		ExecutionMode: types.ExecutionMode(cfg.PipelineExecMode),
+		Pipelines:     pipelines,
 	}, nil
 }
 

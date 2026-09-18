@@ -120,10 +120,14 @@ func buildEnvFromSources(secrets, configMaps []string) []corev1.EnvFromSource {
 
 // JobSpec 배치 Job 생성용 파라미터
 type JobSpec struct {
-	ExecutionID        string
-	WorkflowID         string
-	AgentID            string // 이 Job 을 위임 생성한 agent(노드) — batch-job 이 결과 콜백에 담아 분산 현황 모니터링에 사용
-	PipelinesConfig    string // JSON
+	ExecutionID     string
+	WorkflowID      string
+	AgentID         string // 이 Job 을 위임 생성한 agent(노드) — batch-job 이 결과 콜백에 담아 분산 현황 모니터링에 사용
+	PipelinesConfig string // JSON
+	// PipelineExecMode 는 워크플로의 파이프라인 실행 모드다(parallel/sequential/dag).
+	// 이것이 전달되지 않으면 runner 가 빈 값을 받아 무조건 parallel 로 돌고,
+	// depends_on 을 걸어도 무시된다 — DAG 의존성이 죽은 기능이 된다(실측).
+	PipelineExecMode   string
 	JobConfig          types.JobConfig
 	AssignedPartitions []string // 파티션 분산: 이 Job 이 처리할 파티션 ID 부분집합(비면 전체)
 	RunnerVersionID    string   // 있으면 native stage compile-in 바이너리를 CP 에서 initContainer 로 주입해 실행(레지스트리 push 없이). 비면 이미지 실행(현행).
@@ -177,6 +181,7 @@ func (m *JobManager) CreateBatchJob(ctx context.Context, spec *JobSpec) (*batchv
 		{Name: "EXECUTION_ID", Value: spec.ExecutionID},
 		{Name: "WORKFLOW_ID", Value: spec.WorkflowID},
 		{Name: "PIPELINES_CONFIG", Value: spec.PipelinesConfig},
+		{Name: "PIPELINE_EXEC_MODE", Value: spec.PipelineExecMode},
 		{Name: "CONTROL_PLANE_URL", Value: m.controlPlaneURL},
 		{Name: "CALLBACK_URL", Value: callbackURL},
 		{Name: "TIMEOUT_SECONDS", Value: fmt.Sprintf("%d", timeoutSeconds)},
@@ -262,8 +267,10 @@ type CronJobSpec struct {
 	WorkflowID      string
 	CronExpression  string
 	PipelinesConfig string // JSON
-	JobConfig       types.JobConfig
-	Suspend         bool
+	// PipelineExecMode 는 파이프라인 실행 모드(parallel/sequential/dag).
+	PipelineExecMode string
+	JobConfig        types.JobConfig
+	Suspend          bool
 }
 
 // CreateCronJob 스케줄 파이프라인용 K8s CronJob 생성
@@ -302,6 +309,7 @@ func (m *JobManager) CreateCronJob(ctx context.Context, spec *CronJobSpec) (*bat
 		{Name: "EXECUTION_MODE", Value: "batch"},
 		{Name: "WORKFLOW_ID", Value: spec.WorkflowID},
 		{Name: "PIPELINES_CONFIG", Value: spec.PipelinesConfig},
+		{Name: "PIPELINE_EXEC_MODE", Value: spec.PipelineExecMode},
 		{Name: "CONTROL_PLANE_URL", Value: m.controlPlaneURL},
 		{Name: "CALLBACK_URL", Value: callbackURL},
 	}
@@ -416,10 +424,13 @@ func (m *JobManager) injectRunnerBinary(ps *corev1.PodSpec, runnerVersionID, ima
 // StreamingSpec realtime streaming Deployment 생성용 파라미터.
 // JobSpec 과 필드가 겹치지만 realtime 은 무한 실행이라 Job 이 아닌 Deployment 로 띄운다.
 type StreamingSpec struct {
-	ExecutionID        string
-	WorkflowID         string
-	AgentID            string
-	PipelinesConfig    string // JSON
+	ExecutionID     string
+	WorkflowID      string
+	AgentID         string
+	PipelinesConfig string // JSON
+	// PipelineExecMode 는 파이프라인 실행 모드(parallel/sequential/dag)다.
+	// 전달하지 않으면 runner 가 빈 값을 받아 무조건 parallel 로 돌고 depends_on 이 무시된다.
+	PipelineExecMode   string
 	JobConfig          types.JobConfig
 	AssignedPartitions []string
 	RunnerVersionID    string

@@ -1267,10 +1267,13 @@ func (a *Agent) delegateBatchJob(cmd *types.GroupExecutionCommand) {
 	}
 
 	job, err := jm.CreateBatchJob(a.ctx, &k8s.JobSpec{
-		ExecutionID:        cmd.ExecutionID,
-		WorkflowID:         cmd.WorkflowID,
-		AgentID:            a.ID, // 위임 agent 기록 — batch-job 이 결과 콜백에 담아 분산 현황 노출
-		PipelinesConfig:    string(pipelinesJSON),
+		ExecutionID:     cmd.ExecutionID,
+		WorkflowID:      cmd.WorkflowID,
+		AgentID:         a.ID, // 위임 agent 기록 — batch-job 이 결과 콜백에 담아 분산 현황 노출
+		PipelinesConfig: string(pipelinesJSON),
+		// 워크플로의 실행 모드를 함께 넘긴다. 빠뜨리면 runner 가 빈 값을 받아
+		// 무조건 parallel 로 돌아 depends_on 이 무시된다(실측).
+		PipelineExecMode:   workflowExecMode(cmd.WorkflowConfig),
 		JobConfig:          jobConfig,
 		AssignedPartitions: cmd.AssignedPartitions, // 파티션 분산: sub-execution 이면 배정 파티션만
 		RunnerVersionID:    cmd.RunnerVersionID,    // native stage 면 CP 바이너리를 initContainer 로 주입
@@ -1350,12 +1353,13 @@ func (a *Agent) delegateStreamingDeployment(cmd *types.GroupExecutionCommand) {
 	// 상주 파드를 확보한다. 이미 있으면 그대로 쓰고(AlreadyExists → adopt), 없으면 만든다.
 	// 예전에는 실행마다 Deployment 를 만들어 realtime 10개면 파드 10개가 떴다.
 	dep, err := jm.CreateStreamingDeployment(a.ctx, &k8s.StreamingSpec{
-		ExecutionID:     cmd.ExecutionID,
-		WorkflowID:      cmd.WorkflowID,
-		AgentID:         a.ID,
-		PipelinesConfig: string(pipelinesJSON),
-		JobConfig:       jobConfig,
-		RunnerVersionID: cmd.RunnerVersionID,
+		ExecutionID:      cmd.ExecutionID,
+		WorkflowID:       cmd.WorkflowID,
+		AgentID:          a.ID,
+		PipelinesConfig:  string(pipelinesJSON),
+		PipelineExecMode: workflowExecMode(cmd.WorkflowConfig),
+		JobConfig:        jobConfig,
+		RunnerVersionID:  cmd.RunnerVersionID,
 	})
 	if err != nil {
 		completedAt := time.Now()
@@ -1900,4 +1904,15 @@ func (a *Agent) GetAllExecutionMonitoring() []*types.ExecutionMonitoringInfo {
 		}
 	}
 	return result
+}
+
+// workflowExecMode 는 위임 대상에 넘길 파이프라인 실행 모드를 고른다.
+//
+// 설정이 없으면 빈 문자열을 주고, runner 쪽에서 기존 기본값(parallel)으로 떨어지게 둔다 —
+// 여기서 임의로 채우면 "설정 안 함" 과 "parallel 로 설정함" 이 구분되지 않는다.
+func workflowExecMode(wf *types.Workflow) string {
+	if wf == nil {
+		return ""
+	}
+	return string(wf.ExecutionMode)
 }

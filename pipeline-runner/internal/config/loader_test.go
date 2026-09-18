@@ -12,7 +12,7 @@ func clearEnv(t *testing.T) {
 	for _, key := range []string{
 		"EXECUTION_MODE", "WORKFLOW_ID", "EXECUTION_ID",
 		"PIPELINES_CONFIG", "CONTROL_PLANE_URL", "CALLBACK_URL",
-		"CHECKPOINT_ENDPOINT", "TIMEOUT_SECONDS", "HEALTH_PORT",
+		"CHECKPOINT_ENDPOINT", "TIMEOUT_SECONDS", "HEALTH_PORT", "PIPELINE_EXEC_MODE",
 	} {
 		// 로더는 os.Getenv 만 쓰므로 빈 문자열과 미설정을 구분하지 않는다 —
 		// 빈 값으로 두면 "설정 안 됨" 과 같은 효과다.
@@ -229,5 +229,49 @@ func TestLoadFromEnv_BatchStillRequiresExecutionEnv(t *testing.T) {
 
 	if _, err := LoadFromEnv(); err == nil {
 		t.Fatal("batch mode must reject missing WORKFLOW_ID")
+	}
+}
+
+// 워크플로의 실행 모드가 runner 까지 전달돼야 한다.
+//
+// 이것이 빠져 있어 GroupExecutor 의 모드 분기가 default(parallel)로 떨어졌고,
+// runDAG 가 영영 호출되지 않았다 — depends_on 과 runDAG 코드는 멀쩡히 있는데
+// 배선만 끊겨 DAG 의존성이 죽은 기능이었다.
+// 실측: execution_mode=dag 로 설정했는데 두 파이프라인이 0.1초 차로 동시 시작.
+func TestLoadFromEnv_CarriesPipelineExecMode(t *testing.T) {
+	for _, mode := range []string{"dag", "sequential", "parallel"} {
+		clearEnv(t)
+		setRequiredEnv(t, "batch")
+		t.Setenv("PIPELINE_EXEC_MODE", mode)
+
+		cfg, err := LoadFromEnv()
+		if err != nil {
+			t.Fatalf("mode=%q: %v", mode, err)
+		}
+		if cfg.PipelineExecMode != mode {
+			t.Errorf("PipelineExecMode = %q, want %q", cfg.PipelineExecMode, mode)
+		}
+		if cfg.Workflow == nil {
+			t.Fatalf("mode=%q: Workflow 가 nil", mode)
+		}
+		if string(cfg.Workflow.ExecutionMode) != mode {
+			t.Errorf("Workflow.ExecutionMode = %q, want %q — 이 값이 비면 runDAG 가 안 돈다",
+				cfg.Workflow.ExecutionMode, mode)
+		}
+	}
+}
+
+// 설정이 없으면 빈 값으로 둔다 — 여기서 임의로 채우면
+// "설정 안 함" 과 "parallel 로 설정함" 이 구분되지 않는다.
+func TestLoadFromEnv_ExecModeEmptyWhenUnset(t *testing.T) {
+	clearEnv(t)
+	setRequiredEnv(t, "batch")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PipelineExecMode != "" {
+		t.Errorf("미설정인데 %q 가 들어갔다", cfg.PipelineExecMode)
 	}
 }

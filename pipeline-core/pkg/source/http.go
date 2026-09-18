@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,6 +34,13 @@ type HTTPSource struct {
 	rateLimit  *config.RateLimitSourceConfig
 	client     *http.Client
 
+	// format 은 응답 본문 형식이다(기본 json).
+	// 공공데이터 중에는 API 가 아니라 CSV 파일을 그대로 내려주는 배포처가 있다
+	// (예: localdata.go.kr 의 공중화장실정보 — 16MB CSV, 인증키 불필요).
+	// encoding 은 그 본문의 문자 인코딩(기본 utf-8, 국내 CSV 는 대개 cp949).
+	format   string
+	encoding string
+
 	// OAuth2 토큰 캐시
 	tokenMu      sync.RWMutex
 	accessToken  string
@@ -57,6 +65,12 @@ func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
 		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
 	}
 
+	// 인코딩은 여기서 한 번 검증한다 — 응답을 받은 뒤 실패하면 16MB 를 내려받고
+	// 버리는 셈이고, 어디서 깨졌는지도 알기 어렵다.
+	if _, err := decodedReader(strings.NewReader(""), cfg.Encoding); err != nil {
+		return nil, err
+	}
+
 	source := &HTTPSource{
 		url:        cfg.URL,
 		method:     cfg.Method,
@@ -66,6 +80,8 @@ func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
 		pagination: cfg.Pagination,
 		rateLimit:  cfg.RateLimit,
 		client:     httpClient,
+		format:     cfg.Format,
+		encoding:   cfg.Encoding,
 	}
 
 	// OAuth2 설정 초기화
@@ -606,6 +622,12 @@ func (s *HTTPSource) doRequest(ctx context.Context, requestURL string) (any, err
 		return nil, fmt.Errorf("http error %d: %s", resp.StatusCode, string(body))
 	}
 
+	// CSV 를 그대로 내려주는 배포처가 있다(공공데이터 파일 다운로드 URL 등).
+	// 그 경우 본문은 JSON 이 아니므로 행 단위로 파싱해 배열로 만든다.
+	if strings.EqualFold(s.format, "csv") {
+		return s.decodeCSV(resp.Body)
+	}
+
 	// any 타입으로 디코딩 (배열 또는 객체 모두 지원)
 	var result any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -613,6 +635,47 @@ func (s *HTTPSource) doRequest(ctx context.Context, requestURL string) (any, err
 	}
 
 	return result, nil
+}
+
+// decodeCSV 는 CSV 본문을 레코드 배열로 만든다.
+//
+// 서버가 알려주는 Content-Type 을 믿지 않고 설정의 encoding 을 쓴다 — 실측에서
+// localdata.go.kr 은 charset=UTF-8 이라 응답하면서 실제로는 cp949 를 내려줬다.
+// 그대로 읽으면 한글이 전량 깨진 채 적재된다.
+func (s *HTTPSource) decodeCSV(body io.Reader) (any, error) {
+	src, err := decodedReader(body, s.encoding)
+	if err != nil {
+		return nil, err
+	}
+
+	reader := csv.NewReader(src)
+	// 공공데이터 CSV 는 행마다 열 수가 흔들리는 경우가 있어 고정 검사를 끈다.
+	reader.FieldsPerRecord = -1
+
+	headers, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read csv header: %w", err)
+	}
+
+	var items []any
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read csv row %d: %w", len(items)+1, err)
+		}
+
+		rec := make(map[string]any, len(headers))
+		for i, h := range headers {
+			if i < len(row) {
+				rec[h] = row[i]
+			}
+		}
+		items = append(items, rec)
+	}
+	return items, nil
 }
 
 func (s *HTTPSource) setAuth(ctx context.Context, req *http.Request) error {

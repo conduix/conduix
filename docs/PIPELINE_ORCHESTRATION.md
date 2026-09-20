@@ -1,89 +1,92 @@
-# 파이프라인 연결 가이드
+# Pipeline Orchestration Guide
 
-파이프라인을 여러 개 엮는 방법이 세 가지 있다. **이름은 모두 "의존"처럼 들리지만 목적이 다르다.**
+[한국어](PIPELINE_ORCHESTRATION.ko.md)
 
-> 이 문서가 생긴 이유: 실제로 `depends_on` 을 걸었는데 두 파이프라인이 0.1초 차로
-> 동시에 실행됐다. `execution_mode` 를 `dag` 로 바꾸지 않았기 때문이다.
-> 아래 표를 먼저 보면 그런 실수를 피할 수 있다.
+There are three ways to chain pipelines together. **They all sound like "dependency," but they do different things.**
+
+> Why this document exists: `depends_on` was set correctly, yet two pipelines
+> still started 0.1 seconds apart. The cause was `execution_mode` — it was left
+> at its default. The table below prevents that mistake.
 
 ---
 
-## 30초 요약: 무엇을 쓸 것인가
+## In 30 seconds: which one do you want
 
-| 하고 싶은 것 | 쓸 것 | 필수 설정 |
+| What you want | Use | Required setting |
 |---|---|---|
-| **A 가 끝나야 B 시작** (같은 테이블을 쓰는 등) | `depends_on` | `execution_mode: dag` ⚠️ |
-| 단순히 **하나씩 차례로** 실행 | `priority` | `execution_mode: sequential` |
-| **A 의 출력 레코드를** B 가 받아서 처리 | pipeline link | 링크 생성 API + Kafka |
-| 서로 무관, 동시에 빨리 | (아무것도) | `execution_mode: parallel` (기본) |
+| **B starts only after A finishes** (they share a table, etc.) | `depends_on` | `execution_mode: dag` ⚠️ |
+| Just run them **one at a time** | `priority` | `execution_mode: sequential` |
+| B **consumes A's output records** | pipeline link | link API + Kafka |
+| Unrelated, run them all at once | (nothing) | `execution_mode: parallel` (default) |
 
-**가장 흔한 실수**: `depends_on` 만 쓰고 `execution_mode` 를 그대로 둔 것.
-기본값이 `parallel` 이라 `depends_on` 이 **조용히 무시된다** — 에러도 로그도 없다.
+**The most common mistake**: setting `depends_on` but leaving `execution_mode` alone.
+The default is `parallel`, which **silently ignores** `depends_on` — no error, no log line.
 
 ---
 
-## 1. `depends_on` — 실행 순서 (DAG)
+## 1. `depends_on` — execution order (DAG)
 
-"A 가 완료돼야 B 를 시작한다."
+"B starts only after A completes."
 
-### 언제
+### When
 
-- 두 파이프라인이 **같은 테이블**을 쓴다 (수집 → 보강)
-- B 가 A 의 **결과가 DB 에 있어야** 동작한다
-- 순서가 뒤집히면 데이터가 어긋난다
+- Two pipelines write to the **same table** (collect → enrich)
+- B needs A's results to **already be in the database**
+- Reversing the order corrupts the data
 
-### 설정
+### Configuration
 
 ```yaml
-execution_mode: dag        # ← 이게 없으면 depends_on 이 무시된다
+execution_mode: dag        # ← without this, depends_on is ignored
 
 pipelines:
-  - id: restroom-api-collect        # 수집
+  - id: restroom-api-collect        # collect
     priority: 0
     input: { type: rest_api, ... }
 
-  - id: restroom-csv-enrich         # 보강
+  - id: restroom-csv-enrich         # enrich
     priority: 1
     depends_on: [restroom-api-collect]
     input: { type: rest_api, ... }
 ```
 
-### 동작
+### How it works
 
-`GroupExecutor.runDAG()` 가 의존 그래프를 만들고, 의존 대상이 **모두 완료된**
-파이프라인만 실행한다. 의존이 없는 것들끼리는 여전히 병렬로 돈다.
+`GroupExecutor.runDAG()` builds a dependency graph and starts a pipeline only once
+**all** of its dependencies have completed. Pipelines with no dependency between
+them still run in parallel.
 
-### 확인 방법
+### How to verify
 
-`runDAG` 는 전용 로그를 남기지 않는다. **파이프라인 시작 시각 간격**으로 판별한다.
+`runDAG` emits no dedicated log line. Judge by the **gap between pipeline start times**.
 
 ```bash
 kubectl logs -n conduix <job-pod> | grep "creating input source"
 ```
 
 ```
-07:59:14.858  restroom-api-collect     ← 먼저
-08:02:00.447  restroom-csv-enrich      ← 2분 46초 뒤 = 의존 지켜짐 ✅
+07:59:14.858  restroom-api-collect     ← first
+08:02:00.447  restroom-csv-enrich      ← 2m46s later = dependency honored ✅
 ```
 
-간격이 **0.1초 이내**면 `parallel` 로 돌고 있다는 뜻이다 — `execution_mode` 를 확인하라.
+A gap **under 0.1 seconds** means it is running in `parallel` — check `execution_mode`.
 
 ---
 
-## 2. `priority` — 단순 순차 실행
+## 2. `priority` — simple sequential order
 
-"낮은 번호부터 하나씩."
+"Lowest number first, one at a time."
 
-### 언제
+### When
 
-- 그냥 순서대로 돌리고 싶다
-- 의존 관계를 일일이 적기엔 번거롭다
-- 리소스를 아끼려고 동시 실행을 피한다
+- You just want them to run in order
+- Spelling out every dependency is overkill
+- You want to avoid concurrent execution to save resources
 
-### 설정
+### Configuration
 
 ```yaml
-execution_mode: sequential   # ← 이게 없으면 priority 가 무시된다
+execution_mode: sequential   # ← without this, priority is ignored
 
 pipelines:
   - id: first
@@ -92,46 +95,46 @@ pipelines:
     priority: 1
 ```
 
-### `depends_on` 과의 차이
+### How it differs from `depends_on`
 
 | | `sequential` + `priority` | `dag` + `depends_on` |
 |---|---|---|
-| 순서 근거 | 번호 순 | 의존 관계 |
-| 병렬 실행 | 없음 (항상 1개씩) | 의존 없는 것끼리는 병렬 |
-| 앞이 실패하면 | 설정에 따름 | 뒤가 시작되지 않음 |
-| 적합한 상황 | 단순 줄 세우기 | 실제 데이터 의존 |
+| Ordering basis | Number order | Declared dependencies |
+| Parallelism | None (always one) | Independent ones run together |
+| If an earlier one fails | Depends on config | Dependents never start |
+| Best for | Lining things up | Real data dependencies |
 
-파이프라인이 5개인데 그중 2개만 순서가 중요하다면 `dag` 가 낫다 — 나머지 3개는
-기다릴 이유가 없다.
+If you have five pipelines and only two of them are order-sensitive, prefer `dag` —
+the other three have no reason to wait.
 
 ---
 
-## 3. pipeline link — 데이터 전달 (부모→자식)
+## 3. pipeline link — data flow (parent → child)
 
-"A 가 뽑은 레코드를 B 가 받아서 이어서 처리한다."
+"Records produced by A become the input of B."
 
-### 언제
+### When
 
-- 게시판 목록을 수집(A) → **각 게시글**을 수집(B)
-- 부모의 **출력 레코드 하나하나**가 자식의 입력이 된다
-- 계층형 데이터 (Board → Post → Comment)
+- Collect a board index (A) → collect **each post** (B)
+- Every **output record** of the parent feeds the child
+- Hierarchical data (Board → Post → Comment)
 
-### `depends_on` 과 근본적으로 다른 점
+### The fundamental difference from `depends_on`
 
-`depends_on` 은 **순서만** 정한다. 데이터는 전달되지 않는다 —
-B 는 DB 를 다시 읽어야 한다.
+`depends_on` only sets **order**. No data is handed over — B has to read the
+database again.
 
-pipeline link 는 **Kafka 토픽으로 레코드가 흐른다.** A 가 출력하는 즉시
-B 가 소비하므로, A 가 끝나기를 기다리지 않는다.
+A pipeline link streams **records over a Kafka topic**. B consumes them as A
+produces them, so it does not wait for A to finish.
 
 ```
-depends_on :  [A 완료] ──→ [B 시작]          (순서)
-link       :  [A] ──Kafka──→ [B]             (데이터 스트림)
+depends_on :  [A done] ──→ [B starts]        ordering
+link       :  [A] ──Kafka──→ [B]             record stream
 ```
 
-### 설정
+### Configuration
 
-파이프라인 설정이 아니라 **별도 API** 로 링크를 만든다.
+Links are created through a **separate API**, not in the pipeline config.
 
 ```bash
 POST /api/v1/pipeline-links
@@ -142,45 +145,47 @@ POST /api/v1/pipeline-links
 }
 ```
 
-링크가 생기면 실행 시 자식 파이프라인의 input 이 **Kafka 로 자동 치환**된다
-(`kafka_link_input_<parent>`). 자식 쪽에 input 을 따로 적지 않아도 된다.
+Once a link exists, the child's input is **automatically replaced with a Kafka
+source** at execution time (`kafka_link_input_<parent>`). You do not declare an
+input on the child.
 
-Kafka 가 필요하다 — 로컬에서는 `docker-compose --profile with-kafka up -d`.
+Kafka is required — locally, `docker-compose --profile with-kafka up -d`.
 
 ---
 
-## `execution_mode` 세 가지
+## The three `execution_mode` values
 
-워크플로 **전체**에 적용된다. 파이프라인별로 다르게 줄 수 없다.
+This applies to the **whole workflow**. It cannot be set per pipeline.
 
-| 값 | 동작 | `priority` | `depends_on` |
+| Value | Behavior | `priority` | `depends_on` |
 |---|---|---|---|
-| `parallel` (기본) | 전부 동시 | 무시 | **무시** ⚠️ |
-| `sequential` | 하나씩, 번호 순 | **사용** | 무시 |
-| `dag` | 의존 그래프 순 | 정렬에만 | **사용** |
+| `parallel` (default) | All at once | ignored | **ignored** ⚠️ |
+| `sequential` | One at a time, by number | **used** | ignored |
+| `dag` | By dependency graph | sorting only | **used** |
 
-설정 위치:
+Setting it:
 
 ```bash
 # API
 curl -X PUT .../api/v1/workflows/<id> -d '{"execution_mode":"dag"}'
 
-# DB 확인
+# Check in the database
 SELECT execution_mode FROM workflows WHERE id='<id>';
 ```
 
 ---
 
-## 실제 사례: 공중화장실 수집 + 보강
+## Worked example: public restroom collect + enrich
 
-같은 `restrooms` 테이블에 두 배포본이 쓴다.
+Two distributions of the same dataset write to the same `restrooms` table.
 
-- **API(15155058)** — 수집 주체. 화장실명·주소·좌표
-- **CSV(15012892)** — 보강. 장애인용·어린이용 변기수, 기저귀교환대 위치
+- **API (15155058)** — the collector. Name, address, coordinates
+- **CSV (15012892)** — the enricher. Accessible/child toilet counts, diaper-changing
+  station location
 
-관리번호가 99.99% 겹치므로 **대체가 아니라 보강**이다. 순서가 뒤집히면
-CSV 보강값을 API 수집이 덮거나, CSV 에만 있는 신규 건이 이름 없이 INSERT 된다
-(실제로 8건이 그렇게 들어갔다).
+Their management numbers overlap by 99.99%, so this is **enrichment, not
+replacement**. If the order flips, the API collection overwrites the CSV values, or
+records that exist only in the CSV get inserted without a name (8 rows actually did).
 
 ```yaml
 execution_mode: dag
@@ -188,55 +193,56 @@ execution_mode: dag
 pipelines:
   - id: restroom-api-collect
     priority: 0
-    # rest_api → 지오코딩 → restrooms
+    # rest_api → geocode → restrooms
 
   - id: restroom-csv-enrich
     priority: 1
     depends_on: [restroom-api-collect]
-    # CSV(cp949) → remap → restrooms (UPDATE)
+    # CSV (cp949) → remap → restrooms (UPDATE)
 ```
 
-실행 결과: 107,164건(수집 53,582 + 보강 53,582), 실패 0, 7분 43초.
+Result: 107,164 records (53,582 collected + 53,582 enriched), 0 failures, 7m43s.
 
 ---
 
-## 문제 해결
+## Troubleshooting
 
-### `depends_on` 을 걸었는데 동시에 실행된다
+### I set `depends_on` but they run at the same time
 
-`execution_mode` 를 확인하라. `parallel`(기본)이면 무시된다.
+Check `execution_mode`. If it is `parallel` (the default), `depends_on` is ignored.
 
 ```sql
-SELECT execution_mode FROM workflows WHERE id='<id>';   -- dag 여야 한다
+SELECT execution_mode FROM workflows WHERE id='<id>';   -- must be dag
 ```
 
-이 증상은 **에러가 나지 않는다.** 로그로도 구분되지 않아 시작 시각 간격으로만
-알 수 있다.
+This failure **raises no error**. Logs do not distinguish it either — the only
+signal is the gap between start times.
 
-### `priority` 를 줬는데 순서가 뒤죽박죽이다
+### I set `priority` but the order is random
 
-`sequential` 이 아니면 `priority` 는 정렬에만 쓰이고 실행을 막지 않는다.
-실제로 순서를 지키려면 `sequential` 또는 `dag`+`depends_on` 이어야 한다.
+Outside `sequential`, `priority` is used only for sorting; it does not gate
+execution. To actually enforce order, use `sequential` or `dag` + `depends_on`.
 
-### 자식 파이프라인에 데이터가 안 들어온다
+### The child pipeline receives no data
 
-`depends_on` 은 데이터를 전달하지 않는다. 부모의 레코드를 받으려면
-pipeline link 를 만들어야 하고, Kafka 가 떠 있어야 한다.
+`depends_on` does not hand over data. To receive the parent's records you need a
+pipeline link, and Kafka must be running.
 
-### 순환 의존을 걸면
+### What happens with a dependency cycle
 
-`runDAG` 가 감지해 실행을 중단한다.
+`runDAG` detects it and aborts:
 
 ```
 circular dependency detected
 ```
 
-A → B → A 처럼 서로 가리키게 두지 말 것. 자기 자신을 `depends_on` 에 넣는 것도 같다.
+Do not let pipelines point at each other (A → B → A). Listing a pipeline in its own
+`depends_on` is the same thing.
 
 ---
 
-## 관련 문서
+## Related documents
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — 실행 위임 구조(agent → K8s Job / 상주 파드)
-- [EXECUTION_TOPOLOGY_INTENT.md](EXECUTION_TOPOLOGY_INTENT.md) — 실행 토폴로지 설계 의도
-- [design-v2.md](design-v2.md) — Input/Stage/Output 모델
+- [ARCHITECTURE.md](ARCHITECTURE.md) — execution delegation (agent → K8s Job / resident pod)
+- [EXECUTION_TOPOLOGY_INTENT.md](EXECUTION_TOPOLOGY_INTENT.md) — execution topology intent
+- [design-v2.md](design-v2.md) — the Input/Stage/Output model

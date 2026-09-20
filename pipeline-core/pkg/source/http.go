@@ -71,10 +71,20 @@ func NewHTTPSource(cfg config.SourceV2) (*HTTPSource, error) {
 		return nil, err
 	}
 
+	// URL·헤더의 ${VAR} 를 생성 시점에 한 번 푼다.
+	//
+	// 왜 필요한가: API 키는 쿼리 파라미터(?serviceKey=...)나 헤더(Authorization)로
+	// 가는데, 지금까지 auth/TLS 필드만 확장돼 URL 에 넣은 키는 평문으로 둘 수밖에
+	// 없었다. 워크플로 설정은 DB 에 저장되고 화면·API 로도 노출되므로 키가 그대로
+	// 남는다. 여기서 풀면 설정에는 ${PUBLIC_DATA_KEY} 만 남고 실제 값은
+	// 실행 파드의 env(Secret 주입)에서 온다.
+	//
+	// 매 요청이 아니라 생성 시 한 번만 푸는 이유: 값이 중간에 바뀌지 않고,
+	// 요청마다 os.ExpandEnv 를 호출할 이유가 없다.
 	source := &HTTPSource{
-		url:        cfg.URL,
+		url:        expandEnvVars(cfg.URL),
 		method:     cfg.Method,
-		headers:    cfg.Headers,
+		headers:    expandEnvVarsInMap(cfg.Headers),
 		body:       cfg.Body,
 		auth:       cfg.Auth,
 		pagination: cfg.Pagination,
@@ -1073,4 +1083,20 @@ func getNestedValue(data map[string]any, path string) any {
 	}
 
 	return current
+}
+
+// expandEnvVarsInMap 은 맵의 값에 든 ${VAR} 를 푼다(키는 그대로).
+//
+// 헤더로 인증하는 API(예: Kakao 의 Authorization: KakaoAK ${KAKAO_REST_KEY})를
+// 위해 필요하다. nil 은 nil 로 돌려준다 — 빈 맵을 만들면 "헤더 없음" 과
+// "빈 헤더 설정" 이 구분되지 않는다.
+func expandEnvVarsInMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = expandEnvVars(v)
+	}
+	return out
 }

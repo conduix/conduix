@@ -377,6 +377,7 @@ conduix/
 
 ## Documentation
 
+- [Pipeline Orchestration Guide](docs/PIPELINE_ORCHESTRATION.md) - Chaining pipelines: `depends_on` vs `priority` vs pipeline link, and which `execution_mode` each one needs
 - [Standalone Pipeline Execution Guide](docs/standalone-usage.md) - Run independently without operations tool
 - [Fault Handling Scenarios](#fault-tolerance) - Redis/Kafka fault handling
 

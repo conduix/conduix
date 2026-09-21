@@ -62,7 +62,7 @@ func New(cfg *Config) (*DB, error) {
 
 // Migrate 데이터베이스 마이그레이션 (GORM AutoMigrate)
 func (db *DB) Migrate() error {
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		// 기본 모델
 		&models.Pipeline{},
 		&models.PipelineRun{},
@@ -94,10 +94,36 @@ func (db *DB) Migrate() error {
 		&models.PluginBuild{},
 		&models.StageRevision{},
 		&models.AllowedModule{},
+		&models.AllowedModuleVersion{},
 		// 파이프라인 링크
 		&models.PipelineLink{},
 		&models.InputCheckpoint{},
-	)
+	); err != nil {
+		return err
+	}
+	return BackfillModuleVersions(db.DB)
+}
+
+// BackfillModuleVersions 는 allowed_modules 의 기본 버전을 allowed_module_versions 에 채운다.
+// 다중 버전 테이블 도입 전에 등록된 모듈은 버전 행이 없어 "보유 버전 목록" 이 비어 보이므로,
+// 기본 버전 하나를 보유 버전으로 옮긴다. 멱등 — 이미 있으면 건너뛴다.
+func BackfillModuleVersions(gdb *gorm.DB) error {
+	var mods []models.AllowedModule
+	if err := gdb.Find(&mods).Error; err != nil {
+		return fmt.Errorf("backfill module versions: list modules: %w", err)
+	}
+	for _, m := range mods {
+		if m.Version == "" {
+			continue
+		}
+		row := models.AllowedModuleVersion{ModulePath: m.ModulePath, Version: m.Version}
+		if err := gdb.Where(&models.AllowedModuleVersion{ModulePath: m.ModulePath, Version: m.Version}).
+			Attrs(models.AllowedModuleVersion{Status: "active", AddedBy: m.AddedBy}).
+			FirstOrCreate(&row).Error; err != nil {
+			return fmt.Errorf("backfill module versions: %s@%s: %w", m.ModulePath, m.Version, err)
+		}
+	}
+	return nil
 }
 
 // Close 데이터베이스 연결 종료

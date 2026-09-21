@@ -419,6 +419,14 @@ func (s *Server) setupRoutes() {
 				modules.DELETE("/*module", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.DeleteModule)
 			}
 
+			// 모듈 보유 버전 관리(ADR-0005). /modules/*module 의 catch-all 뒤에는 세그먼트를 더 붙일 수 없어
+			// 별도 그룹으로 두고 module_path 는 body/query 로 받는다.
+			moduleVersions := authenticated.Group("/module-versions")
+			{
+				moduleVersions.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.AddModuleVersion)
+				moduleVersions.DELETE("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.RetireModuleVersion)
+			}
+
 			// Runner (Native Plugin 빌드/버전 관리)
 			runner := authenticated.Group("/runner")
 			{

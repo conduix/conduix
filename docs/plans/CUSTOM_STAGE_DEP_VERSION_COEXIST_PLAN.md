@@ -3,7 +3,7 @@
 > 작성 2026-09-21. 대상: 이 작업을 이어서 구현할 개발자 / Claude Code.
 > 배경·근거·한계: [../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) §5~§7.
 > 결정 기록: [../adr/0005-dependency-version-coexistence.md](../adr/0005-dependency-version-coexistence.md).
-> 상태: **W0 완료(문서·ADR). W1~W7 미착수.**
+> 상태(2026-09-21): **W0·W1 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W2~W7 미착수.** 인수인계는 §8.
 
 ## 0. 한 문장
 
@@ -178,3 +178,59 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 | W5 | 소~중 — 기존 임시 빌드 절차 재사용 |
 | W6 | 중 — 화면 3곳 |
 | W7 | 소 |
+
+## 8. 인수인계 (다음 세션 시작점)
+
+### 8.1 완료된 것 (W1, 테스트 통과)
+
+| 파일 | 변경 | 목적 |
+|---|---|---|
+| `control-plane/pkg/models/models.go` | `Plugin.DepVersions`(JSON, stage 별 고정 버전), `AllowedModule.SingleVersionOnly`, 신규 `AllowedModuleVersion`(복합 PK, **soft-delete 없음**) | 데이터 모델. `Version` 은 "기본 버전" 으로 의미 변경(주석 반영). `RunnerVersion.ForkedModules` 는 **아직 추가 안 함**(W3 에서) |
+| `control-plane/pkg/database/database.go` | AutoMigrate 목록에 `AllowedModuleVersion`, `BackfillModuleVersions()` 멱등 백필 | 기존 모듈의 기본 버전을 보유 버전 행으로 이관 |
+| `control-plane/internal/api/handlers/module_handler.go` | `ListModules` 응답을 `ModuleView{AllowedModule, Versions[], Usage{version→stage수}}` 로. `CreateModule`/`UpdateModule` 이 보유 버전 행을 함께 보장. `UpdateModule` 에 `single_version_only` 필드. 신규 `AddModuleVersion`(POST /module-versions), `RetireModuleVersion`(DELETE /module-versions?module_path=&version=) | 다중 버전 레지스트리 API. 폐기는 기본 버전·고정 stage 존재 시 거부(409 에 stage 이름 목록) |
+| `control-plane/internal/api/routes.go` | `/module-versions` 그룹(admin) | `/modules/*module` catch-all 뒤에 세그먼트를 못 붙여 별도 그룹 |
+| `control-plane/internal/api/handlers/module_handler_test.go` | sqlite + httptest GOPROXY 대역. 백필 멱등, 생성/기본변경/버전추가/폐기 가드/재추가/usage 집계 6종 | |
+
+**계획 대비 달라진 점**
+- 버전 API 경로: 계획의 `POST /modules/*module/versions` 는 Gin catch-all 제약으로 불가 → `/module-versions` + body/query.
+- `AllowedModuleVersion` 에 `DeletedAt` 을 두지 않음(폐기 후 재추가 시 복합 PK 충돌 방지). 폐기 = 물리 삭제.
+- `SingleVersionOnly` 가드를 `AddModuleVersion` 에도 둠(기본 외 버전 추가 자체를 거부). stage 저장 시 가드는 W2 `ResolvePins` 에서 추가로 필요.
+
+### 8.2 남은 작업 — 무엇을 왜 고치는가
+
+아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.
+
+| 순서 | 파일 / 신규 | 할 일 | 목적 |
+|---|---|---|---|
+| W2-1 | 신규 `control-plane/internal/dependency/{pins,forkpath,rewrite,gomod,source}.go` | §3 의 순수 함수·정책 패키지 | go.mod 생성 정책을 세 소비자(빌더·에디터 테스트·LSP)에서 한 곳으로. "같은 정책은 한 곳" |
+| W2-2 | `handlers/stage_import_validation.go` | `validateStageImports`/`isCoveredByAllowedModule`/`buildTestGoMod` 로직을 `dependency` 로 이동, 얇은 래퍼만 남김 | 중복 제거 |
+| W2-3 | `handlers/plugin_handler.go:208,267,358` | import 검증 → `dependency.ResolvePins(imports, existingPins, defaults)` 로 교체, 결과를 `plugin.DepVersions` 에 저장. `SingleVersionOnly` 모듈에 비기본 고정이면 400 | stage 가 자기 버전을 고정하는 지점. 기존 고정 유지, 새 import 만 기본 버전 |
+| W2-4 | `handlers/plugin_handler.go:670` (`TestNativePlugin`) | `buildTestGoMod(h.db)` → `dependency.TestGoMod(pins, sdkPath)` | 에디터 테스트가 stage 고정 버전으로 컴파일 |
+| W2-5 | `lsp/workspace_manager.go:144,210`, `lsp/proxy.go` | `SyncSource` 의 무시되는 `goMod` 인자를 pins 로 교체, `generateGoMod` → `dependency.WorkspaceGoMod` | 자동완성이 실제 빌드와 같은 버전을 보게 |
+| W2-6 | `builder/runner_builder.go:683,702,721` | `generatePluginGoMod`/`pluginRequireBlock`/`appendPluginRequires` → `dependency` 호출. 레거시(빈 DepVersions) 는 빌드 시 기본 버전으로 pins 생성 후 성공 시 저장 | 빌더도 같은 정책 사용. **이 단계까지는 fork 없음 = 동작 불변**(golden 테스트로 보장) |
+| W2-7 | `builder/runner_builder_test.go` 의 `TestPluginRequireBlock`, `TestGeneratePluginGoMod` | `dependency` 패키지로 이동, 기본 버전만일 때 출력 바이트 동일 확인 | 회귀선 |
+| W3-1 | `models.go` `RunnerVersion` | `ForkedModules string`(JSON) 추가 + AutoMigrate 는 자동 | 어떤 fork 가 링크됐는지 관측 |
+| W3-2 | `builder/runner_builder.go:352~367` | fork 단계 삽입: 비기본 (module,version) 수집 → `SingleVersionOnly` 면 실패 → `ModuleSource.Dir()`(go mod download -json) → `copyDir` → 0644 → `RewriteModuleTree` | 비기본 버전 소스를 `forked/<mangled>` 로 |
+| W3-3 | `builder/runner_builder.go:367` | `p.SourceCode` 대신 `RewriteStageImports(...)` 결과 기록. alias 는 fork 디렉토리의 `package` 절에서 읽음 | stage import 를 fork 경로로. 사용자 코드 본문 불변 |
+| W3-4 | `dependency/gomod.go` `MainRequireBlock` | fork 마다 `require <forkPath> v0.0.0` + `replace <forkPath> => ./forked/<mangled>` | 메인 go.mod 연결 |
+| W3-5 | `builder/runner_builder.go:574` `CombinedSourceHash` | pins(정렬된 `module@version`) 를 해시에 포함 | stage 가 버전을 올리면 재빌드. 리졸버 `coreChangedSince` 는 같은 함수라 자동 정합 |
+| W3-6 | `builder/testdata/` + 통합 테스트(`//go:build integration`) | 다중 패키지 모듈 두 벌 fixture 로 실제 `go build`, 두 stage 출력이 갈리는지 | CONFLICT.md §5 실험 2~5 자동화. **자기참조 import 미재작성 시 조용히 섞이는 함정** 회귀 방지 |
+| W4-1 | `pipeline-runner/cmd/runner/main.go:23` | `CONDUIX_INIT_CHECK=1` 이면 init 후 즉시 exit 0 | init 중복 등록 panic 을 빌드 단계에서 검출 |
+| W4-2 | `builder/runner_builder.go:414` 이후 | fork 가 있을 때만 바이너리를 `CONDUIX_INIT_CHECK=1` 로 실행. 플랫폼 불일치 시 호스트 타깃 재빌드. `RunnerBuilderConfig.InitCheck` 로 끄기 | `database/sql` 드라이버류 두 벌 링크 panic 을 빌드 실패로 전환, 메시지에 fork 목록 |
+| W5-1 | `handlers/plugin_handler.go` 신규 `UpgradeDeps` (POST /plugins/:id/upgrade-deps) | 기본 버전 pins 로 `TestNativePlugin` 의 임시 빌드(컴파일만) → 성공 시 `DepVersions` 갱신 + `createRevision` | stage 소유자의 명시적 수렴 경로 |
+| W5-2 | `handlers/module_handler.go` 신규 `UpgradeAll` (POST /module-versions/upgrade-all) | 그 모듈 비기본 고정 stage 전부에 W5-1 순차 실행, 결과 표 반환, 실패는 그대로 둠 | admin 일괄 수렴 |
+| W5-3 | `handlers/plugin_handler.go` `ListPlugins`/`GetPlugin` | 응답에 `pinned_behind: [{module_path, pinned, default}]` | UI 배지 재료 |
+| W6-1 | `web-ui/src/services/moduleApi.ts` | `ModuleView` 타입(versions/usage/single_version_only), addVersion/retireVersion/upgradeAll/upgradeDeps 호출 | |
+| W6-2 | `web-ui/src/components/NativeStageEditor/NativeStageEditor.tsx:116~147` | 모듈 패널에 "기본 vX / 이 stage vY", 다르면 배지 + "기본 버전으로 시도" 버튼 | |
+| W6-3 | `web-ui/src/pages/Plugins.tsx` | `pinned_behind` 카운트 배지 | |
+| W6-4 | 관리 화면(신규 또는 Plugins.tsx 탭) | 버전 목록·사용 수·기본 지정·폐기·`single_version_only` 토글·upgrade-all | |
+| W6-5 | `web-ui/src/i18n/{en,ko}` | 키 추가 | |
+| W7 | `ARCHITECTURE.md` §3, `archive/CUSTOM_STAGE_DEPENDENCY_REGISTRY.md` 배너, ADR-0005 → Accepted, 이 문서 → archive | 문서 정합 |
+
+### 8.3 다음 세션 첫 명령
+
+```bash
+git checkout feat/dep-version-coexistence
+cd control-plane && go test ./internal/api/handlers/ -run 'Module' -count=1   # W1 회귀 확인
+mkdir -p internal/dependency                                                   # W2-1 시작
+```

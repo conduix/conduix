@@ -3,7 +3,7 @@
 > 작성 2026-09-21. 대상: 이 작업을 이어서 구현할 개발자 / Claude Code.
 > 배경·근거·한계: [../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) §5~§7.
 > 결정 기록: [../adr/0005-dependency-version-coexistence.md](../adr/0005-dependency-version-coexistence.md).
-> 상태(2026-09-21): **W0~W5 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W6·W7 미착수.** 인수인계는 §8.
+> 상태(2026-09-21): **W0~W6 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W7(문서 정리)과 §5 e2e 남음.** 인수인계는 §8.
 
 ## 0. 한 문장
 
@@ -260,17 +260,29 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 - `upgrade-all` 은 대상 stage 를 컴파일 **전에** 걸러낸다(그 모듈을 고정하지 않음 / 이미 기본 / 소스 없음). 안 그러면 stage 수만큼 수십 초씩 늘어난다.
 - 테스트는 실제 `go build` 를 돌리지 않는 경로만 고정했다. 컴파일까지 도는 케이스는 e2e(§5 6번) 몫이다.
 
+### 8.1f W6 완료분 (타입체크·lint·테스트 통과, 빌드 성공)
+
+| 파일 | 변경 |
+|---|---|
+| `services/moduleApi.ts` | `ModuleView`(versions/usage/single_version_only), `addModuleVersion`, `retireModuleVersion`, `upgradeAllStages`. `updateModule` 에 `single_version_only` 인자 |
+| `services/pluginApi.ts`, `types/plugin.ts` | `upgradeStageDeps`, `Plugin.dep_versions`·`Plugin.pinned_behind`, `PinnedBehind` 타입 |
+| `NativeStageEditor.tsx` | 의존성 탭: 모듈별 "기본 vX" + 다르면 "이 stage vY" 경고 칩 + "기본 버전으로" 버튼. 실패 시 컴파일러 원문을 `pre-wrap` 으로 표시. WebSocket 에 `plugin_name` (W2에서) |
+| 신규 `components/ModuleRegistry/ModuleRegistryDialog.tsx` | 버전 목록·사용 stage 수·기본 지정(칩 클릭)·폐기(칩 삭제)·버전 추가·`single_version_only` 토글·일괄 올리기. 일괄 결과는 stage 별 ✓/✗ 로 전부 표시 |
+| `pages/Plugins.tsx` | 헤더에 "모듈 레지스트리" 버튼, 목록에 `pinned_behind` 카운트 배지(툴팁에 모듈별 `pinned → default`) |
+| `i18n/locales/{en,ko}.json` | `plugins.deps.*`, `modules.*`, `plugin.depsStatus`·`pinnedBehind`, `common.close` |
+| 신규 `components/depsVersionUI.test.ts` | 17종. 이 저장소 관행(소스 텍스트 검사)을 따랐다 — `@testing-library` 가 없어 DOM 렌더 테스트 인프라가 없다 |
+
+**W6 에서 확인한 것**
+- `plugins.deps.*` 키는 원래 en/ko 어디에도 없었다(fallback 문자열에만 의존). 이번에 양쪽 등록했고, "영어 번역에 한글이 섞이지 않는다" 를 테스트로 고정했다.
+- `api.delete` 는 config 인자를 받지 않는 래퍼라, 버전 폐기는 쿼리스트링을 URL 에 직접 붙인다.
+- 모듈 관리 전용 화면이 없어 `Plugins.tsx` 에 다이얼로그로 붙였다(별도 라우트 추가 없음).
+
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
 아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.
 
 | 순서 | 파일 / 신규 | 할 일 | 목적 |
 |---|---|---|---|
-| W6-1 | `web-ui/src/services/moduleApi.ts` | `ModuleView` 타입(versions/usage/single_version_only), addVersion/retireVersion/upgradeAll/upgradeDeps 호출 | |
-| W6-2 | `web-ui/src/components/NativeStageEditor/NativeStageEditor.tsx:116~147` | 모듈 패널에 "기본 vX / 이 stage vY", 다르면 배지 + "기본 버전으로 시도" 버튼 | |
-| W6-3 | `web-ui/src/pages/Plugins.tsx` | `pinned_behind` 카운트 배지 | |
-| W6-4 | 관리 화면(신규 또는 Plugins.tsx 탭) | 버전 목록·사용 수·기본 지정·폐기·`single_version_only` 토글·upgrade-all | |
-| W6-5 | `web-ui/src/i18n/{en,ko}` | 키 추가 | |
 | W7 | `ARCHITECTURE.md` §3, `archive/CUSTOM_STAGE_DEPENDENCY_REGISTRY.md` 배너, ADR-0005 → Accepted, 이 문서 → archive | 문서 정합 |
 
 ### 8.3 다음 세션 첫 명령
@@ -279,5 +291,6 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 git checkout feat/dep-version-coexistence
 cd control-plane && go test ./... -count=1                          # W1~W3 회귀
 go test -tags integration ./internal/builder/       # fork 공존 + init 자가점검
-# W6-1 시작: web-ui/src/services/moduleApi.ts 에 versions/usage/upgrade 호출 추가
+cd ../web-ui && npx vitest run && npm run build                     # W6 회귀
+# 남은 것: §5 e2e(로컬 K8s 실동작) → W7 문서 정리
 ```

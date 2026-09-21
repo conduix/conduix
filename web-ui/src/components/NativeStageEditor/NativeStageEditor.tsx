@@ -34,7 +34,9 @@ import type { TestNativePluginResponse } from '../../types/plugin'
 import { LSPClient, lspKindToMonaco, lspSeverityToMonaco } from '../../services/lspClient'
 import type { LSPDiagnostic } from '../../services/lspClient'
 import { listModules, addModule } from '../../services/moduleApi'
-import type { AllowedModule } from '../../services/moduleApi'
+import type { ModuleView } from '../../services/moduleApi'
+import { getPlugin, upgradeStageDeps } from '../../services/pluginApi'
+import type { PinnedBehind } from '../../types/plugin'
 import { List, ListItem, ListItemText } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 
@@ -113,10 +115,16 @@ export default function NativeStageEditor({
   const [testing, setTesting] = useState(false)
 
   // 허용 모듈 레지스트리(의존성) — 사용자는 목록에서 확인/추가만, 버전은 서버가 고정.
-  const [modules, setModules] = useState<AllowedModule[]>([])
+  const [modules, setModules] = useState<ModuleView[]>([])
   const [newModulePath, setNewModulePath] = useState('')
   const [moduleBusy, setModuleBusy] = useState(false)
   const [moduleError, setModuleError] = useState<string | null>(null)
+
+  // 이 stage 가 고정한 모듈 버전(module_path → version). 저장 전 새 stage 면 비어 있다.
+  const [stagePins, setStagePins] = useState<Record<string, string>>({})
+  const [pinnedBehind, setPinnedBehind] = useState<PinnedBehind[]>([])
+  const [upgrading, setUpgrading] = useState<string | null>(null)
+  const [upgradeError, setUpgradeError] = useState<string | null>(null)
 
   const loadModules = useCallback(async () => {
     try {
@@ -126,9 +134,43 @@ export default function NativeStageEditor({
     }
   }, [])
 
+  // 저장된 stage 의 고정 버전을 읽어 "기본 vX / 이 stage vY" 를 나란히 보여준다.
+  const loadStagePins = useCallback(async () => {
+    if (!pluginName) {
+      setStagePins({})
+      setPinnedBehind([])
+      return
+    }
+    try {
+      const p = await getPlugin(pluginName)
+      setStagePins(p.dep_versions ? (JSON.parse(p.dep_versions) as Record<string, string>) : {})
+      setPinnedBehind(p.pinned_behind || [])
+    } catch {
+      // 조회 실패는 표시만 못 할 뿐 편집을 막지 않는다.
+      setStagePins({})
+      setPinnedBehind([])
+    }
+  }, [pluginName])
+
   useEffect(() => {
     void loadModules()
-  }, [loadModules])
+    void loadStagePins()
+  }, [loadModules, loadStagePins])
+
+  // 이 stage 의 한 모듈을 기본 버전으로 올린다. 서버가 컴파일해 보고 성공 시에만 저장한다.
+  const handleUpgradeModule = useCallback(async (modulePath: string) => {
+    if (!pluginName) return
+    setUpgrading(modulePath)
+    setUpgradeError(null)
+    try {
+      await upgradeStageDeps(pluginName, [modulePath])
+      await loadStagePins()
+    } catch (e) {
+      setUpgradeError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setUpgrading(null)
+    }
+  }, [pluginName, loadStagePins])
 
   const handleAddModule = useCallback(async () => {
     const path = newModulePath.trim()
@@ -398,8 +440,13 @@ export default function NativeStageEditor({
         {editorTab === 1 && (
           <Box sx={{ p: 2 }}>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              {t('plugins.deps.help', '허용된 외부 모듈만 import 할 수 있습니다. 버전은 플랫폼이 관리합니다(등록 시 최신 고정). 필요한 모듈을 추가하세요.')}
+              {t('plugins.deps.help', '허용된 외부 모듈만 import 할 수 있습니다. 각 stage 는 저장 시점의 기본 버전으로 고정되며, 기본 버전이 올라가도 기존 stage 는 그대로 동작합니다.')}
             </Typography>
+            {pinnedBehind.length > 0 && (
+              <Alert severity="info" sx={{ mb: 1 }}>
+                {t('plugins.deps.behindHint', '{{count}}개 모듈이 기본 버전과 다릅니다. 올리려면 각 항목의 버튼을 누르세요 — 서버가 먼저 컴파일해 보고 성공할 때만 적용합니다.', { count: pinnedBehind.length })}
+              </Alert>
+            )}
             <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
               <TextField
                 size="small"
@@ -432,16 +479,52 @@ export default function NativeStageEditor({
                   </ListItemText>
                 </ListItem>
               )}
-              {modules.map((m) => (
-                <ListItem key={m.module_path} secondaryAction={
-                  <Chip label={m.version} size="small" variant="outlined" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }} />
-                }>
-                  <ListItemText>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>{m.module_path}</Typography>
-                  </ListItemText>
-                </ListItem>
-              ))}
+              {modules.map((m) => {
+                const pinned = stagePins[m.module_path]
+                const behind = pinned !== undefined && pinned !== m.version
+                return (
+                  <ListItem key={m.module_path} secondaryAction={
+                    <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+                      <Chip
+                        label={`${t('plugins.deps.defaultVersion', '기본')} ${m.version}`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }}
+                      />
+                      {behind && (
+                        <>
+                          <Chip
+                            label={`${t('plugins.deps.thisStage', '이 stage')} ${pinned}`}
+                            size="small"
+                            color="warning"
+                            sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }}
+                          />
+                          <Button
+                            size="small"
+                            variant="text"
+                            disabled={disabled || upgrading !== null}
+                            onClick={() => void handleUpgradeModule(m.module_path)}
+                          >
+                            {upgrading === m.module_path
+                              ? <CircularProgress size={14} />
+                              : t('plugins.deps.tryDefault', '기본 버전으로')}
+                          </Button>
+                        </>
+                      )}
+                    </Stack>
+                  }>
+                    <ListItemText>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>{m.module_path}</Typography>
+                    </ListItemText>
+                  </ListItem>
+                )
+              })}
             </List>
+            {upgradeError && (
+              <Alert severity="error" sx={{ mt: 1, whiteSpace: 'pre-wrap' }} onClose={() => setUpgradeError(null)}>
+                {upgradeError}
+              </Alert>
+            )}
           </Box>
         )}
       </Paper>

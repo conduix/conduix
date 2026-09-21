@@ -1319,7 +1319,9 @@
     "noContent": "No source code or stages registered.",
     "schemaLoadError": "Failed to load stage schema",
     "noSchema": "No configuration schema available for this stage type.",
-    "arrayFieldHelp": "Separate values with commas"
+    "arrayFieldHelp": "Separate values with commas",
+    "depsStatus": "Deps",
+    "pinnedBehind": "{{count}} behind"
   },
   "pluginBuilder": {
     "title": "Stage Builder",
@@ -1417,5 +1419,29 @@
     "records": "Records",
     "failed": "Failed",
     "startedAt": "Started"
+  },
+  "plugins": {
+    "deps": {
+      "help": "Only allowed external modules can be imported. Each stage pins the default version at save time; raising the default does not change existing stages.",
+      "empty": "No external modules registered. The standard library and plugin-sdk are always available.",
+      "behindHint": "{{count}} module(s) differ from the default. Use the button on each row to raise them — the server compiles first and applies only on success.",
+      "defaultVersion": "default",
+      "thisStage": "this stage",
+      "tryDefault": "Use default"
+    }
+  },
+  "modules": {
+    "registryTitle": "Module registry",
+    "registryHelp": "The default version applies to newly saved stages. Stages already saved keep their pinned version — use \"upgrade all\" to raise them (each stage is compiled first; only the ones that build are changed).",
+    "path": "Module",
+    "versions": "Versions (stages using)",
+    "singleOnly": "Single version only",
+    "singleOnlyHelp": "Modules that register globally in init() (DB drivers and the like) clash when two versions are linked together. Turning this on forbids versions other than the default.",
+    "actions": "Actions",
+    "addVersion": "Add version",
+    "versionPlaceholder": "blank = latest",
+    "upgradeAllHelp": "Raise every stage that pinned this module to a non-default version. Stages that fail to compile are left untouched.",
+    "upgradeNothing": "No stage to raise.",
+    "empty": "No modules registered. Add them from the dependencies tab of the stage editor."
   }
 }

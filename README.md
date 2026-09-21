@@ -377,6 +377,7 @@ conduix/
 
 ## Documentation
 
+- [Custom Stage Dependency Conflict](docs/CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) - Why stages written at different times can break each other's builds, and the open options
 - [Standalone Pipeline Execution Guide](docs/standalone-usage.md) - Run independently without operations tool
 - [Fault Handling Scenarios](#fault-tolerance) - Redis/Kafka fault handling
 

@@ -358,6 +358,7 @@ conduix/
 
 ## 문서
 
+- [커스텀 stage 의존성 충돌](docs/CUSTOM_STAGE_DEPENDENCY_CONFLICT.ko.md) - 개발 시점이 다른 stage 들이 서로의 빌드를 깨뜨리는 이유와 미결정 선택지
 - [Standalone 파이프라인 실행 가이드](docs/standalone-usage.md) - 운영툴 없이 독립 실행
 - [장애 처리 시나리오](#장애-처리-fault-tolerance) - Redis/Kafka 장애 대응
 

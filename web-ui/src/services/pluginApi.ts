@@ -169,3 +169,24 @@ export async function getRunnerDeployments(): Promise<RunnerDeploymentStatus> {
   const resp = await api.get<{ success: boolean; data: RunnerDeploymentStatus }>('/runner/deployments')
   return resp.data?.data || { deployments: [], stale_count: 0, deploying_count: 0 }
 }
+
+// stage 하나의 고정 의존성 버전을 기본 버전으로 올린다(operator+).
+// modules 를 비우면 그 stage 가 고정한 모듈 전부가 대상. 서버가 올린 버전으로 실제
+// 컴파일해 보고 성공했을 때만 저장하므로, 실패하면 저장값은 그대로고 에러 원문이 온다.
+export interface UpgradeDepsResponse {
+  plugin_name: string
+  changed?: Record<string, string>
+  dep_versions: Record<string, string>
+  build_output?: string
+}
+
+export async function upgradeStageDeps(
+  pluginName: string,
+  modules?: string[],
+): Promise<UpgradeDepsResponse> {
+  const resp = await api.post<{ success: boolean; data: UpgradeDepsResponse }>(
+    `/plugins/${pluginName}/upgrade-deps`,
+    { modules },
+  )
+  return resp.data.data
+}

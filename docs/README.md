@@ -15,6 +15,7 @@
 - [design-v2.md](design-v2.md) — 파이프라인 근간 설계(배치/실시간, 소스, Input→Stage→Output 모델)
 - [EXECUTION_TOPOLOGY_INTENT.md](EXECUTION_TOPOLOGY_INTENT.md) — **실행 토폴로지 설계 결정(D1~D6)**: 멀티 K8s 위임 구조의 의도·트레이드오프
 - [PLUGIN_ARCHITECTURE_V4.md](PLUGIN_ARCHITECTURE_V4.md) — **현재 플러그인 아키텍처(V4)**: native Go stage 레지스트리 + goja 스크립트 stage
+- [CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) — 커스텀 stage 의존성 버전 충돌: 문제·실험·확정 방안(ADR-0005)
 - [STAGE_SCHEMA_ARCHITECTURE.md](STAGE_SCHEMA_ARCHITECTURE.md) — Stage 스키마 기반 GUI 자동생성 시스템
 
 ### 참조 · 가이드
@@ -24,7 +25,7 @@
 
 ### 현행 작업
 - [REMAINING_WORK_CHECKLIST.md](REMAINING_WORK_CHECKLIST.md) — 남은 작업 체크리스트
-- [plans/](plans/) — **진행 중** 작업 계획만 둔다(완료되면 archive/로 이동). 현재: `plans/TODO.md`.
+- [plans/](plans/) — **진행 중** 작업 계획만 둔다(완료되면 archive/로 이동). 현재: `plans/TODO.md`, `plans/CUSTOM_STAGE_DEP_VERSION_COEXIST_PLAN.md`(의존성 버전 공존, W1~W7).
 
 > 현재 지원 기능·구현 현황은 [ARCHITECTURE.md](ARCHITECTURE.md)를 본다. 시점 스냅샷 문서는 archive에 있다.
 

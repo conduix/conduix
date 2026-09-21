@@ -18,6 +18,17 @@ export interface Plugin {
   created_by?: string
   created_at: string
   updated_at: string
+  // 이 stage 가 고정한 외부 모듈 버전(JSON 문자열, module_path → version). 빈 값 = 레거시.
+  dep_versions?: string
+  // 기본 버전과 다른 버전에 머물러 있는 모듈들(서버가 계산해 내려준다).
+  pinned_behind?: PinnedBehind[]
+}
+
+// stage 가 레지스트리 기본과 다른 버전을 쓰고 있는 모듈.
+export interface PinnedBehind {
+  module_path: string
+  pinned: string
+  default: string
 }
 
 export interface StageListResponse {

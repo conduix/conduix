@@ -20,7 +20,20 @@ import (
 	_ "github.com/KimMachineGun/automemlimit"
 )
 
+// initCheckEnv 가 1 이면 설정을 읽지 않고 즉시 종료한다.
+// 이 시점에는 registry_custom.go 를 포함한 모든 init() 이 이미 실행됐으므로,
+// 중복 등록(같은 database/sql 드라이버 이름 두 번 Register 등)은 그 전에 panic 으로 터진다.
+// 빌더가 fork 를 만든 빌드에서만 이걸 실행해, 런타임 pod 에서야 드러날 충돌을
+// 빌드 실패로 앞당긴다(ADR-0005 W4).
+const initCheckEnv = "CONDUIX_INIT_CHECK"
+
 func main() {
+	if os.Getenv(initCheckEnv) == "1" {
+		logging.Setup("pipeline-runner")
+		slog.Info("init check ok")
+		os.Exit(0)
+	}
+
 	logging.Setup("pipeline-runner")
 	slog.Info("starting")
 

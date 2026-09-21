@@ -406,6 +406,8 @@ func (s *Server) setupRoutes() {
 				plugins.GET("/:name", s.pluginHandler.GetPlugin)
 				plugins.GET("/:name/revisions", s.pluginHandler.ListRevisions)
 				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
+				// 의존성 버전 올리기(ADR-0005 W5): 기본 버전으로 컴파일해 보고 성공 시에만 저장.
+				plugins.POST("/:name/upgrade-deps", middleware.RoleMiddleware(string(types.UserRoleOperator), string(types.UserRoleAdmin)), s.pluginHandler.UpgradeDeps)
 				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)
 			}
 
@@ -417,6 +419,17 @@ func (s *Server) setupRoutes() {
 				modules.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.CreateModule)
 				modules.PUT("/*module", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.UpdateModule)
 				modules.DELETE("/*module", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.DeleteModule)
+			}
+
+			// 모듈 보유 버전 관리(ADR-0005). /modules/*module 의 catch-all 뒤에는 세그먼트를 더 붙일 수 없어
+			// 별도 그룹으로 두고 module_path 는 body/query 로 받는다.
+			moduleVersions := authenticated.Group("/module-versions")
+			{
+				moduleVersions.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.AddModuleVersion)
+				moduleVersions.DELETE("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.RetireModuleVersion)
+				// 그 모듈을 비기본 버전으로 고정한 stage 들을 일괄로 기본 버전에 수렴시킨다.
+				// stage 별 컴파일 검증이 필요해 PluginHandler 가 처리한다.
+				moduleVersions.POST("/upgrade-all", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpgradeAll)
 			}
 
 			// Runner (Native Plugin 빌드/버전 관리)

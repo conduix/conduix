@@ -1322,7 +1322,9 @@
     "noContent": "등록된 소스 코드 또는 Stage가 없습니다.",
     "schemaLoadError": "Stage 스키마를 불러오는데 실패했습니다",
     "noSchema": "이 Stage 타입에 대한 설정 스키마가 없습니다.",
-    "arrayFieldHelp": "쉼표로 구분하여 입력"
+    "arrayFieldHelp": "쉼표로 구분하여 입력",
+    "depsStatus": "의존성",
+    "pinnedBehind": "{{count}}개 낮음"
   },
   "pluginBuilder": {
     "title": "Stage 빌더",
@@ -1420,5 +1422,29 @@
     "records": "처리 건수",
     "failed": "실패",
     "startedAt": "시작"
+  },
+  "plugins": {
+    "deps": {
+      "help": "허용된 외부 모듈만 import 할 수 있습니다. 각 stage 는 저장 시점의 기본 버전으로 고정되며, 기본 버전이 올라가도 기존 stage 는 그대로 동작합니다.",
+      "empty": "등록된 외부 모듈이 없습니다. 표준 라이브러리와 plugin-sdk 는 항상 사용 가능합니다.",
+      "behindHint": "{{count}}개 모듈이 기본 버전과 다릅니다. 올리려면 각 항목의 버튼을 누르세요 — 서버가 먼저 컴파일해 보고 성공할 때만 적용합니다.",
+      "defaultVersion": "기본",
+      "thisStage": "이 stage",
+      "tryDefault": "기본 버전으로"
+    }
+  },
+  "modules": {
+    "registryTitle": "모듈 레지스트리",
+    "registryHelp": "기본 버전은 새로 저장되는 stage 에 적용됩니다. 이미 저장된 stage 는 자기 고정 버전을 그대로 씁니다 — 올리려면 \"일괄 올리기\" 를 쓰세요(각 stage 를 컴파일해 보고 성공한 것만 반영합니다).",
+    "path": "모듈",
+    "versions": "보유 버전 (사용 stage 수)",
+    "singleOnly": "단일 버전만",
+    "singleOnlyHelp": "init() 으로 전역 등록하는 모듈(DB 드라이버 등)은 두 버전이 함께 링크되면 충돌합니다. 켜면 기본 외 버전을 보유할 수 없습니다.",
+    "actions": "작업",
+    "addVersion": "버전 추가",
+    "versionPlaceholder": "비우면 최신",
+    "upgradeAllHelp": "이 모듈을 기본과 다른 버전으로 고정한 stage 들을 기본 버전으로 올립니다. 컴파일에 실패한 stage 는 그대로 둡니다.",
+    "upgradeNothing": "올릴 stage 가 없습니다.",
+    "empty": "등록된 모듈이 없습니다. stage 편집기의 의존성 탭에서 추가하세요."
   }
 }

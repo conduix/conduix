@@ -26,19 +26,23 @@ var upgrader = websocket.Upgrader{
 // LSPProxy WebSocket ↔ gopls stdio 중계 프록시
 type LSPProxy struct {
 	workspaceManager *WorkspaceManager
-	logger           *slog.Logger
+	// pinsFn 은 stage 이름으로 그 stage 의 고정 모듈 버전을 조회한다(주입 — lsp 는 db 를 모른다).
+	pinsFn func(pluginName string) map[string]string
+	logger *slog.Logger
 }
 
-// NewLSPProxy LSPProxy 생성
-func NewLSPProxy(wm *WorkspaceManager) *LSPProxy {
+// NewLSPProxy LSPProxy 생성. pinsFn 은 nil 허용(그 경우 항상 기본 버전).
+func NewLSPProxy(wm *WorkspaceManager, pinsFn func(pluginName string) map[string]string) *LSPProxy {
 	return &LSPProxy{
 		workspaceManager: wm,
+		pinsFn:           pinsFn,
 		logger:           slog.Default().With("component", "lsp-proxy"),
 	}
 }
 
 // HandleWebSocket WebSocket 연결 처리 (gin HandlerFunc용)
-// Query parameter: session_id (필수)
+// Query parameter: session_id (필수), plugin_name (선택 — 그 stage 의 고정 의존성 버전으로
+// workspace 를 만들어 자동완성이 실제 빌드와 같은 버전을 보게 한다).
 func (p *LSPProxy) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session_id")
 	if sessionID == "" {
@@ -46,8 +50,13 @@ func (p *LSPProxy) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var pins map[string]string
+	if p.pinsFn != nil {
+		pins = p.pinsFn(r.URL.Query().Get("plugin_name"))
+	}
+
 	// workspace 가져오기/생성
-	ws, err := p.workspaceManager.GetOrCreate(sessionID)
+	ws, err := p.workspaceManager.GetOrCreate(sessionID, pins)
 	if err != nil {
 		p.logger.Error("Failed to create workspace", "session_id", sessionID, "error", err)
 		http.Error(w, "workspace creation failed", http.StatusInternalServerError)

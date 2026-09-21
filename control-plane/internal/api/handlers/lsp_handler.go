@@ -14,6 +14,7 @@ import (
 type LSPHandler struct {
 	proxy            *lsp.LSPProxy
 	workspaceManager *lsp.WorkspaceManager
+	db               *database.DB
 }
 
 // NewLSPHandler LSPHandler 생성
@@ -31,10 +32,14 @@ func NewLSPHandler(sdkModPath string, db *database.DB) *LSPHandler {
 		}
 		return refs, nil
 	}
+	pinsFn := func(pluginName string) map[string]string {
+		return pinsByPluginName(db, pluginName)
+	}
 	wm := lsp.NewWorkspaceManager(sdkModPath, modulesFn)
 	return &LSPHandler{
-		proxy:            lsp.NewLSPProxy(wm),
+		proxy:            lsp.NewLSPProxy(wm, pinsFn),
 		workspaceManager: wm,
+		db:               db,
 	}
 }
 
@@ -48,7 +53,10 @@ func (h *LSPHandler) HandleLSP(c *gin.Context) {
 type SyncSourceRequest struct {
 	SessionID  string `json:"session_id" binding:"required"`
 	SourceCode string `json:"source_code"`
-	GoMod      string `json:"go_mod"`
+	GoMod      string `json:"go_mod"` // 미사용(하위호환) — go.mod 는 레지스트리+stage 고정 버전으로 생성
+	// PluginName 이 오면 그 stage 가 고정한 모듈 버전으로 workspace go.mod 를 만든다.
+	// 자동완성이 보는 버전이 실제 빌드 버전과 갈리지 않게 하기 위함(ADR-0005).
+	PluginName string `json:"plugin_name,omitempty"`
 }
 
 // SyncSource POST /api/v1/lsp/sync — 사용자 코드를 gopls workspace에 동기화
@@ -60,7 +68,7 @@ func (h *LSPHandler) SyncSource(c *gin.Context) {
 		return
 	}
 
-	if err := h.workspaceManager.SyncSource(req.SessionID, req.SourceCode, req.GoMod); err != nil {
+	if err := h.workspaceManager.SyncSource(req.SessionID, req.SourceCode, pinsByPluginName(h.db, req.PluginName)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

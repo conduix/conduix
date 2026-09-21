@@ -28,6 +28,8 @@ const (
 	BuildReasonBinaryMissing BuildRequiredReason = "binary_missing"
 	// BuildReasonCoreChanged stage 는 그대로인데 코어 모듈이 바뀌었다.
 	BuildReasonCoreChanged BuildRequiredReason = "core_changed"
+	// BuildReasonDepsChanged stage 소스는 그대로인데 고정한 외부 모듈 버전이 바뀌었다(upgrade-deps 등).
+	BuildReasonDepsChanged BuildRequiredReason = "deps_changed"
 )
 
 // BuildRequiredError native plugin의 빌드가 필요할 때 반환하는 에러
@@ -49,6 +51,9 @@ func (e *BuildRequiredError) Error() string {
 	case BuildReasonCoreChanged:
 		// stage 소스는 그대로이므로 stage 이름을 나열하면 오히려 혼란스럽다.
 		return fmt.Sprintf("conduix 코어가 업데이트되어 현재 runner(%s)가 낡았습니다. 다시 빌드한 뒤 실행해주세요.",
+			e.LatestReadyVersion)
+	case BuildReasonDepsChanged:
+		return fmt.Sprintf("stage 의 의존성 버전이 바뀌어 현재 runner(%s)가 낡았습니다. 다시 빌드한 뒤 실행해주세요.",
 			e.LatestReadyVersion)
 	default:
 		names := make([]string, len(e.PendingPlugins))
@@ -198,28 +203,42 @@ func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string
 	// plugin 해시가 같아도 코어(pipeline-runner/pipeline-core/shared/plugin-sdk)가 바뀌면
 	// 그 버전의 바이너리는 낡았다. 빌더는 이걸 combinedHash 로 감지해 재빌드하는데,
 	// 리졸버가 안 보면 옛 바이너리로 계속 실행돼 코어 수정이 영구히 반영되지 않는다.
-	if r.coreChangedSince(latestReady, nativePlugins) {
-		return "", "", true, buildRequired(BuildReasonCoreChanged)
+	if reason, stale := r.staleSince(latestReady, nativePlugins); stale {
+		return "", "", true, buildRequired(reason)
 	}
 	return latestReady.ID, latestReady.ImageTag, true, nil
 }
 
-// coreChangedSince 는 해당 버전이 빌드된 뒤 코어 소스가 바뀌었는지 본다.
+// staleSince 는 해당 버전이 빌드된 뒤 코어 소스 또는 stage 고정 의존성 버전이 바뀌었는지 보고,
+// 바뀌었으면 어느 쪽인지 사유를 돌려준다 — 사용자가 확인할 곳이 다르다(배포 버전 vs stage 의존성).
 // 판정은 빌더와 같은 CombinedSourceHash 로 한다 — 두 곳이 다른 식으로 계산하면
 // 빌더는 재빌드하는데 리졸버는 옛 버전을 유효하다고 해서 서로 어긋난다.
 // SourceRoot 를 못 읽는 환경(소스 미포함 이미지)에서는 코어 해시가 빈 문자열이 되므로
 // 판정을 건너뛴다 — 재빌드를 강요해 실행을 막는 쪽보다 현행 유지가 안전하다.
-func (r *RunnerResolver) coreChangedSince(version *models.RunnerVersion, plugins []models.Plugin) bool {
+func (r *RunnerResolver) staleSince(version *models.RunnerVersion, plugins []models.Plugin) (BuildRequiredReason, bool) {
 	coreHash := builder.CoreSourceHash(builder.SourceRootFromEnv(), nil)
 	if coreHash == "" {
-		return false
+		return "", false
 	}
+	return staleReason(version, plugins, coreHash)
+}
 
+// staleReason 은 해시 비교의 순수 부분이다(코어 해시 주입 — 테스트용 분리).
+// 결합 해시가 같으면 stale 아님. 다르면 의존성 지문이 바뀐 경우를 먼저 보고, 아니면 코어 변경이다.
+// 지문 컬럼 도입 전 버전은 DepsFingerprint 가 비어 있고 당시 지문도 비어 있었으므로 코어 변경으로 분류된다.
+func staleReason(version *models.RunnerVersion, plugins []models.Plugin, coreHash string) (BuildRequiredReason, bool) {
 	pluginHashes := make(map[string]string, len(plugins))
 	for _, p := range plugins {
 		pluginHashes[p.ID] = p.SourceHash
 	}
-	return builder.CombinedSourceHash(pluginHashes, coreHash) != version.SourceHash
+	fingerprint := builder.PluginDepFingerprint(plugins)
+	if builder.CombinedSourceHash(pluginHashes, coreHash, fingerprint) == version.SourceHash {
+		return "", false
+	}
+	if builder.DepsFingerprintHash(fingerprint) != version.DepsFingerprint {
+		return BuildReasonDepsChanged, true
+	}
+	return BuildReasonCoreChanged, true
 }
 
 // findNativePluginsInWorkflow 워크플로우의 파이프라인 설정에서 native plugin stage를 찾아 해당 Plugin 모델을 반환

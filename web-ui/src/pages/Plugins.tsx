@@ -19,6 +19,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   CircularProgress,
+  Stack,
 } from '@mui/material'
 import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import {
@@ -46,6 +47,7 @@ import {
 import type { RunnerStatusResponse, RunnerVersion } from '../services/pluginApi'
 import NativeStageEditor from '../components/NativeStageEditor/NativeStageEditor'
 import JSScriptStageEditor from '../components/JSScriptStageEditor/JSScriptStageEditor'
+import ModuleRegistryDialog from '../components/ModuleRegistry/ModuleRegistryDialog'
 
 type StageMode = 'script' | 'native'
 
@@ -102,6 +104,7 @@ export default function PluginsPage() {
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [moduleRegistryOpen, setModuleRegistryOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null)
   const [formData, setFormData] = useState<PluginFormData>(initialFormData)
@@ -355,6 +358,28 @@ export default function PluginsPage() {
       },
     },
     {
+      field: 'pinned_behind',
+      headerName: t('plugin.depsStatus', 'Deps'),
+      width: 100,
+      sortable: false,
+      renderCell: (params: GridRenderCellParams) => {
+        const plugin = params.row as Plugin
+        const behind = plugin.pinned_behind || []
+        if (plugin.type !== 'native' || behind.length === 0) return '-'
+        // 기본 버전과 다른 버전에 머문 모듈 수. 상세의 의존성 탭에서 올릴 수 있다.
+        return (
+          <Tooltip title={behind.map((b) => `${b.module_path}: ${b.pinned} → ${b.default}`).join('\n')}>
+            <Chip
+              size="small"
+              label={t('plugin.pinnedBehind', '{{count}} behind', { count: behind.length })}
+              color="warning"
+              variant="outlined"
+            />
+          </Tooltip>
+        )
+      },
+    },
+    {
       field: 'last_test_passed',
       headerName: t('plugin.testStatus', 'Test'),
       width: 100,
@@ -414,10 +439,16 @@ export default function PluginsPage() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5">{t('plugin.title')}</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
-          {t('plugin.register')}
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" onClick={() => setModuleRegistryOpen(true)}>
+            {t('modules.registryTitle', '모듈 레지스트리')}
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
+            {t('plugin.register')}
+          </Button>
+        </Stack>
       </Box>
+      <ModuleRegistryDialog open={moduleRegistryOpen} onClose={() => setModuleRegistryOpen(false)} />
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid
           size={{

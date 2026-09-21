@@ -67,6 +67,8 @@ flowchart LR
 **커스텀 stage**: 2-tier (플러그인 V4)
 - **Script tier**: `js_script` — JavaScript(goja) 스크립트, 빌드 없이 즉시 실행. text→number, json 가공/추출 등.
 - **Native tier**: Go 코드 → 단일 runner 이미지로 통합 빌드 (web-ui 편집기 → RunnerBuilder).
+  외부 의존성은 stage 별로 버전을 고정하고, 레지스트리 기본과 다른 버전은 `forked/` 로
+  복사·재작성해 한 바이너리에 함께 링크한다([ADR-0005](adr/0005-dependency-version-coexistence.md)).
 
 ## 4. 실행 엔진 (pipeline-core)
 

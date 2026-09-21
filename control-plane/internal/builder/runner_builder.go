@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/conduix/conduix/control-plane/internal/dependency"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 	"github.com/conduix/conduix/shared/types"
 )
@@ -36,7 +37,16 @@ type RunnerBuilderConfig struct {
 	DockerPush   bool          // Docker push 수행 여부
 	SourceRoot   string        // 로컬 모듈(pipeline-core/shared/plugin-sdk) 소스 루트. go.mod replace 대상.
 	CacheDir     string        // GOCACHE/GOPATH 영속 경로. tmpDir 밖에 두어 재빌드 간 컴파일·모듈 캐시 재사용.
+	// InitCheck 는 fork 가 있는 빌드에서 init 자가점검 실행 여부다(InitCheckAuto | InitCheckOff).
+	// 빈 값은 auto 로 본다.
+	InitCheck string
 }
+
+// init 자가점검 모드.
+const (
+	InitCheckAuto = "auto" // fork 가 있을 때만 실행(기본)
+	InitCheckOff  = "off"  // 항상 건너뜀
+)
 
 // SourceRootFromEnv 는 runner 소스 모듈의 루트다. 빌더와 리졸버가 같은 트리를 봐야
 // 코어 해시 판정이 일치하므로 여기 한 곳에서만 결정한다.
@@ -93,6 +103,9 @@ type RunnerBuilder struct {
 	config *RunnerBuilderConfig
 	db     *gorm.DB
 	logger *slog.Logger
+	// moduleSource 는 fork 대상 모듈의 소스를 가져오는 경로다. nil 이면 go mod download.
+	// 통합 테스트가 네트워크 없이 로컬 fixture 를 주입하기 위한 이음매다.
+	moduleSource dependency.ModuleSource
 }
 
 // NewRunnerBuilder RunnerBuilder 생성
@@ -190,7 +203,19 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		return nil, fmt.Errorf("no native plugins found")
 	}
 
-	// 3. 소스 해시 스냅샷 + 결합 해시 계산.
+	// 3. 각 stage 가 쓸 모듈 버전 확정. 레거시(dep_versions 비어 있음) stage 는 지금의 기본
+	// 버전으로 고정하고, **해시를 계산하기 전에 저장**한다.
+	// 빌드 성공 후에 저장하면 방금 만든 버전의 해시(빈 지문)와 리졸버가 다음에 계산하는
+	// 해시(저장된 지문)가 달라져, 성공 직후 core_changed 로 재빌드가 걸리고 그동안 실행이 막힌다.
+	// 백필 값은 기본 버전 그 자체라 어느 빌드든 같은 조합을 쓰므로 먼저 저장해도 잃는 것이 없다.
+	resolved, err := rb.resolveDeps(plugins)
+	if err != nil {
+		return nil, err
+	}
+	rb.saveBackfilledPins(resolved)
+	applyBackfill(plugins, resolved)
+
+	// 4. 소스 해시 스냅샷 + 결합 해시 계산.
 	// 코어 모듈(pipeline-core/shared/plugin-sdk) 소스 해시도 포함해야 한다 —
 	// 안 하면 플러그인 소스가 그대로일 때 코어 코드가 바뀌어도(예: 새 stage 헬퍼,
 	// config 해소 로직) 옛 바이너리를 재사용해 stale 실행이 된다.
@@ -199,7 +224,8 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		pluginHashes[p.ID] = p.SourceHash
 	}
 	coreHash := rb.coreSourceHash()
-	combinedHash := CombinedSourceHash(pluginHashes, coreHash)
+	depsFingerprint := PluginDepFingerprint(plugins)
+	combinedHash := CombinedSourceHash(pluginHashes, coreHash, depsFingerprint)
 
 	// 4. 동일 해시 ready 버전이 있으면 빌드 스킵 + DeployedHash만 갱신
 	var existing models.RunnerVersion
@@ -219,13 +245,14 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	pluginHashesJSON, _ := json.Marshal(pluginHashes)
 
 	version := models.RunnerVersion{
-		ID:           fmt.Sprintf("rv-%s", uuid.New().String()[:8]),
-		Status:       "building",
-		SourceHash:   combinedHash,
-		PluginIDs:    string(pluginIDsJSON),
-		PluginHashes: string(pluginHashesJSON),
-		CreatedBy:    createdBy,
-		StartedAt:    timePtr(time.Now()),
+		ID:              fmt.Sprintf("rv-%s", uuid.New().String()[:8]),
+		Status:          "building",
+		SourceHash:      combinedHash,
+		DepsFingerprint: DepsFingerprintHash(depsFingerprint),
+		PluginIDs:       string(pluginIDsJSON),
+		PluginHashes:    string(pluginHashesJSON),
+		CreatedBy:       createdBy,
+		StartedAt:       timePtr(time.Now()),
 	}
 
 	if err := rb.db.Create(&version).Error; err != nil {
@@ -236,7 +263,7 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	fmt.Fprintf(&logBuf, "  Plugins: %d, CombinedHash: %s\n", len(plugins), combinedHash[:12])
 
 	// 6. 임시 디렉토리에 소스 배치 + 빌드
-	buildErr := rb.buildInTempDir(ctx, &version, plugins, &logBuf)
+	buildErr := rb.buildInTempDir(ctx, &version, plugins, resolved, &logBuf)
 
 	now := time.Now()
 	duration := now.Sub(*version.StartedAt)
@@ -326,7 +353,7 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 // 플러그인 소스 + cmd/runner/registry_custom.go 를 주입해 실제 runner(./cmd/runner)를 빌드한다.
 // 스텁 main 이 아니라 실제 배치 실행 로직에 native stage 를 compile-in 하는 것이 핵심이다 —
 // registry_custom.go 의 init() 이 stream 전역 레지스트리에 stage 를 등록하면 executor 가 해석한다.
-func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.RunnerVersion, plugins []models.Plugin, logBuf *strings.Builder) error {
+func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.RunnerVersion, plugins []models.Plugin, resolved *resolvedDeps, logBuf *strings.Builder) error {
 	tmpDir, err := os.MkdirTemp("", "conduix-runner-build-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
@@ -349,27 +376,36 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	}
 	logBuf.WriteString("  pipeline-runner module + sibling modules copied\n")
 
-	// 허용 모듈 레지스트리 조회 — 의존성 버전의 단일 진실원천.
-	// plugin go.mod 와 batch-job go.mod 양쪽이 이 버전을 쓰므로, 여러 stage 를 합쳐도
-	// 같은 모듈이 항상 같은 버전 → 병합 충돌이 발생하지 않는다.
-	allowedModules, err := rb.activeAllowedModules()
-	if err != nil {
-		return fmt.Errorf("query allowed modules: %w", err)
+	fmt.Fprintf(logBuf, "  Allowed modules: %d\n", len(resolved.Defaults))
+
+	// 기본과 다른 버전을 고정한 stage 가 있으면 그 모듈을 forked/ 로 복사·재작성한다.
+	// fork 가 없으면 아무 일도 하지 않아 산출물이 이전과 같다(ADR-0005 불변식 2).
+	if err := rb.materializeForks(ctx, batchJobDir, resolved, logBuf); err != nil {
+		return err
 	}
-	fmt.Fprintf(logBuf, "  Allowed modules: %d\n", len(allowedModules))
+	if n := len(resolved.Forks); n > 0 {
+		forkedJSON, _ := json.Marshal(resolved.Forks)
+		version.ForkedModules = string(forkedJSON)
+		fmt.Fprintf(logBuf, "  Forked modules: %d\n", n)
+	}
 
 	// 플러그인 소스 배치 (batch-job 모듈 하위 plugins/)
 	for _, p := range plugins {
-		pluginDir := filepath.Join(batchJobDir, "plugins", sanitizeName(p.Name))
+		name := sanitizeName(p.Name)
+		pluginDir := filepath.Join(batchJobDir, "plugins", name)
 		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 			return fmt.Errorf("create plugin dir: %w", err)
 		}
-		if err := os.WriteFile(filepath.Join(pluginDir, "stage.go"), []byte(p.SourceCode), 0o644); err != nil {
+		stageSource, err := rb.stageSourceFor(batchJobDir, name, p, resolved)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(pluginDir, "stage.go"), []byte(stageSource), 0o644); err != nil {
 			return fmt.Errorf("write plugin source: %w", err)
 		}
-		// plugin go.mod 는 사용자 자유입력(p.GoMod)이 아니라 레지스트리에서 생성한다.
-		// require 에 허용 모듈 전체를 넣어도, 실제 import 안 하는 건 go mod tidy 가 정리한다.
-		goMod := generatePluginGoMod(sanitizeName(p.Name), allowedModules)
+		// plugin go.mod 는 사용자 자유입력(p.GoMod)이 아니라 이 stage 가 고정한 버전으로 생성한다
+		// (정책 본체는 internal/dependency — 에디터 테스트·LSP 와 같은 함수를 쓴다).
+		goMod := dependency.PluginGoMod(name, resolved.Pins[name], resolved.Defaults)
 		if err := os.WriteFile(filepath.Join(pluginDir, "go.mod"), []byte(goMod), 0o644); err != nil {
 			return fmt.Errorf("write plugin go.mod: %w", err)
 		}
@@ -386,7 +422,7 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 	// batch-job go.mod 에 플러그인 require/replace + 허용 모듈 require 추가.
 	// 허용 모듈을 메인 모듈에도 require 해야 plugin(로컬 replace)이 쓰는 외부 의존성을
 	// go mod tidy 가 단일 버전으로 해석한다.
-	if err := rb.appendPluginRequires(batchJobDir, plugins, allowedModules); err != nil {
+	if err := rb.appendPluginRequires(batchJobDir, resolved); err != nil {
 		return fmt.Errorf("append plugin requires to go.mod: %w", err)
 	}
 	logBuf.WriteString("  go.mod extended with plugin + allowed-module require\n")
@@ -414,6 +450,11 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 		return fmt.Errorf("go build: %w", err)
 	}
 	logBuf.WriteString("  Go build successful\n")
+
+	// fork 가 있으면 init() 중복 등록을 빌드 단계에서 잡는다(런타임 pod panic 방지).
+	if err := rb.runInitCheck(buildCtx, batchJobDir, resolved, logBuf); err != nil {
+		return err
+	}
 
 	// 빌드 바이너리를 gzip 압축해 RunnerVersion 에 저장 — 레지스트리 push 없이 Job initContainer 가
 	// 받아 실행하는 경로(선택지 2). tmpDir 은 곧 삭제되므로 여기서 읽어 둔다.
@@ -571,7 +612,10 @@ func gzipBytes(data []byte) ([]byte, error) {
 // 정렬된 plugin ID 순서로 해시를 결합하여 결정적(deterministic) 결과 보장
 // CombinedSourceHash 플러그인 소스 해시들 + 코어 모듈 해시를 하나로 결합한다.
 // coreHash 는 pipeline-core/shared/plugin-sdk 소스 스냅샷 해시(빈 문자열 허용 — 하위호환).
-func CombinedSourceHash(pluginHashes map[string]string, coreHash string) string {
+// depsFingerprint 는 stage 별 고정 의존성 버전의 지문(dependency.Fingerprint)이다.
+// stage 가 소스는 그대로 두고 모듈 버전만 올려도 재빌드되게 한다. 아무도 버전을 고정하지
+// 않았으면 빈 문자열이라 이 파라미터 도입 전과 해시가 같다.
+func CombinedSourceHash(pluginHashes map[string]string, coreHash, depsFingerprint string) string {
 	ids := make([]string, 0, len(pluginHashes))
 	for id := range pluginHashes {
 		ids = append(ids, id)
@@ -585,7 +629,31 @@ func CombinedSourceHash(pluginHashes map[string]string, coreHash string) string 
 	if coreHash != "" {
 		_, _ = fmt.Fprintf(h, "core:%s\n", coreHash)
 	}
+	if depsFingerprint != "" {
+		_, _ = fmt.Fprintf(h, "deps:%s\n", depsFingerprint)
+	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// DepsFingerprintHash 는 지문을 RunnerVersion 에 보관할 고정 길이 해시로 만든다.
+// 리졸버가 "소스 해시 불일치" 를 코어 변경과 의존성 버전 변경으로 갈라 안내하는 데 쓴다.
+// 지문이 비면(아무 stage 도 고정하지 않음) 빈 문자열 — 컬럼 도입 전 버전과 값이 같다.
+func DepsFingerprintHash(fingerprint string) string {
+	if fingerprint == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(fingerprint))
+	return hex.EncodeToString(sum[:])
+}
+
+// PluginDepFingerprint 는 플러그인 목록에서 고정 버전 지문을 만든다.
+// 빌더와 리졸버가 같은 입력으로 같은 값을 얻게 하는 유일한 진입점이다.
+func PluginDepFingerprint(plugins []models.Plugin) string {
+	byID := make(map[string]string, len(plugins))
+	for _, p := range plugins {
+		byID[p.ID] = p.DepVersions
+	}
+	return dependency.Fingerprint(byID)
 }
 
 // coreSourceHash pipeline-core/shared/plugin-sdk 의 .go 소스 내용을 해시한다.
@@ -677,55 +745,15 @@ func (rb *RunnerBuilder) activeAllowedModules() ([]models.AllowedModule, error) 
 	return mods, nil
 }
 
-// generatePluginGoMod 는 plugin 개별 go.mod 를 레지스트리 기반으로 생성한다.
-// 허용 모듈 전체를 require 에 넣어도, 실제 import 하지 않는 모듈은 go mod tidy 가 제거한다.
-// 사용자 자유입력(p.GoMod)을 쓰지 않으므로 stage 마다 버전이 갈릴 수 없다.
-func generatePluginGoMod(name string, allowed []models.AllowedModule) string {
-	var buf strings.Builder
-	fmt.Fprintf(&buf, "module github.com/conduix/plugins/%s\n\ngo 1.27\n", name)
-	buf.WriteString("\nrequire github.com/conduix/conduix/plugin-sdk v0.0.0\n")
-	if len(allowed) > 0 {
-		buf.WriteString("\nrequire (\n")
-		for _, m := range allowed {
-			fmt.Fprintf(&buf, "\t%s %s\n", m.ModulePath, m.Version)
-		}
-		buf.WriteString(")\n")
-	}
-	// plugin-sdk 는 로컬 모듈이라 replace 필요(batch-job 의 replace 와 동일 상대경로 기준).
-	buf.WriteString("\nreplace github.com/conduix/conduix/plugin-sdk => ../../../plugin-sdk\n")
-	return buf.String()
-}
-
-// pluginRequireBlock go.mod 에 추가할 플러그인 require/replace + 허용 모듈 require 텍스트.
-// batch-job go.mod 는 이미 pipeline-core/shared/plugin-sdk replace(../..)를 가지므로
-// 로컬 모듈 replace 는 플러그인만 다룬다. 허용 모듈은 require 만 추가(외부 모듈).
-func pluginRequireBlock(plugins []models.Plugin, allowed []models.AllowedModule) string {
-	var buf strings.Builder
-	buf.WriteString("\nrequire (\n")
-	for _, p := range plugins {
-		fmt.Fprintf(&buf, "\tgithub.com/conduix/plugins/%s v0.0.0\n", sanitizeName(p.Name))
-	}
-	for _, m := range allowed {
-		fmt.Fprintf(&buf, "\t%s %s\n", m.ModulePath, m.Version)
-	}
-	buf.WriteString(")\n\nreplace (\n")
-	for _, p := range plugins {
-		name := sanitizeName(p.Name)
-		fmt.Fprintf(&buf, "\tgithub.com/conduix/plugins/%s => ./plugins/%s\n", name, name)
-	}
-	buf.WriteString(")\n")
-	return buf.String()
-}
-
-// appendPluginRequires batch-job go.mod 끝에 플러그인 + 허용 모듈 require/replace 블록을 덧붙인다.
-func (rb *RunnerBuilder) appendPluginRequires(batchJobDir string, plugins []models.Plugin, allowed []models.AllowedModule) error {
+// appendPluginRequires batch-job go.mod 끝에 플러그인 + 고정 모듈 require/replace 블록을 덧붙인다.
+func (rb *RunnerBuilder) appendPluginRequires(batchJobDir string, resolved *resolvedDeps) error {
 	goModPath := filepath.Join(batchJobDir, "go.mod")
 	existing, err := os.ReadFile(goModPath)
 	if err != nil {
 		return fmt.Errorf("read batch-job go.mod: %w", err)
 	}
-	combined := string(existing) + pluginRequireBlock(plugins, allowed)
-	return os.WriteFile(goModPath, []byte(combined), 0o644)
+	block := dependency.MainRequireBlock(resolved.Names, resolved.Pins, resolved.Defaults, resolved.Forks)
+	return os.WriteFile(goModPath, []byte(string(existing)+block), 0o644)
 }
 
 // copyDir src 디렉토리를 dst 로 재귀 복사한다(심볼릭 링크·.git 은 제외).

@@ -406,6 +406,8 @@ func (s *Server) setupRoutes() {
 				plugins.GET("/:name", s.pluginHandler.GetPlugin)
 				plugins.GET("/:name/revisions", s.pluginHandler.ListRevisions)
 				plugins.PUT("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpdatePlugin)
+				// 의존성 버전 올리기(ADR-0005 W5): 기본 버전으로 컴파일해 보고 성공 시에만 저장.
+				plugins.POST("/:name/upgrade-deps", middleware.RoleMiddleware(string(types.UserRoleOperator), string(types.UserRoleAdmin)), s.pluginHandler.UpgradeDeps)
 				plugins.DELETE("/:name", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.DeletePlugin)
 			}
 
@@ -425,6 +427,9 @@ func (s *Server) setupRoutes() {
 			{
 				moduleVersions.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.AddModuleVersion)
 				moduleVersions.DELETE("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.RetireModuleVersion)
+				// 그 모듈을 비기본 버전으로 고정한 stage 들을 일괄로 기본 버전에 수렴시킨다.
+				// stage 별 컴파일 검증이 필요해 PluginHandler 가 처리한다.
+				moduleVersions.POST("/upgrade-all", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.pluginHandler.UpgradeAll)
 			}
 
 			// Runner (Native Plugin 빌드/버전 관리)

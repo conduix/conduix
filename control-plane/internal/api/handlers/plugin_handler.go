@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/builder"
-	"github.com/conduix/conduix/control-plane/internal/dependency"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -106,7 +104,7 @@ func (h *PluginHandler) ListPlugins(c *gin.Context) {
 		return
 	}
 
-	middleware.SuccessResponse(c, plugins)
+	middleware.SuccessResponse(c, pluginViews(plugins, defaultsForResponse(h.db)))
 }
 
 // GetPlugin GET /api/v1/plugins/:name
@@ -128,7 +126,10 @@ func (h *PluginHandler) GetPlugin(c *gin.Context) {
 		return
 	}
 
-	middleware.SuccessResponse(c, plugin)
+	middleware.SuccessResponse(c, PluginView{
+		Plugin:       plugin,
+		PinnedBehind: pinnedBehindOf(plugin.DepVersions, defaultsForResponse(h.db)),
+	})
 }
 
 // CreatePlugin POST /api/v1/plugins
@@ -635,47 +636,9 @@ func (h *PluginHandler) TestNativePlugin(c *gin.Context) {
 		return
 	}
 
-	// 2. 임시 디렉토리에 소스 작성
-	tmpDir, err := os.MkdirTemp("", "conduix-test-*")
-	if err != nil {
-		h.logger.Error("Failed to create temp dir", "error", err)
-		resp.Success = false
-		resp.BuildError = "Failed to create temp directory"
-		middleware.SuccessResponse(c, resp)
-		return
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	// 사용자 소스는 하위 패키지 pluginstage/stage.go 로 둔다(실제 RunnerBuilder 와 동일 계약:
-	// 사용자 소스는 자기 package + type Stage struct, 러너는 그것을 import 해 &Stage{} 로 생성).
-	// runner main 은 루트에 package main 으로 둔다. 이렇게 분리해야 'found packages main and X'
-	// package clash 없이 빌드된다(BUG#6). 사용자 소스 package 이름은 자유 — main 이 alias import.
-	stageDir := filepath.Join(tmpDir, "pluginstage")
-	if err := os.MkdirAll(stageDir, 0o755); err != nil {
-		resp.Success = false
-		resp.BuildError = "Failed to create stage package dir"
-		middleware.SuccessResponse(c, resp)
-		return
-	}
-	stagePath := filepath.Join(stageDir, "stage.go")
-	if err := os.WriteFile(stagePath, []byte(req.SourceCode), 0o600); err != nil {
-		resp.Success = false
-		resp.BuildError = "Failed to write source file"
-		middleware.SuccessResponse(c, resp)
-		return
-	}
-	runnerMainPath := filepath.Join(tmpDir, "runner_main.go")
-	if err := os.WriteFile(runnerMainPath, []byte(testRunnerMain), 0o600); err != nil {
-		resp.Success = false
-		resp.BuildError = "Failed to write runner main"
-		middleware.SuccessResponse(c, resp)
-		return
-	}
-
-	// go.mod 작성 — 사용자 자유입력이 아니라 레지스트리(allowed_modules)로 생성(D2).
-	// 에디터 테스트 빌드와 실제 runner 빌드가 같은 의존성 버전을 쓰게 해 불일치를 없앤다.
+	// 2~3. 임시 모듈에 배치 + 컴파일.
 	// 기존 stage 의 테스트면 그 stage 가 고정한 버전으로 컴파일해야 "테스트 통과=빌드 통과"
-	// 가 성립한다(ADR-0005). 단일 stage 빌드라 fork 는 불필요 — 원래 경로로 require 한다.
+	// 가 성립한다(ADR-0005). 절차는 UpgradeDeps 와 공유한다(compileStage).
 	pins, err := resolveStagePins(h.db, req.SourceCode, pinsByPluginName(h.db, req.PluginName))
 	if err != nil {
 		resp.Success = false
@@ -683,60 +646,25 @@ func (h *PluginHandler) TestNativePlugin(c *gin.Context) {
 		middleware.SuccessResponse(c, resp)
 		return
 	}
-	sdkPath := os.Getenv("CONDUIX_SDK_PATH")
-	if sdkPath == "" {
-		sdkPath = "/app/plugin-sdk"
-	}
-	goModContent := dependency.TestGoMod(pins, sdkPath)
-	goModPath := filepath.Join(tmpDir, "go.mod")
-	if err := os.WriteFile(goModPath, []byte(goModContent), 0o600); err != nil {
-		resp.Success = false
-		resp.BuildError = "Failed to write go.mod"
-		middleware.SuccessResponse(c, resp)
-		return
-	}
 
-	// 3. go build (타임아웃 60초)
-	buildCtx, buildCancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	buildCtx, buildCancel := context.WithTimeout(c.Request.Context(), stageCompileTimeout)
 	defer buildCancel()
 
 	buildStart := time.Now()
-	binPath := filepath.Join(tmpDir, "plugin-test")
-	// GOCACHE/GOPATH/HOME 을 쓰기가능 경로로 지정 — control-plane 이 비-root(HOME=/)면
-	// go 가 /.cache 에 쓰려다 permission denied 로 실패한다(RunnerBuilder 와 동일 이슈).
-	// runner 빌드와 CacheDir 를 공유해 이미 받은 모듈(예: uuid)을 재다운로드하지 않는다.
-	testCacheDir := os.Getenv("CONDUIX_BUILD_CACHE_DIR")
-	if testCacheDir == "" {
-		testCacheDir = filepath.Join(os.TempDir(), "conduix-runner-cache")
+	built, buildErr := compileStage(buildCtx, req.SourceCode, pins)
+	if built != nil {
+		defer built.Cleanup()
+		resp.BuildOutput = built.Output
 	}
-	buildEnv := append(os.Environ(),
-		"CGO_ENABLED=0",
-		"GOCACHE="+filepath.Join(testCacheDir, "gocache"),
-		"GOPATH="+filepath.Join(testCacheDir, "gopath"),
-		"GOMODCACHE="+filepath.Join(testCacheDir, "gopath", "pkg", "mod"),
-		"HOME="+tmpDir,
-	)
-
-	// 외부 모듈(레지스트리) require 해석을 위해 build 전에 go mod tidy(실패해도 build 에서 재시도).
-	tidyCmd := exec.CommandContext(buildCtx, "go", "mod", "tidy")
-	tidyCmd.Dir = tmpDir
-	tidyCmd.Env = buildEnv
-	_, _ = tidyCmd.CombinedOutput()
-
-	buildCmd := exec.CommandContext(buildCtx, "go", "build", "-o", binPath, ".")
-	buildCmd.Dir = tmpDir
-	buildCmd.Env = buildEnv
-
-	buildOutput, buildErr := buildCmd.CombinedOutput()
 	resp.BuildElapsed = time.Since(buildStart).String()
-	resp.BuildOutput = string(buildOutput)
-
 	if buildErr != nil {
 		resp.Success = false
-		resp.BuildError = fmt.Sprintf("Build failed: %v\n%s", buildErr, buildOutput)
+		resp.BuildError = fmt.Sprintf("Build failed: %v\n%s", buildErr, resp.BuildOutput)
 		middleware.SuccessResponse(c, resp)
 		return
 	}
+	binPath := built.BinaryPath
+	tmpDir := filepath.Dir(binPath)
 
 	// 4. 바이너리 실행 + sample_data 전달 (타임아웃 10초)
 	// 표준 입력으로 JSON 전달, 표준 출력으로 결과 수집

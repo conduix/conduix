@@ -3,7 +3,7 @@
 > 작성 2026-09-21. 대상: 이 작업을 이어서 구현할 개발자 / Claude Code.
 > 배경·근거·한계: [../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) §5~§7.
 > 결정 기록: [../adr/0005-dependency-version-coexistence.md](../adr/0005-dependency-version-coexistence.md).
-> 상태(2026-09-21): **W0~W4 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W5~W7 미착수.** 인수인계는 §8.
+> 상태(2026-09-21): **W0~W5 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W6·W7 미착수.** 인수인계는 §8.
 
 ## 0. 한 문장
 
@@ -244,15 +244,28 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 | `builder/runner_builder.go` | `RunnerBuilderConfig.InitCheck`(`auto`/`off`), go build 성공 직후 호출 |
 | `builder/fork_integration_test.go` | 같은 드라이버 이름을 두 패키지가 `sql.Register` 하는 최소 재현으로, **빌드는 성공하고 init 에서 panic** 하는 것을 확인 |
 
+### 8.1e W5 완료분 (테스트 통과, lint 0)
+
+| 파일 | 변경 |
+|---|---|
+| 신규 `handlers/stage_compile.go` | `compileStage(ctx, source, pins)` — 임시 모듈 배치 + go build. `TestNativePlugin` 과 `UpgradeDeps` 가 공유한다("이 소스가 이 버전으로 컴파일되는가" 라는 하나의 질문이라 절차가 갈리면 두 기능의 판정이 어긋난다) |
+| `handlers/plugin_handler.go` | `TestNativePlugin` 의 임시 디렉토리·go.mod·빌드 블록(약 90줄)을 `compileStage` 호출로 대체. `ListPlugins`/`GetPlugin` 응답을 `PluginView`(Plugin 임베딩 + `pinned_behind`)로 |
+| 신규 `handlers/plugin_upgrade.go` | `UpgradeDeps`(POST `/plugins/:name/upgrade-deps`, operator+), `UpgradeAll`(POST `/module-versions/upgrade-all`, admin), `upgradeStageDeps`(공유 정책), `upgradedPins`, `pinnedBehindOf`, `PluginView` |
+| `routes.go` | 위 두 엔드포인트 등록 |
+| `handlers/plugin_upgrade_test.go` | 10종 — 변경 없음 조기종료, 비-native 거부, 404, upgrade-all 필터링, `pinned_behind` 응답(임베딩 하위호환 포함), `upgradedPins` 대상 지정/미등록 모듈, 요약 결정성 |
+
+**W5 에서 내린 판단**
+- `upgrade-all` 경로는 `/module-versions/upgrade-all` 이지만 핸들러는 **PluginHandler** 다 — stage 별 컴파일 검증이 필요해 `ModuleHandler` 에 두면 의존이 거꾸로 선다.
+- 컴파일 실패(`compileFailure`)와 DB·직렬화 실패를 타입으로 구분해 400/500 을 가른다. 실패 시 **저장값은 건드리지 않는다** — 소유자가 코드를 고칠 때까지 기존 버전으로 계속 동작해야 한다.
+- `upgrade-all` 은 대상 stage 를 컴파일 **전에** 걸러낸다(그 모듈을 고정하지 않음 / 이미 기본 / 소스 없음). 안 그러면 stage 수만큼 수십 초씩 늘어난다.
+- 테스트는 실제 `go build` 를 돌리지 않는 경로만 고정했다. 컴파일까지 도는 케이스는 e2e(§5 6번) 몫이다.
+
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
 아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.
 
 | 순서 | 파일 / 신규 | 할 일 | 목적 |
 |---|---|---|---|
-| W5-1 | `handlers/plugin_handler.go` 신규 `UpgradeDeps` (POST /plugins/:id/upgrade-deps) | 기본 버전 pins 로 `TestNativePlugin` 의 임시 빌드(컴파일만) → 성공 시 `DepVersions` 갱신 + `createRevision` | stage 소유자의 명시적 수렴 경로 |
-| W5-2 | `handlers/module_handler.go` 신규 `UpgradeAll` (POST /module-versions/upgrade-all) | 그 모듈 비기본 고정 stage 전부에 W5-1 순차 실행, 결과 표 반환, 실패는 그대로 둠 | admin 일괄 수렴 |
-| W5-3 | `handlers/plugin_handler.go` `ListPlugins`/`GetPlugin` | 응답에 `pinned_behind: [{module_path, pinned, default}]` | UI 배지 재료 |
 | W6-1 | `web-ui/src/services/moduleApi.ts` | `ModuleView` 타입(versions/usage/single_version_only), addVersion/retireVersion/upgradeAll/upgradeDeps 호출 | |
 | W6-2 | `web-ui/src/components/NativeStageEditor/NativeStageEditor.tsx:116~147` | 모듈 패널에 "기본 vX / 이 stage vY", 다르면 배지 + "기본 버전으로 시도" 버튼 | |
 | W6-3 | `web-ui/src/pages/Plugins.tsx` | `pinned_behind` 카운트 배지 | |
@@ -266,5 +279,5 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 git checkout feat/dep-version-coexistence
 cd control-plane && go test ./... -count=1                          # W1~W3 회귀
 go test -tags integration ./internal/builder/       # fork 공존 + init 자가점검
-# W5-1 시작: handlers/plugin_handler.go 에 POST /plugins/:id/upgrade-deps
+# W6-1 시작: web-ui/src/services/moduleApi.ts 에 versions/usage/upgrade 호출 추가
 ```

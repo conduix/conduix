@@ -1,6 +1,12 @@
 # Custom Stage 의존성 레지스트리 — 설계·실행 방안
 
 > **[ARCHIVED]** 구현 완료 — allowed_modules 레지스트리(D1~D5)가 control-plane 에 구현됨(plugin_handler/lsp/workspace_manager). 설계 근거 보존용.
+>
+> **[부분 대체]** 이 문서의 **D4**("버전업은 전역 일괄, 개별 고정 불가")는
+> [ADR-0005](../adr/0005-dependency-version-coexistence.md) 로 대체되었다. 레지스트리는 모듈당
+> 여러 버전을 보유하고, stage 가 자기 버전을 고정하며, 기본과 다른 버전은 fork 로 공존한다.
+> **D1·D2·D3·D5 는 그대로 유효하다** — 버전을 사용자 자유입력에 맡기지 않는다는 원칙은 유지되고,
+> 고정 버전은 항상 레지스트리가 보유한 것 중 하나다.
 
 > 작성 2026-07-10. 대상: 이 작업을 이어서 구현할 Claude Code / 개발자.
 > 이 문서는 **native custom stage 의 외부 의존성 충돌을 원천 제거**하는 방안이다.

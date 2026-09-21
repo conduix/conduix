@@ -3,7 +3,7 @@
 > 작성 2026-09-21. 대상: 이 작업을 이어서 구현할 개발자 / Claude Code.
 > 배경·근거·한계: [../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) §5~§7.
 > 결정 기록: [../adr/0005-dependency-version-coexistence.md](../adr/0005-dependency-version-coexistence.md).
-> 상태(2026-09-21): **W0~W6 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W7(문서 정리)과 §5 e2e 남음.** 인수인계는 §8.
+> 상태(2026-09-21): **W0~W7 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). §5 e2e 실동작만 남음.** 인수인계는 §8.
 
 ## 0. 한 문장
 
@@ -177,7 +177,6 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 | W4 | 소 |
 | W5 | 소~중 — 기존 임시 빌드 절차 재사용 |
 | W6 | 중 — 화면 3곳 |
-| W7 | 소 |
 
 ## 8. 인수인계 (다음 세션 시작점)
 
@@ -277,13 +276,31 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 - `api.delete` 는 config 인자를 받지 않는 래퍼라, 버전 폐기는 쿼리스트링을 URL 에 직접 붙인다.
 - 모듈 관리 전용 화면이 없어 `Plugins.tsx` 에 다이얼로그로 붙였다(별도 라우트 추가 없음).
 
+### 8.1g W7 완료분 + 배포 검증
+
+| 대상 | 결과 |
+|---|---|
+| `ARCHITECTURE.md` §3 Native tier | "stage 별 버전 고정, 비기본 버전은 `forked/` 로 복사·재작성해 한 바이너리에 링크" 한 줄 + ADR 링크 |
+| `archive/CUSTOM_STAGE_DEPENDENCY_REGISTRY.md` | 상단에 "**D4 는 ADR-0005 로 대체**, D1·D2·D3·D5 는 유효" 배너 |
+| `adr/0005-...md` | Status `Proposed` → **Accepted**. "구현 결과" 절 추가(Decision 5개 ↔ 구현 매핑, 검증된 것 / 아직 검증 안 된 것) |
+| `plugins.go_mod` 컬럼 제거 | **하지 않음.** 빌더는 이미 무시하지만 `createRevision` 이 이력에 기록하고 있어 제거는 별도 작업 |
+| 로컬 K8s 배포 검증 | control-plane·web-ui 를 이 브랜치 이미지(`:depver`)로 교체. 마이그레이션 성공, 신규 라우트 3종이 401(등록됨)·없는 경로 404 로 대조 확인 |
+
+**배포 메모** — 원래 이미지는 둘 다 `:main` 이었고 `imagePullPolicy` 를 `Always`→`IfNotPresent` 로 바꿨다.
+되돌리려면:
+```bash
+kubectl set image -n conduix deploy/conduix-control-plane control-plane=ghcr.io/conduix/control-plane:main
+kubectl set image -n conduix deploy/conduix-web-ui web-ui=ghcr.io/conduix/web-ui:main
+kubectl patch deploy -n conduix conduix-control-plane -p '{"spec":{"template":{"spec":{"containers":[{"name":"control-plane","imagePullPolicy":"Always"}]}}}}'
+kubectl patch deploy -n conduix conduix-web-ui -p '{"spec":{"template":{"spec":{"containers":[{"name":"web-ui","imagePullPolicy":"Always"}]}}}}'
+```
+
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
 아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.
 
 | 순서 | 파일 / 신규 | 할 일 | 목적 |
 |---|---|---|---|
-| W7 | `ARCHITECTURE.md` §3, `archive/CUSTOM_STAGE_DEPENDENCY_REGISTRY.md` 배너, ADR-0005 → Accepted, 이 문서 → archive | 문서 정합 |
 
 ### 8.3 다음 세션 첫 명령
 
@@ -292,5 +309,7 @@ git checkout feat/dep-version-coexistence
 cd control-plane && go test ./... -count=1                          # W1~W3 회귀
 go test -tags integration ./internal/builder/       # fork 공존 + init 자가점검
 cd ../web-ui && npx vitest run && npm run build                     # W6 회귀
-# 남은 것: §5 e2e(로컬 K8s 실동작) → W7 문서 정리
+# 남은 것: §5 e2e 실동작. control-plane·web-ui 는 이미 :depver 로 배포돼 있다(8.1g).
+# API 호출에 JWT 가 필요하다 — 브라우저(localhost:30000) 로그인 후
+#   JSON.parse(localStorage.getItem('auth-storage')).state.token
 ```

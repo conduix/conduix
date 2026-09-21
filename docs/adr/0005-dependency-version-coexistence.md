@@ -1,6 +1,6 @@
 # ADR-0005: 커스텀 stage 의존성 버전 공존 (stage 별 고정 + 비기본 버전 fork 링크)
 
-- **Status**: Proposed (2026-09-21). 구현 완료 시 Accepted.
+- **Status**: Accepted (2026-09-21). W1~W6 구현 완료. 로컬 K8s 실동작(e2e §5)은 미완 — 아래 "구현 결과" 참조.
 - **대체**: [archive/CUSTOM_STAGE_DEPENDENCY_REGISTRY.md](../archive/CUSTOM_STAGE_DEPENDENCY_REGISTRY.md) 의 **D4** ("버전업은 전역 일괄, 개별 고정 불가")를 부분 대체. D1·D2·D3·D5 는 유지.
 - **근거 수준**: 기법 자체는 Go 1.27.1 로컬 실험으로 검증(CONFLICT.md §5). 운영 규모의 바이너리 크기·빌드 시간 영향은 미측정.
 
@@ -54,6 +54,33 @@ realtime 파드가 공유한다. 2026-07 의 단일 버전 레지스트리(D1~D5
 
 - 갈라진 버전 수가 지속 증가하고 소유자 업그레이드가 일어나지 않을 때 → 강제 수렴 정책 검토.
 - `single_version_only` 모듈의 버전 갱신이 반복적으로 stage 를 깨뜨릴 때 → 그 부류에 한해 프로세스 분리 재검토(벤치마크 선행).
+
+## 구현 결과 (2026-09-21)
+
+브랜치 `feat/dep-version-coexistence`, 커밋 6개(W1~W6). 계획·인수인계는
+[plans/CUSTOM_STAGE_DEP_VERSION_COEXIST_PLAN.md](../plans/CUSTOM_STAGE_DEP_VERSION_COEXIST_PLAN.md) §8.
+
+| Decision | 구현 |
+|---|---|
+| 1. 모듈당 여러 버전 보유 | `allowed_module_versions` 테이블 + `/module-versions` API. 기존 행은 멱등 백필 |
+| 2. stage 가 자기 버전 고정 | `plugins.dep_versions`. 저장 시 `dependency.ResolvePins` 가 기존 고정은 유지하고 새 import 만 기본 버전으로. 레거시(빈 값)는 빌드 성공 후 백필 |
+| 3. 빌더가 고정값 존중 + fork 링크 | `builder.materializeForks` — `go mod download` → 복사 → 쓰기권한 → `RewriteModuleTree`(복사본 자기참조 + go.mod module 줄) → stage import 재작성(alias 자동) |
+| 4. init 자가점검 | `CONDUIX_INIT_CHECK=1` 로 빌드된 러너를 한 번 실행. fork 가 있을 때만. `single_version_only` 는 저장 시점과 빌드 시점 양쪽에서 거부 |
+| 5. 바이너리·파드·배포 경로 불변 | 건드리지 않음. fork 가 없으면 이전과 동일한 산출물 |
+
+**검증된 것**
+- 같은 모듈의 두 버전이 한 바이너리에서 각기 다른 값을 반환 — 실제 `go build` + 실행
+  (`builder/fork_integration_test.go`, `//go:build integration`). `RewriteModuleTree` 를 빼면
+  이 테스트가 실패하는 것까지 확인했다(자기참조 미재작성 함정의 회귀선).
+- 중복 `init()` 등록이 빌드는 통과하고 init 에서 panic 하는 것 — 같은 파일의 통합 테스트.
+- 고정값이 하나도 없으면 결합 해시가 이 기능 도입 전과 같다 — 전면 재빌드가 일어나지 않는다.
+- 배포 검증: control-plane 을 이 브랜치 이미지로 교체해 마이그레이션 성공,
+  신규 라우트 3종이 401(등록됨)·없는 경로는 404 로 대조 확인.
+
+**아직 검증 안 된 것**
+- §5 e2e(실제 stage 두 개를 다른 버전으로 고정해 빌드·실행). 인증 토큰이 필요해 보류.
+- 운영 규모의 바이너리 크기·빌드 시간 영향(ADR 작성 시점부터 미측정).
+- fork 복사본에 대한 `govulncheck`·`go mod verify` 대체 점검 수단.
 
 ## Evidence
 

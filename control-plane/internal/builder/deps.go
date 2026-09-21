@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/conduix/conduix/control-plane/internal/dependency"
 	"github.com/conduix/conduix/control-plane/pkg/models"
+	"github.com/conduix/conduix/shared/types"
 )
 
 // resolvedDeps 는 이번 빌드에 참여하는 모든 stage 의 의존성 해소 결과다.
@@ -180,4 +182,76 @@ func makeTreeWritable(root string) error {
 		}
 		return os.Chmod(path, mode)
 	})
+}
+
+// initCheckBinaryName 은 호스트 타깃으로 따로 빌드하는 자가점검용 바이너리 이름이다.
+const initCheckBinaryName = "init-check-bin"
+
+// runInitCheck 는 빌드된 러너를 CONDUIX_INIT_CHECK=1 로 한 번 실행해
+// init() 중복 등록 panic 을 빌드 실패로 앞당긴다.
+//
+// fork 가 없으면 건너뛴다 — 링크 구성이 이전과 같아 새로 터질 것이 없고,
+// 모든 빌드에 실행을 얹으면 불변식 2(기본 버전만일 때 이전과 동일)가 깨진다.
+//
+// 배포 타깃이 호스트와 다르면(로컬 darwin 빌더가 linux/arm64 를 굽는 경우) 빌드된
+// 바이너리를 실행할 수 없으므로 호스트 타깃으로 한 벌 더 빌드해 그것을 돌린다.
+// 그 재빌드가 실패하면 점검을 건너뛴다 — 배포 산출물은 이미 성공했으므로
+// 점검 실패로 배포를 막지 않는다.
+func (rb *RunnerBuilder) runInitCheck(ctx context.Context, batchJobDir string, resolved *resolvedDeps, logBuf *strings.Builder) error {
+	if len(resolved.Forks) == 0 || rb.config.InitCheck == InitCheckOff {
+		return nil
+	}
+
+	binary := types.RunnerBinaryName
+	goos, goarch := parsePlatform(rb.config.Platform)
+	if goos != runtime.GOOS || goarch != runtime.GOARCH {
+		logBuf.WriteString("  Building host-target binary for init check...\n")
+		out, err := rb.runCommand(ctx, batchJobDir, []string{
+			"GOOS=" + runtime.GOOS,
+			"GOARCH=" + runtime.GOARCH,
+		}, "go", "build", "-o", initCheckBinaryName, "./cmd/runner")
+		if err != nil {
+			logBuf.WriteString("  Init check skipped (host-target build failed):\n" + out)
+			rb.logger.Warn("init check 용 호스트 타깃 빌드 실패 — 점검 생략", "error", err)
+			return nil
+		}
+		binary = initCheckBinaryName
+	}
+
+	logBuf.WriteString("  Running init check...\n")
+	out, err := rb.runCommand(ctx, batchJobDir, []string{"CONDUIX_INIT_CHECK=1"},
+		filepath.Join(batchJobDir, binary))
+	logBuf.WriteString(out)
+	if err == nil {
+		logBuf.WriteString("  Init check passed\n")
+		return nil
+	}
+	return fmt.Errorf("init 자가점검 실패 — fork 된 모듈이 전역 레지스트리에 중복 등록했을 수 있습니다.\n"+
+		"fork 목록: %s\n해당 모듈을 single_version_only 로 표시하거나 stage 들의 버전을 맞추세요.\n%s",
+		forkSummary(resolved.Forks), firstPanicLine(out))
+}
+
+// forkSummary 는 에러 메시지에 넣을 fork 목록 요약이다.
+func forkSummary(forks []dependency.Fork) string {
+	parts := make([]string, 0, len(forks))
+	for _, f := range forks {
+		parts = append(parts, fmt.Sprintf("%s@%s(stages: %s)", f.ModulePath, f.Version, strings.Join(f.PluginIDs, ",")))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// firstPanicLine 은 출력에서 panic 첫 줄을 뽑는다. 없으면 마지막 비어있지 않은 줄.
+func firstPanicLine(out string) string {
+	lines := strings.Split(out, "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "panic:") {
+			return strings.TrimSpace(l)
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			return t
+		}
+	}
+	return ""
 }

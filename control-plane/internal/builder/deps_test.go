@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -246,5 +247,50 @@ func TestResolveDeps_RejectsForkOfSingleVersionOnlyModule(t *testing.T) {
 	_, err := rb.resolveDeps(plugins)
 	if err == nil || !strings.Contains(err.Error(), "단일 버전") {
 		t.Fatalf("expected a single_version_only rejection, got %v", err)
+	}
+}
+
+// fork 가 없으면 자가점검을 건너뛴다 — 링크 구성이 이전과 같아 새로 터질 것이 없고,
+// 모든 빌드에 실행을 얹으면 불변식 2(기본 버전만일 때 이전과 동일)가 깨진다.
+func TestRunInitCheck_SkippedWithoutForks(t *testing.T) {
+	rb := &RunnerBuilder{config: &RunnerBuilderConfig{Platform: "linux/arm64"}, logger: slog.Default()}
+	var logBuf strings.Builder
+	// batchJobDir 가 존재하지 않아도 통과해야 한다 — 아무 명령도 실행하지 않는다는 뜻.
+	if err := rb.runInitCheck(context.Background(), "/nonexistent", &resolvedDeps{}, &logBuf); err != nil {
+		t.Fatalf("no forks must mean no init check: %v", err)
+	}
+	if logBuf.Len() != 0 {
+		t.Fatalf("nothing should be logged when skipped, got %q", logBuf.String())
+	}
+}
+
+func TestRunInitCheck_RespectsOffSwitch(t *testing.T) {
+	rb := &RunnerBuilder{
+		config: &RunnerBuilderConfig{Platform: "linux/arm64", InitCheck: InitCheckOff},
+		logger: slog.Default(),
+	}
+	var logBuf strings.Builder
+	resolved := &resolvedDeps{Forks: []dependency.Fork{{ModulePath: "m", Version: "v1"}}}
+	if err := rb.runInitCheck(context.Background(), "/nonexistent", resolved, &logBuf); err != nil {
+		t.Fatalf("InitCheckOff must skip the check: %v", err)
+	}
+}
+
+func TestFirstPanicLine(t *testing.T) {
+	out := "some log\npanic: sql: Register called twice for driver pq\n\ngoroutine 1:\n"
+	if got := firstPanicLine(out); got != "panic: sql: Register called twice for driver pq" {
+		t.Fatalf("got %q", got)
+	}
+	if got := firstPanicLine("only one line\n\n"); got != "only one line" {
+		t.Fatalf("fallback should be the last non-empty line, got %q", got)
+	}
+}
+
+func TestForkSummary_NamesModulesAndStages(t *testing.T) {
+	got := forkSummary([]dependency.Fork{
+		{ModulePath: "github.com/lib/pq", Version: "v1.10.0", PluginIDs: []string{"p1", "p2"}},
+	})
+	if !strings.Contains(got, "github.com/lib/pq@v1.10.0") || !strings.Contains(got, "p1,p2") {
+		t.Fatalf("the message must name the module and the stages behind it, got %q", got)
 	}
 }

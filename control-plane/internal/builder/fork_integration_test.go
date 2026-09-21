@@ -94,3 +94,47 @@ func TestForkedModules_TwoVersionsCoexistInOneBinary(t *testing.T) {
 			"identical halves mean the copies' self-imports still point at one module", got)
 	}
 }
+
+// init 자가점검이 중복 등록 panic 을 잡는지 확인한다.
+// fork 두 벌이 같은 전역 이름을 등록하는 상황을 최소 재현으로 만들고,
+// CONDUIX_INIT_CHECK 경로와 같은 방식(빌드 → 실행 → 종료코드)으로 검증한다.
+func TestInitCheck_CatchesDuplicateRegistration(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	work := t.TempDir()
+	rb := &RunnerBuilder{
+		config: &RunnerBuilderConfig{CacheDir: filepath.Join(work, "cache"), GoProxy: "off", BuildTimeout: 5 * time.Minute},
+		logger: slog.Default(),
+	}
+
+	// 두 패키지가 같은 드라이버 이름을 Register 한다 — fork 로 같은 모듈 두 벌이
+	// 링크됐을 때 벌어지는 일의 최소 재현.
+	files := map[string]string{
+		"go.mod":  "module conduix-initcheck-probe\n\ngo 1.21\n",
+		"a/a.go":  "package a\n\nimport (\n\t\"database/sql\"\n\t\"database/sql/driver\"\n)\n\ntype d struct{}\n\nfunc (d) Open(string) (driver.Conn, error) { return nil, nil }\n\nfunc init() { sql.Register(\"dupname\", d{}) }\n",
+		"b/b.go":  "package b\n\nimport (\n\t\"database/sql\"\n\t\"database/sql/driver\"\n)\n\ntype d struct{}\n\nfunc (d) Open(string) (driver.Conn, error) { return nil, nil }\n\nfunc init() { sql.Register(\"dupname\", d{}) }\n",
+		"main.go": "package main\n\nimport (\n\t\"os\"\n\n\t_ \"conduix-initcheck-probe/a\"\n\t_ \"conduix-initcheck-probe/b\"\n)\n\nfunc main() {\n\tif os.Getenv(\"CONDUIX_INIT_CHECK\") == \"1\" {\n\t\tos.Exit(0)\n\t}\n}\n",
+	}
+	for name, content := range files {
+		p := filepath.Join(work, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	ctx := context.Background()
+	if out, err := rb.runCommand(ctx, work, nil, "go", "build", "-o", "probe", "."); err != nil {
+		t.Fatalf("build must succeed — the clash only shows at init time: %v\n%s", err, out)
+	}
+	out, err := rb.runCommand(ctx, work, []string{"CONDUIX_INIT_CHECK=1"}, filepath.Join(work, "probe"))
+	if err == nil {
+		t.Fatal("duplicate registration must panic before main() returns")
+	}
+	if line := firstPanicLine(out); !strings.Contains(line, "panic:") {
+		t.Fatalf("expected a panic line in the output, got %q", line)
+	}
+}

@@ -37,7 +37,16 @@ type RunnerBuilderConfig struct {
 	DockerPush   bool          // Docker push 수행 여부
 	SourceRoot   string        // 로컬 모듈(pipeline-core/shared/plugin-sdk) 소스 루트. go.mod replace 대상.
 	CacheDir     string        // GOCACHE/GOPATH 영속 경로. tmpDir 밖에 두어 재빌드 간 컴파일·모듈 캐시 재사용.
+	// InitCheck 는 fork 가 있는 빌드에서 init 자가점검 실행 여부다(InitCheckAuto | InitCheckOff).
+	// 빈 값은 auto 로 본다.
+	InitCheck string
 }
+
+// init 자가점검 모드.
+const (
+	InitCheckAuto = "auto" // fork 가 있을 때만 실행(기본)
+	InitCheckOff  = "off"  // 항상 건너뜀
+)
 
 // SourceRootFromEnv 는 runner 소스 모듈의 루트다. 빌더와 리졸버가 같은 트리를 봐야
 // 코어 해시 판정이 일치하므로 여기 한 곳에서만 결정한다.
@@ -438,6 +447,11 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 		return fmt.Errorf("go build: %w", err)
 	}
 	logBuf.WriteString("  Go build successful\n")
+
+	// fork 가 있으면 init() 중복 등록을 빌드 단계에서 잡는다(런타임 pod panic 방지).
+	if err := rb.runInitCheck(buildCtx, batchJobDir, resolved, logBuf); err != nil {
+		return err
+	}
 
 	// 빌드 바이너리를 gzip 압축해 RunnerVersion 에 저장 — 레지스트리 push 없이 Job initContainer 가
 	// 받아 실행하는 경로(선택지 2). tmpDir 은 곧 삭제되므로 여기서 읽어 둔다.

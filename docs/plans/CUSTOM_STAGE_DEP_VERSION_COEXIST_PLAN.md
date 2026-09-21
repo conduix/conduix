@@ -3,7 +3,7 @@
 > 작성 2026-09-21. 대상: 이 작업을 이어서 구현할 개발자 / Claude Code.
 > 배경·근거·한계: [../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) §5~§7.
 > 결정 기록: [../adr/0005-dependency-version-coexistence.md](../adr/0005-dependency-version-coexistence.md).
-> 상태(2026-09-21): **W0~W3 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W4~W7 미착수.** 인수인계는 §8.
+> 상태(2026-09-21): **W0~W4 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W5~W7 미착수.** 인수인계는 §8.
 
 ## 0. 한 문장
 
@@ -234,14 +234,22 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 
 **실행 검증은 아직 안 했다** — 단위·통합 테스트까지다. 로컬 K8s e2e(§5)는 W4 이후.
 
+### 8.1d W4 완료분 (테스트 통과, lint 0)
+
+| 파일 | 변경 |
+|---|---|
+| `pipeline-runner/cmd/runner/main.go` | `CONDUIX_INIT_CHECK=1` 이면 설정 로드 전에 `os.Exit(0)`. 이 시점엔 `registry_custom.go` 포함 모든 `init()` 이 끝나 있어 중복 등록은 그 전에 panic 으로 터진다 |
+| `pipeline-runner/cmd/runner/init_check_test.go` | 점검 플래그면 설정 없이 exit 0, 플래그 없으면 여전히 설정 요구. 러너 빌드는 `sync.Once` 로 한 벌만(30초 → 15초) |
+| `builder/deps.go` | `runInitCheck`: fork 가 있을 때만 실행. 배포 타깃 ≠ 호스트면 호스트 타깃으로 한 벌 더 빌드해 실행, **그 재빌드 실패는 점검 생략**(배포 산출물은 이미 성공했으므로 막지 않는다). 실패 메시지에 fork 목록 + panic 첫 줄 + 안내 |
+| `builder/runner_builder.go` | `RunnerBuilderConfig.InitCheck`(`auto`/`off`), go build 성공 직후 호출 |
+| `builder/fork_integration_test.go` | 같은 드라이버 이름을 두 패키지가 `sql.Register` 하는 최소 재현으로, **빌드는 성공하고 init 에서 panic** 하는 것을 확인 |
+
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
 아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.
 
 | 순서 | 파일 / 신규 | 할 일 | 목적 |
 |---|---|---|---|
-| W4-1 | `pipeline-runner/cmd/runner/main.go:23` | `CONDUIX_INIT_CHECK=1` 이면 init 후 즉시 exit 0 | init 중복 등록 panic 을 빌드 단계에서 검출 |
-| W4-2 | `builder/runner_builder.go:414` 이후 | fork 가 있을 때만 바이너리를 `CONDUIX_INIT_CHECK=1` 로 실행. 플랫폼 불일치 시 호스트 타깃 재빌드. `RunnerBuilderConfig.InitCheck` 로 끄기 | `database/sql` 드라이버류 두 벌 링크 panic 을 빌드 실패로 전환, 메시지에 fork 목록 |
 | W5-1 | `handlers/plugin_handler.go` 신규 `UpgradeDeps` (POST /plugins/:id/upgrade-deps) | 기본 버전 pins 로 `TestNativePlugin` 의 임시 빌드(컴파일만) → 성공 시 `DepVersions` 갱신 + `createRevision` | stage 소유자의 명시적 수렴 경로 |
 | W5-2 | `handlers/module_handler.go` 신규 `UpgradeAll` (POST /module-versions/upgrade-all) | 그 모듈 비기본 고정 stage 전부에 W5-1 순차 실행, 결과 표 반환, 실패는 그대로 둠 | admin 일괄 수렴 |
 | W5-3 | `handlers/plugin_handler.go` `ListPlugins`/`GetPlugin` | 응답에 `pinned_behind: [{module_path, pinned, default}]` | UI 배지 재료 |
@@ -257,6 +265,6 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 ```bash
 git checkout feat/dep-version-coexistence
 cd control-plane && go test ./... -count=1                          # W1~W3 회귀
-go test -tags integration -run TestForkedModules ./internal/builder/  # fork 실동작
-# W4-1 시작: pipeline-runner/cmd/runner/main.go 에 CONDUIX_INIT_CHECK
+go test -tags integration ./internal/builder/       # fork 공존 + init 자가점검
+# W5-1 시작: handlers/plugin_handler.go 에 POST /plugins/:id/upgrade-deps
 ```

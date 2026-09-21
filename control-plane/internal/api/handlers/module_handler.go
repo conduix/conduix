@@ -45,12 +45,14 @@ type CreateModuleRequest struct {
 	Description string `json:"description,omitempty"`
 }
 
-// UpdateModuleRequest 기본 버전 변경 요청. 빈 값이면 최신으로 재조회.
+// UpdateModuleRequest 기본 버전 변경 요청.
+// Version 은 포인터다 — 필드 자체가 없으면(nil) 기본 버전을 유지하고, 빈 문자열이면 최신을 재조회한다.
+// 문자열이면 "플래그만 토글" 요청도 빈 값으로 들어와 기본 버전이 @latest 로 튀어 버린다.
 // 기존 stage 의 고정 버전은 건드리지 않는다 — 새 stage 만 새 기본값을 받는다.
 type UpdateModuleRequest struct {
-	Version           string `json:"version,omitempty"`
-	Status            string `json:"status,omitempty"`
-	SingleVersionOnly *bool  `json:"single_version_only,omitempty"`
+	Version           *string `json:"version,omitempty"`
+	Status            string  `json:"status,omitempty"`
+	SingleVersionOnly *bool   `json:"single_version_only,omitempty"`
 }
 
 // ModuleVersionRequest 보유 버전 추가/폐기 요청.
@@ -172,15 +174,36 @@ func (h *ModuleHandler) UpdateModule(c *gin.Context) {
 	if req.SingleVersionOnly != nil {
 		mod.SingleVersionOnly = *req.SingleVersionOnly
 	}
-	version := strings.TrimSpace(req.Version)
-	if version == "" {
-		v, err := h.latestVersion(c, modulePath)
+	version := mod.Version
+	if req.Version != nil {
+		version = strings.TrimSpace(*req.Version)
+		if version == "" {
+			v, err := h.latestVersion(c, modulePath)
+			if err != nil {
+				middleware.ErrorResponseWithCode(c, http.StatusBadGateway, types.ErrCodeInternalError,
+					fmt.Sprintf("failed to resolve latest version: %v", err))
+				return
+			}
+			version = v
+		}
+	}
+
+	// single_version_only 모듈은 fork 가 불가능하므로, 기본과 다른 버전에 고정된 stage 가 하나라도
+	// 남아 있으면 다음 빌드가 통째로 실패한다(builder.resolveDeps 가 거부). 레지스트리 변경이
+	// 빌드를 실패 상태로 남기지 않도록 여기서 막고, 먼저 stage 들을 수렴시키라고 안내한다.
+	// 기본 버전 변경과 플래그 켜기 양쪽 모두 이 조건에 걸린다.
+	if mod.SingleVersionOnly {
+		behind, err := pluginsPinnedElsewhere(h.db, modulePath, version)
 		if err != nil {
-			middleware.ErrorResponseWithCode(c, http.StatusBadGateway, types.ErrCodeInternalError,
-				fmt.Sprintf("failed to resolve latest version: %v", err))
+			middleware.ErrorResponseWithCode(c, http.StatusInternalServerError, types.ErrCodeDatabaseError, "Failed to check version usage")
 			return
 		}
-		version = v
+		if len(behind) > 0 {
+			middleware.ErrorResponseWithCode(c, http.StatusConflict, types.ErrCodeValidationFailed,
+				fmt.Sprintf("%s 는 단일 버전만 허용되는데 %d개 stage 가 %s 외의 버전에 고정되어 있습니다: %s — 먼저 POST /module-versions/upgrade-all 로 수렴시키세요",
+					modulePath, len(behind), version, strings.Join(behind, ", ")))
+			return
+		}
 	}
 	mod.Version = version
 
@@ -329,6 +352,22 @@ func pluginsPinnedTo(db *database.DB, modulePath, version string) ([]string, err
 	var names []string
 	for _, p := range pins {
 		if p.pins[modulePath] == version {
+			names = append(names, p.name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// pluginsPinnedElsewhere 는 모듈을 고정했지만 그 버전이 version 이 아닌 native stage 이름 목록이다.
+func pluginsPinnedElsewhere(db *database.DB, modulePath, version string) ([]string, error) {
+	pins, err := nativePluginPins(db)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, p := range pins {
+		if v, ok := p.pins[modulePath]; ok && v != version {
 			names = append(names, p.name)
 		}
 	}

@@ -115,8 +115,8 @@ func TestUpdateModule_ChangesDefaultAndKeepsOldVersion(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, []string{"v1.0.0", "v1.5.0"}, versionsOf(t, db, "example.com/m"))
 
-	// 빈 버전 → @latest
-	w = doJSON(r, http.MethodPut, "/modules/example.com/m", `{"single_version_only":true}`)
+	// 빈 문자열 버전 → @latest (필드 생략은 유지 — TestUpdateModule_KeepsVersionWhenFieldOmitted)
+	w = doJSON(r, http.MethodPut, "/modules/example.com/m", `{"version":"","single_version_only":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var mod models.AllowedModule
 	require.NoError(t, db.First(&mod, "module_path = ?", "example.com/m").Error)
@@ -201,4 +201,71 @@ func TestListModules_IncludesVersionsAndUsage(t *testing.T) {
 	require.Equal(t, "v1.0.0", m.Version)
 	require.Len(t, m.Versions, 2)
 	require.Equal(t, map[string]int{"v0.8.0": 2, "v1.0.0": 1}, m.Usage, "손상 JSON 과 레거시(빈 값)는 집계에서 제외")
+}
+
+// 플래그만 토글하는 요청(version 필드 없음)은 기본 버전을 건드리면 안 된다.
+// 문자열 필드였을 때는 빈 값 → @latest 로 튀어 기본 버전이 바뀌었다(리뷰 2번).
+func TestUpdateModule_KeepsVersionWhenFieldOmitted(t *testing.T) {
+	h, db := newModuleTestHandler(t, "v9.9.9")
+	r := moduleRouter(h)
+	require.NoError(t, db.Create(&models.AllowedModule{ModulePath: "example.com/m", Version: "v1.0.0", Status: "active"}).Error)
+
+	w := doJSON(r, http.MethodPut, "/modules/example.com/m", `{"single_version_only":true}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var mod models.AllowedModule
+	require.NoError(t, db.First(&mod, "module_path = ?", "example.com/m").Error)
+	require.Equal(t, "v1.0.0", mod.Version, "version 필드가 없으면 유지")
+	require.True(t, mod.SingleVersionOnly)
+
+	// 빈 문자열은 여전히 "최신 재조회" 다.
+	w = doJSON(r, http.MethodPut, "/modules/example.com/m", `{"version":""}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, db.First(&mod, "module_path = ?", "example.com/m").Error)
+	require.Equal(t, "v9.9.9", mod.Version)
+}
+
+// single_version_only 모듈은 fork 가 불가능하므로, 기본과 다른 버전에 고정된 stage 가 있으면
+// 기본 변경·플래그 켜기 모두 거부해야 한다 — 통과시키면 다음 빌드가 통째로 실패한다(리뷰 1번).
+func TestUpdateModule_RejectsSingleVersionOnlyWithPinnedStages(t *testing.T) {
+	h, db := newModuleTestHandler(t, "v2.0.0")
+	r := moduleRouter(h)
+	require.NoError(t, db.Create(&models.AllowedModule{ModulePath: "example.com/sql", Version: "v1.0.0", Status: "active"}).Error)
+	require.NoError(t, db.Create(&models.Plugin{
+		ID: "p1", Name: "old-driver-stage", Type: "native", Version: "v1", Status: "active",
+		DepVersions: `{"example.com/sql":"v0.9.0"}`,
+	}).Error)
+	require.NoError(t, db.Create(&models.Plugin{
+		ID: "p2", Name: "current-stage", Type: "native", Version: "v1", Status: "active",
+		DepVersions: `{"example.com/sql":"v1.0.0"}`,
+	}).Error)
+
+	// 플래그 켜기: v0.9.0 에 고정된 stage 가 있어 거부
+	w := doJSON(r, http.MethodPut, "/modules/example.com/sql", `{"single_version_only":true}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "old-driver-stage")
+	require.NotContains(t, w.Body.String(), "current-stage")
+	var mod models.AllowedModule
+	require.NoError(t, db.First(&mod, "module_path = ?", "example.com/sql").Error)
+	require.False(t, mod.SingleVersionOnly, "거부됐으면 플래그가 저장되지 않아야 한다")
+
+	// 그 stage 가 기본으로 수렴하면 플래그 켜기 허용
+	require.NoError(t, db.Model(&models.Plugin{}).Where("id = ?", "p1").Update("dep_versions", `{"example.com/sql":"v1.0.0"}`).Error)
+	w = doJSON(r, http.MethodPut, "/modules/example.com/sql", `{"single_version_only":true}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// 플래그가 켜진 상태에서 기본 변경: 모든 stage 가 v1.0.0 이라 v2.0.0 으로 바꾸면 전부 뒤처짐 → 거부
+	w = doJSON(r, http.MethodPut, "/modules/example.com/sql", `{"version":"v2.0.0"}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.NoError(t, db.First(&mod, "module_path = ?", "example.com/sql").Error)
+	require.Equal(t, "v1.0.0", mod.Version, "거부됐으면 기본 버전이 바뀌지 않아야 한다")
+
+	// 일반 모듈(플래그 없음)은 같은 상황에서 기본 변경 허용 — fork 로 공존하기 때문
+	require.NoError(t, db.Create(&models.AllowedModule{ModulePath: "example.com/ok", Version: "v1.0.0", Status: "active"}).Error)
+	require.NoError(t, db.Create(&models.Plugin{
+		ID: "p3", Name: "ok-stage", Type: "native", Version: "v1", Status: "active",
+		DepVersions: `{"example.com/ok":"v1.0.0"}`,
+	}).Error)
+	w = doJSON(r, http.MethodPut, "/modules/example.com/ok", `{"version":"v2.0.0"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }

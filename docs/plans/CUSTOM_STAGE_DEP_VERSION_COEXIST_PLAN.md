@@ -295,6 +295,15 @@ kubectl patch deploy -n conduix conduix-control-plane -p '{"spec":{"template":{"
 kubectl patch deploy -n conduix conduix-web-ui -p '{"spec":{"template":{"spec":{"containers":[{"name":"web-ui","imagePullPolicy":"Always"}]}}}}'
 ```
 
+### 8.1b 리뷰 후 수정 (2026-09-21, W2~W7 리뷰)
+
+| 지점 | 문제 | 수정 |
+|---|---|---|
+| `module_handler.go` `UpdateModule` | single_version_only 모듈의 기본 변경·플래그 켜기가 비기본 고정 stage 를 남겨 다음 빌드가 통째로 실패 | 그런 stage 가 있으면 409 + 목록 + upgrade-all 안내 |
+| `module_handler.go` `UpdateModuleRequest.Version` | 문자열이라 플래그 토글 요청(version 없음)이 빈 값 → @latest 로 기본 버전이 튐 | `*string`: nil=유지, ""=최신 |
+| `runner_builder.go` `Build` | 레거시 백필을 빌드 성공 후 저장 → 빌더 해시(빈 지문)와 리졸버 해시(저장 지문) 불일치 → 성공 직후 core_changed 재빌드 + 실행 차단 창 | `resolveDeps` 를 해시 계산 앞으로, 백필 즉시 저장 + 메모리 반영(`applyBackfill`) |
+| `runner_resolver.go` | 의존성 버전만 바뀐 stale 을 core_changed 로 안내 | `RunnerVersion.DepsFingerprint` 추가, `staleReason` 이 deps_changed / core_changed 구분 |
+
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
 아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.

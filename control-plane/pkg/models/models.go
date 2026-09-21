@@ -722,17 +722,21 @@ type RunnerVersion struct {
 	// ForkedModules 는 이 빌드에서 기본과 다른 버전이라 forked/ 로 복사·재작성해 링크한
 	// 모듈 목록이다(JSON [{module_path, version, fork_path, dir_name, plugin_ids}]).
 	// 관측용 — 어떤 stage 때문에 어떤 버전이 함께 들어갔는지 사후에 알기 위한 기록(ADR-0005).
-	ForkedModules string     `gorm:"type:text" json:"forked_modules,omitempty"`
-	RevisionSeq   int        `gorm:"default:0" json:"revision_seq"`         // 빌드 시점 최신 revision seq (여기까지 포함)
-	Trigger       string     `gorm:"size:20;default:manual" json:"trigger"` // "manual" | "auto" | "rebuild"
-	ParentID      string     `gorm:"size:36" json:"parent_id,omitempty"`    // 재빌드 시 원본 버전 ID
-	BuildLog      string     `gorm:"type:mediumtext" json:"build_log,omitempty"`
-	Error         string     `gorm:"type:text" json:"error,omitempty"`
-	DurationMs    int        `json:"duration_ms,omitempty"`
-	CreatedBy     string     `gorm:"size:36" json:"created_by,omitempty"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"`
+	// DepsFingerprint 는 빌드 시점 stage 고정 의존성 지문의 해시다(builder.DepsFingerprintHash).
+	// 리졸버가 SourceHash 불일치를 "코어 변경" 과 "의존성 버전 변경" 으로 갈라 안내하는 데 쓴다.
+	// 지문이 비면(아무 stage 도 고정 안 함) 빈 문자열 — 컬럼 도입 전 버전과 호환.
+	DepsFingerprint string     `gorm:"size:64" json:"deps_fingerprint,omitempty"`
+	RevisionSeq     int        `gorm:"default:0" json:"revision_seq"`         // 빌드 시점 최신 revision seq (여기까지 포함)
+	Trigger         string     `gorm:"size:20;default:manual" json:"trigger"` // "manual" | "auto" | "rebuild"
+	ParentID        string     `gorm:"size:36" json:"parent_id,omitempty"`    // 재빌드 시 원본 버전 ID
+	BuildLog        string     `gorm:"type:mediumtext" json:"build_log,omitempty"`
+	Error           string     `gorm:"type:text" json:"error,omitempty"`
+	DurationMs      int        `json:"duration_ms,omitempty"`
+	CreatedBy       string     `gorm:"size:36" json:"created_by,omitempty"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 // StageRevision stage 변경 히스토리 (글로벌 seq 순번)
@@ -763,7 +767,7 @@ type StageRevision struct {
 func RunnerVersionMetaColumns() []string {
 	return []string{
 		"id", "build_number", "status", "image_tag", "image_digest",
-		"binary_size", "source_hash", "plugin_ids", "plugin_hashes", "forked_modules",
+		"binary_size", "source_hash", "plugin_ids", "plugin_hashes", "forked_modules", "deps_fingerprint",
 		"revision_seq", "trigger", "parent_id", "error", "duration_ms",
 		"created_by", "started_at", "finished_at", "created_at",
 	}

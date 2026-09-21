@@ -203,7 +203,19 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		return nil, fmt.Errorf("no native plugins found")
 	}
 
-	// 3. 소스 해시 스냅샷 + 결합 해시 계산.
+	// 3. 각 stage 가 쓸 모듈 버전 확정. 레거시(dep_versions 비어 있음) stage 는 지금의 기본
+	// 버전으로 고정하고, **해시를 계산하기 전에 저장**한다.
+	// 빌드 성공 후에 저장하면 방금 만든 버전의 해시(빈 지문)와 리졸버가 다음에 계산하는
+	// 해시(저장된 지문)가 달라져, 성공 직후 core_changed 로 재빌드가 걸리고 그동안 실행이 막힌다.
+	// 백필 값은 기본 버전 그 자체라 어느 빌드든 같은 조합을 쓰므로 먼저 저장해도 잃는 것이 없다.
+	resolved, err := rb.resolveDeps(plugins)
+	if err != nil {
+		return nil, err
+	}
+	rb.saveBackfilledPins(resolved)
+	applyBackfill(plugins, resolved)
+
+	// 4. 소스 해시 스냅샷 + 결합 해시 계산.
 	// 코어 모듈(pipeline-core/shared/plugin-sdk) 소스 해시도 포함해야 한다 —
 	// 안 하면 플러그인 소스가 그대로일 때 코어 코드가 바뀌어도(예: 새 stage 헬퍼,
 	// config 해소 로직) 옛 바이너리를 재사용해 stale 실행이 된다.
@@ -212,7 +224,8 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		pluginHashes[p.ID] = p.SourceHash
 	}
 	coreHash := rb.coreSourceHash()
-	combinedHash := CombinedSourceHash(pluginHashes, coreHash, PluginDepFingerprint(plugins))
+	depsFingerprint := PluginDepFingerprint(plugins)
+	combinedHash := CombinedSourceHash(pluginHashes, coreHash, depsFingerprint)
 
 	// 4. 동일 해시 ready 버전이 있으면 빌드 스킵 + DeployedHash만 갱신
 	var existing models.RunnerVersion
@@ -227,25 +240,19 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 		}, nil
 	}
 
-	// 각 stage 가 쓸 모듈 버전 확정(레거시는 기본 버전으로, 저장은 빌드 성공 후).
-	// 빌드 스킵 판정 뒤에 둔다 — 모든 stage 소스를 파싱하므로 스킵 경로에서는 낭비다.
-	resolved, err := rb.resolveDeps(plugins)
-	if err != nil {
-		return nil, err
-	}
-
 	// 5. 새 RunnerVersion 레코드 생성
 	pluginIDsJSON, _ := json.Marshal(extractPluginIDs(plugins))
 	pluginHashesJSON, _ := json.Marshal(pluginHashes)
 
 	version := models.RunnerVersion{
-		ID:           fmt.Sprintf("rv-%s", uuid.New().String()[:8]),
-		Status:       "building",
-		SourceHash:   combinedHash,
-		PluginIDs:    string(pluginIDsJSON),
-		PluginHashes: string(pluginHashesJSON),
-		CreatedBy:    createdBy,
-		StartedAt:    timePtr(time.Now()),
+		ID:              fmt.Sprintf("rv-%s", uuid.New().String()[:8]),
+		Status:          "building",
+		SourceHash:      combinedHash,
+		DepsFingerprint: DepsFingerprintHash(depsFingerprint),
+		PluginIDs:       string(pluginIDsJSON),
+		PluginHashes:    string(pluginHashesJSON),
+		CreatedBy:       createdBy,
+		StartedAt:       timePtr(time.Now()),
 	}
 
 	if err := rb.db.Create(&version).Error; err != nil {
@@ -315,10 +322,6 @@ func (rb *RunnerBuilder) Build(ctx context.Context, createdBy string) (*RunnerBu
 	}
 
 	// 7. 빌드 성공: DeployedHash 갱신 (빌드 중 수정 감지)
-	// 레거시 stage 의 고정 버전은 빌드가 실제로 성공한 뒤에만 박는다 —
-	// 실패한 빌드의 버전 조합을 stage 에 남기면 다음 빌드도 같은 조합으로 실패한다.
-	rb.saveBackfilledPins(resolved)
-
 	staleDetected := rb.updateDeployedHashes(plugins, pluginHashes, version.ID)
 
 	fmt.Fprintf(&logBuf, "  Build completed in %s\n", duration)
@@ -630,6 +633,17 @@ func CombinedSourceHash(pluginHashes map[string]string, coreHash, depsFingerprin
 		_, _ = fmt.Fprintf(h, "deps:%s\n", depsFingerprint)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// DepsFingerprintHash 는 지문을 RunnerVersion 에 보관할 고정 길이 해시로 만든다.
+// 리졸버가 "소스 해시 불일치" 를 코어 변경과 의존성 버전 변경으로 갈라 안내하는 데 쓴다.
+// 지문이 비면(아무 stage 도 고정하지 않음) 빈 문자열 — 컬럼 도입 전 버전과 값이 같다.
+func DepsFingerprintHash(fingerprint string) string {
+	if fingerprint == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(fingerprint))
+	return hex.EncodeToString(sum[:])
 }
 
 // PluginDepFingerprint 는 플러그인 목록에서 고정 버전 지문을 만든다.

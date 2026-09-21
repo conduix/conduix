@@ -56,7 +56,7 @@ func (s *Stage) Close() error { return nil }
 `
 
 // 레거시 stage(dep_versions 빈 값)는 빌드 시점 기본 버전으로 고정값이 만들어져야 한다.
-// 저장은 빌드 성공 후이므로 resolveDeps 단계에서는 Backfill 에만 담긴다.
+// resolveDeps 는 순수 계산이라 Backfill 에만 담고, 저장은 Build 가 해시 계산 전에 한다.
 func TestResolveDeps_BackfillsLegacyPinsWithoutWriting(t *testing.T) {
 	rb := depsTestBuilder(t, []models.AllowedModule{
 		{ModulePath: "github.com/google/uuid", Version: "v1.6.0"},
@@ -81,7 +81,7 @@ func TestResolveDeps_BackfillsLegacyPinsWithoutWriting(t *testing.T) {
 		t.Fatalf("read back: %v", err)
 	}
 	if stored.DepVersions != "" {
-		t.Fatalf("resolveDeps must not write dep_versions before the build succeeds, got %q", stored.DepVersions)
+		t.Fatalf("resolveDeps itself must not write dep_versions (Build persists them), got %q", stored.DepVersions)
 	}
 
 	rb.saveBackfilledPins(resolved)
@@ -292,5 +292,40 @@ func TestForkSummary_NamesModulesAndStages(t *testing.T) {
 	})
 	if !strings.Contains(got, "github.com/lib/pq@v1.10.0") || !strings.Contains(got, "p1,p2") {
 		t.Fatalf("the message must name the module and the stages behind it, got %q", got)
+	}
+}
+
+// 백필을 저장한 뒤 메모리 목록에도 반영해야, 빌더가 만든 해시와 리졸버가 DB 로 다시 계산한
+// 해시가 같다. 어긋나면 성공 직후 core_changed 로 재빌드가 걸린다(리뷰 3번).
+func TestApplyBackfill_FingerprintMatchesStoredPins(t *testing.T) {
+	rb := depsTestBuilder(t, []models.AllowedModule{
+		{ModulePath: "github.com/google/uuid", Version: "v1.6.0"},
+	})
+	plugins := []models.Plugin{{ID: "p1", Name: "uuid-tag", Type: "native", Status: "active", SourceCode: uuidStageSource}}
+	if err := rb.db.Create(&plugins[0]).Error; err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	resolved, err := rb.resolveDeps(plugins)
+	if err != nil {
+		t.Fatalf("resolveDeps: %v", err)
+	}
+
+	if PluginDepFingerprint(plugins) != "" {
+		t.Fatalf("레거시 목록의 지문은 비어 있어야 한다")
+	}
+	rb.saveBackfilledPins(resolved)
+	applyBackfill(plugins, resolved)
+
+	var stored []models.Plugin
+	if err := rb.db.Find(&stored).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	inMemory := PluginDepFingerprint(plugins)
+	fromDB := PluginDepFingerprint(stored)
+	if inMemory == "" || inMemory != fromDB {
+		t.Fatalf("fingerprint mismatch: memory=%q db=%q", inMemory, fromDB)
+	}
+	if DepsFingerprintHash(inMemory) == "" || DepsFingerprintHash("") != "" {
+		t.Fatalf("DepsFingerprintHash: 비어 있지 않은 지문은 해시, 빈 지문은 빈 문자열이어야 한다")
 	}
 }

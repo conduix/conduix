@@ -21,12 +21,13 @@ type resolvedDeps struct {
 	Defaults map[string]string          // 모듈 → 레지스트리 기본 버전
 	Forks    []dependency.Fork          // 기본과 다른 버전이라 복사·재작성이 필요한 모듈(W3)
 	// Backfill 은 DepVersions 가 비어 있던 레거시 stage 의 새 고정값이다(plugin ID → JSON).
-	// 빌드가 성공해야 저장한다 — 실패한 빌드의 버전을 stage 에 박아두지 않기 위함.
+	// Build 가 해시 계산 전에 저장한다 — 값이 기본 버전 그 자체라 어느 빌드든 같은 조합을 쓰므로
+	// 미리 저장해도 잃는 것이 없고, 저장을 미루면 빌더 해시와 리졸버 해시가 어긋난다.
 	Backfill map[string]string
 }
 
-// resolveDeps 는 각 stage 의 고정 버전을 확정한다.
-// 레거시(DepVersions 비어 있음) stage 는 지금의 기본 버전으로 고정하되, 저장은 빌드 성공 후다.
+// resolveDeps 는 각 stage 의 고정 버전을 확정한다(순수 계산 — DB 에 쓰지 않는다).
+// 레거시(DepVersions 비어 있음) stage 는 지금의 기본 버전으로 고정해 Backfill 에 담는다.
 func (rb *RunnerBuilder) resolveDeps(plugins []models.Plugin) (*resolvedDeps, error) {
 	allowed, err := rb.activeAllowedModules()
 	if err != nil {
@@ -99,7 +100,7 @@ func (rb *RunnerBuilder) resolveDeps(plugins []models.Plugin) (*resolvedDeps, er
 	return out, nil
 }
 
-// saveBackfilledPins 는 레거시 stage 의 고정 버전을 빌드 성공 후 저장한다.
+// saveBackfilledPins 는 레거시 stage 의 고정 버전을 저장한다(Build 가 해시 계산 전에 호출).
 func (rb *RunnerBuilder) saveBackfilledPins(resolved *resolvedDeps) {
 	for id, encoded := range resolved.Backfill {
 		if err := rb.db.Model(&models.Plugin{}).Where("id = ?", id).
@@ -254,4 +255,18 @@ func firstPanicLine(out string) string {
 		}
 	}
 	return ""
+}
+
+// applyBackfill 은 저장한 백필 값을 메모리의 플러그인 목록에도 반영한다.
+// Build 는 이 목록으로 의존성 지문을 계산하므로, DB 와 메모리가 같은 dep_versions 를 봐야
+// 빌더의 해시와 리졸버가 다음에 DB 로 계산하는 해시가 일치한다.
+func applyBackfill(plugins []models.Plugin, resolved *resolvedDeps) {
+	if len(resolved.Backfill) == 0 {
+		return
+	}
+	for i := range plugins {
+		if encoded, ok := resolved.Backfill[plugins[i].ID]; ok {
+			plugins[i].DepVersions = encoded
+		}
+	}
 }

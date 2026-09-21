@@ -358,6 +358,7 @@ conduix/
 
 ## 문서
 
+- [파이프라인 연결 가이드](docs/PIPELINE_ORCHESTRATION.ko.md) - 파이프라인 엮기: `depends_on` vs `priority` vs pipeline link, 각각 필요한 `execution_mode`
 - [Standalone 파이프라인 실행 가이드](docs/standalone-usage.md) - 운영툴 없이 독립 실행
 - [장애 처리 시나리오](#장애-처리-fault-tolerance) - Redis/Kafka 장애 대응
 

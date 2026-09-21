@@ -38,7 +38,7 @@ func TestCoreChangedSince_FalseWhenCoreUnchanged(t *testing.T) {
 	require.NotEmpty(t, coreHash, "임시 트리에서 코어 해시가 계산돼야 테스트가 의미를 가진다")
 
 	version := &models.RunnerVersion{
-		SourceHash: builder.CombinedSourceHash(map[string]string{"p1": "h1"}, coreHash),
+		SourceHash: builder.CombinedSourceHash(map[string]string{"p1": "h1"}, coreHash, ""),
 	}
 
 	r := &RunnerResolver{}
@@ -54,7 +54,7 @@ func TestCoreChangedSince_TrueWhenCoreEdited(t *testing.T) {
 	plugins := []models.Plugin{{ID: "p1", SourceHash: "h1"}}
 	version := &models.RunnerVersion{
 		SourceHash: builder.CombinedSourceHash(
-			map[string]string{"p1": "h1"}, builder.CoreSourceHash(root, nil)),
+			map[string]string{"p1": "h1"}, builder.CoreSourceHash(root, nil), ""),
 	}
 
 	writeCoreTree(t, root, "package runner\n\nfunc Added() {}\n")
@@ -82,7 +82,7 @@ func TestCoreChangedSince_TrueWhenPluginSetChanged(t *testing.T) {
 
 	version := &models.RunnerVersion{
 		SourceHash: builder.CombinedSourceHash(
-			map[string]string{"p1": "h1"}, builder.CoreSourceHash(root, nil)),
+			map[string]string{"p1": "h1"}, builder.CoreSourceHash(root, nil), ""),
 	}
 
 	r := &RunnerResolver{}

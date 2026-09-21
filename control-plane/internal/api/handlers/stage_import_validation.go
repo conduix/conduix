@@ -2,101 +2,34 @@ package handlers
 
 import (
 	"fmt"
-	"go/parser"
-	"go/token"
-	"os"
-	"sort"
-	"strings"
 
+	"github.com/conduix/conduix/control-plane/internal/dependency"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
 )
 
-// conduixInternalModulePrefixes 는 stage 가 자유롭게 import 할 수 있는 내부 모듈(레지스트리 불필요).
-var conduixInternalModulePrefixes = []string{
-	"github.com/conduix/conduix/plugin-sdk",
-	"github.com/conduix/conduix/pipeline-core",
-	"github.com/conduix/conduix/shared",
-}
-
-// validateStageImports 는 native stage 소스가 import 하는 외부 패키지가 전부
-// 허용됐는지(표준 라이브러리 + conduix 내부 모듈 + allowed_modules) 검증한다.
-// 허용 안 된 외부 import 가 있으면 그 목록을 담은 에러를 반환한다(D5).
-func validateStageImports(db *database.DB, sourceCode string) error {
-	imports, err := parseImportPaths(sourceCode)
+// resolveStagePins 는 native stage 소스의 import 를 검증하고 이 stage 가 쓸 모듈 버전을 확정한다.
+// 검증(D5)과 버전 확정은 같은 규칙에서 나오므로 한 번에 처리한다 — 정책 본체는
+// internal/dependency 에 있고 여기는 DB 조회만 얹는다(ADR-0005).
+func resolveStagePins(db *database.DB, sourceCode string, existing dependency.Pins) (dependency.Pins, error) {
+	imports, err := dependency.ParseImports(sourceCode)
 	if err != nil {
-		return fmt.Errorf("소스 파싱 실패: %w", err)
+		return nil, fmt.Errorf("소스 파싱 실패: %w", err)
 	}
-
-	// 허용 모듈 조회(active 만).
-	var allowed []models.AllowedModule
-	if err := db.Where("status = ?", "active").Find(&allowed).Error; err != nil {
-		return fmt.Errorf("허용 모듈 조회 실패: %w", err)
-	}
-	allowedPaths := make([]string, len(allowed))
-	for i, m := range allowed {
-		allowedPaths[i] = m.ModulePath
-	}
-
-	var disallowed []string
-	for _, imp := range imports {
-		if isStdlibImport(imp) || hasAnyPrefix(imp, conduixInternalModulePrefixes) {
-			continue
-		}
-		if !isCoveredByAllowedModule(imp, allowedPaths) {
-			disallowed = append(disallowed, imp)
-		}
-	}
-	if len(disallowed) > 0 {
-		sort.Strings(disallowed)
-		return fmt.Errorf("허용되지 않은 외부 모듈 import: %s — 먼저 모듈 레지스트리에 추가하세요(POST /api/v1/modules)", strings.Join(disallowed, ", "))
-	}
-	return nil
-}
-
-// parseImportPaths 는 Go 소스의 import 경로 목록을 추출한다.
-func parseImportPaths(sourceCode string) ([]string, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "stage.go", sourceCode, parser.ImportsOnly)
+	allowed, err := activeAllowedModules(db)
 	if err != nil {
 		return nil, err
 	}
-	paths := make([]string, 0, len(f.Imports))
-	for _, imp := range f.Imports {
-		p := strings.Trim(imp.Path.Value, `"`)
-		paths = append(paths, p)
-	}
-	return paths, nil
+	return dependency.ResolvePins(imports, existing, allowed)
 }
 
-// isStdlibImport 는 표준 라이브러리 import 인지 판별한다.
-// 표준 라이브러리 경로는 첫 세그먼트에 점(.)이 없다(도메인이 아님). 예: "fmt", "encoding/json".
-func isStdlibImport(importPath string) bool {
-	first := importPath
-	if i := strings.IndexByte(importPath, '/'); i >= 0 {
-		first = importPath[:i]
+// activeAllowedModules 는 status=active 인 허용 모듈을 조회한다(기본 버전의 원천).
+func activeAllowedModules(db *database.DB) ([]models.AllowedModule, error) {
+	var allowed []models.AllowedModule
+	if err := db.Where("status = ?", "active").Order("module_path asc").Find(&allowed).Error; err != nil {
+		return nil, fmt.Errorf("허용 모듈 조회 실패: %w", err)
 	}
-	return !strings.Contains(first, ".")
-}
-
-// isCoveredByAllowedModule 은 import 경로가 허용 모듈 중 하나에 속하는지(모듈 경로 == import 이거나
-// 그 하위 패키지) 판별한다. 예: allowed "github.com/foo/bar" 는 "github.com/foo/bar/baz" 도 커버.
-func isCoveredByAllowedModule(importPath string, allowedPaths []string) bool {
-	for _, m := range allowedPaths {
-		if importPath == m || strings.HasPrefix(importPath, m+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasAnyPrefix(s string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if s == p || strings.HasPrefix(s, p+"/") {
-			return true
-		}
-	}
-	return false
+	return allowed, nil
 }
 
 // testRunnerMain 은 인-에디터 테스트 빌드에 주입하는 실행 러너(package main).
@@ -146,28 +79,25 @@ func main() {
 }
 `
 
-// buildTestGoMod 는 인-에디터 테스트 빌드용 go.mod 를 레지스트리 기반으로 생성한다.
-// TestNativePlugin(임시 빌드)이 실제 runner 빌드와 같은 의존성 버전을 쓰게 해,
-// "에디터 테스트는 실패/성공인데 실제 빌드는 반대" 인 불일치를 없앤다.
-// plugin-sdk 는 CONDUIX_SDK_PATH(런타임 이미지의 로컬 소스)로 replace 한다.
-func buildTestGoMod(db *database.DB) string {
-	var b strings.Builder
-	b.WriteString("module conduix-plugin-test\n\ngo 1.26\n\n")
-	b.WriteString("require github.com/conduix/conduix/plugin-sdk v0.0.0\n")
-
-	var allowed []models.AllowedModule
-	if err := db.Where("status = ?", "active").Order("module_path asc").Find(&allowed).Error; err == nil && len(allowed) > 0 {
-		b.WriteString("\nrequire (\n")
-		for _, m := range allowed {
-			fmt.Fprintf(&b, "\t%s %s\n", m.ModulePath, m.Version)
-		}
-		b.WriteString(")\n")
+// resolveAndEncodePins 는 resolveStagePins 결과를 Plugin.DepVersions 에 저장할 JSON 으로 만든다.
+// existingDepVersions 가 비어 있으면(레거시 stage) 전부 기본 버전으로 새로 고정된다.
+func resolveAndEncodePins(db *database.DB, sourceCode, existingDepVersions string) (string, error) {
+	pins, err := resolveStagePins(db, sourceCode, dependency.ParsePins(existingDepVersions))
+	if err != nil {
+		return "", err
 	}
+	return pins.Encode()
+}
 
-	sdkPath := os.Getenv("CONDUIX_SDK_PATH")
-	if sdkPath == "" {
-		sdkPath = "/app/plugin-sdk"
+// pinsByPluginName 은 이름으로 저장된 stage 의 고정 버전을 읽는다. 없으면 nil(= 기본 버전).
+// 에디터 테스트 빌드와 LSP workspace 가 같은 값을 봐야 하므로 조회도 한 곳에 둔다.
+func pinsByPluginName(db *database.DB, pluginName string) dependency.Pins {
+	if pluginName == "" {
+		return nil
 	}
-	fmt.Fprintf(&b, "\nreplace github.com/conduix/conduix/plugin-sdk => %s\n", sdkPath)
-	return b.String()
+	var p models.Plugin
+	if err := db.Where("name = ?", pluginName).First(&p).Error; err != nil {
+		return nil
+	}
+	return dependency.ParsePins(p.DepVersions)
 }

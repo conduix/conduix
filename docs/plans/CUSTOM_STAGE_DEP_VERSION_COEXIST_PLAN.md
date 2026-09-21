@@ -3,7 +3,7 @@
 > 작성 2026-09-21. 대상: 이 작업을 이어서 구현할 개발자 / Claude Code.
 > 배경·근거·한계: [../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) §5~§7.
 > 결정 기록: [../adr/0005-dependency-version-coexistence.md](../adr/0005-dependency-version-coexistence.md).
-> 상태(2026-09-21): **W0·W1 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W2~W7 미착수.** 인수인계는 §8.
+> 상태(2026-09-21): **W0·W1·W2 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W3~W7 미착수.** 인수인계는 §8.
 
 ## 0. 한 문장
 
@@ -194,7 +194,26 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 **계획 대비 달라진 점**
 - 버전 API 경로: 계획의 `POST /modules/*module/versions` 는 Gin catch-all 제약으로 불가 → `/module-versions` + body/query.
 - `AllowedModuleVersion` 에 `DeletedAt` 을 두지 않음(폐기 후 재추가 시 복합 PK 충돌 방지). 폐기 = 물리 삭제.
-- `SingleVersionOnly` 가드를 `AddModuleVersion` 에도 둠(기본 외 버전 추가 자체를 거부). stage 저장 시 가드는 W2 `ResolvePins` 에서 추가로 필요.
+- `SingleVersionOnly` 가드를 `AddModuleVersion` 에도 둠(기본 외 버전 추가 자체를 거부). stage 저장 시 가드는 W2 `ResolvePins` 에 구현됨(비기본 고정이면 400).
+
+### 8.1b W2 완료분 (테스트 통과, lint 0)
+
+| 파일 | 변경 | 계획 대비 |
+|---|---|---|
+| 신규 `control-plane/internal/dependency/{pins,forkpath,gomod}.go` | `Pins`/`ResolvePins`/`ParseImports`/`OwningModule`/`Defaults`/`Fingerprint`, `ForkPath`·`ForkDirName`, `PluginGoMod`·`MainRequireBlock`·`TestGoMod`·`WorkspaceGoMod`·`CollectForks` | `rewrite.go`·`source.go` 는 W3 에서(아직 fork 를 만들지 않으므로) |
+| `handlers/stage_import_validation.go` | `validateStageImports`/`parseImportPaths`/`isStdlibImport`/`isCoveredByAllowedModule`/`buildTestGoMod` 삭제 → `resolveStagePins`·`resolveAndEncodePins`·`pinsByPluginName`·`activeAllowedModules` 래퍼만 | 검증(D5)과 버전 확정이 같은 규칙이라 한 함수로 합침 |
+| `handlers/plugin_handler.go` | Create/upsert/Update 세 지점이 pins 를 확정해 `DepVersions` 저장. `TestNativePlugin` 은 `dependency.TestGoMod(pins, sdkPath)` + `plugin_name` 으로 기존 고정값 조회 | |
+| `lsp/{proxy,workspace_manager}.go`, `handlers/lsp_handler.go`, `web-ui/src/services/lspClient.ts` | `GetOrCreate`/`SyncSource` 가 pins 를 받고 `dependency.WorkspaceGoMod` 사용. WebSocket 쿼리에 `plugin_name` 추가 | **계획과 다름**: web-ui 는 `/lsp/sync` 를 호출하지 않고 WebSocket 만 쓴다. workspace go.mod 를 만드는 실질 경로는 `GetOrCreate` 뿐이라 거기에 pins 를 넣었다 |
+| `builder/deps.go`(신규) | `resolvedDeps`(Names/Pins/Defaults/Forks/Backfill), `resolveDeps`, `saveBackfilledPins` | 레거시(빈 `DepVersions`)는 빌드 시 기본 버전으로 pins 생성 → **빌드 성공 후** 저장 |
+| `builder/runner_builder.go` | `generatePluginGoMod`/`pluginRequireBlock` 삭제, `appendPluginRequires` 는 `dependency.MainRequireBlock` 호출. `CombinedSourceHash(hashes, coreHash, depsFingerprint)` 3-인자화 + `PluginDepFingerprint` | `resolveDeps` 는 **빌드 스킵 판정 뒤**에 둔다(스킵 경로에서 전 stage 파싱 낭비 회피) |
+| `services/runner_resolver.go` | `coreChangedSince` 도 같은 `PluginDepFingerprint` 사용 | 빌더·리졸버 해시 정합 유지 |
+| 테스트 | `dependency/dependency_test.go` 18종(golden·단사성·정책), `builder/deps_test.go` 6종 | `TestPluginRequireBlock`·`TestGeneratePluginGoMod`·`stage_import_validation_test.go` 는 `dependency` 로 이동 |
+
+**W2 에서 내린 판단 (W3 이 이어받을 전제)**
+- `ForkDirName` 은 mangle 만으로 단사가 아니다(`resty/v2` 와 `resty_v2` 충돌 — 테스트로 잡힘). 원본 (path, version) sha256 앞 10자를 접미사로 붙여 단사성을 해시가 보장한다.
+- 재빌드 판정 지문(`dependency.Fingerprint`)은 **기본 버전을 참조하지 않는다.** 빌더와 리졸버가 DB 의 `dep_versions` 만으로 같은 값을 얻어야 하기 때문. 고정값이 하나도 없으면 빈 문자열이라 기존 ready 버전이 무효화되지 않는다(불변식 2).
+- go.mod 의 require 목록이 "허용 모듈 전부" 에서 "그 stage 가 실제 import 하는 모듈" 로 좁아졌다. `go mod tidy` 가 어차피 정리하므로 최종 산출물은 같지만, tidy 이전 텍스트는 다르다.
+- 해소 불가한 레거시 stage(retire 된 모듈 import 등)는 **빌드를 세우지 않고** 경고 후 고정 버전 없이 진행한다. stage 하나가 전체 배포를 막지 않게 하기 위함.
 
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
@@ -202,13 +221,6 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 
 | 순서 | 파일 / 신규 | 할 일 | 목적 |
 |---|---|---|---|
-| W2-1 | 신규 `control-plane/internal/dependency/{pins,forkpath,rewrite,gomod,source}.go` | §3 의 순수 함수·정책 패키지 | go.mod 생성 정책을 세 소비자(빌더·에디터 테스트·LSP)에서 한 곳으로. "같은 정책은 한 곳" |
-| W2-2 | `handlers/stage_import_validation.go` | `validateStageImports`/`isCoveredByAllowedModule`/`buildTestGoMod` 로직을 `dependency` 로 이동, 얇은 래퍼만 남김 | 중복 제거 |
-| W2-3 | `handlers/plugin_handler.go:208,267,358` | import 검증 → `dependency.ResolvePins(imports, existingPins, defaults)` 로 교체, 결과를 `plugin.DepVersions` 에 저장. `SingleVersionOnly` 모듈에 비기본 고정이면 400 | stage 가 자기 버전을 고정하는 지점. 기존 고정 유지, 새 import 만 기본 버전 |
-| W2-4 | `handlers/plugin_handler.go:670` (`TestNativePlugin`) | `buildTestGoMod(h.db)` → `dependency.TestGoMod(pins, sdkPath)` | 에디터 테스트가 stage 고정 버전으로 컴파일 |
-| W2-5 | `lsp/workspace_manager.go:144,210`, `lsp/proxy.go` | `SyncSource` 의 무시되는 `goMod` 인자를 pins 로 교체, `generateGoMod` → `dependency.WorkspaceGoMod` | 자동완성이 실제 빌드와 같은 버전을 보게 |
-| W2-6 | `builder/runner_builder.go:683,702,721` | `generatePluginGoMod`/`pluginRequireBlock`/`appendPluginRequires` → `dependency` 호출. 레거시(빈 DepVersions) 는 빌드 시 기본 버전으로 pins 생성 후 성공 시 저장 | 빌더도 같은 정책 사용. **이 단계까지는 fork 없음 = 동작 불변**(golden 테스트로 보장) |
-| W2-7 | `builder/runner_builder_test.go` 의 `TestPluginRequireBlock`, `TestGeneratePluginGoMod` | `dependency` 패키지로 이동, 기본 버전만일 때 출력 바이트 동일 확인 | 회귀선 |
 | W3-1 | `models.go` `RunnerVersion` | `ForkedModules string`(JSON) 추가 + AutoMigrate 는 자동 | 어떤 fork 가 링크됐는지 관측 |
 | W3-2 | `builder/runner_builder.go:352~367` | fork 단계 삽입: 비기본 (module,version) 수집 → `SingleVersionOnly` 면 실패 → `ModuleSource.Dir()`(go mod download -json) → `copyDir` → 0644 → `RewriteModuleTree` | 비기본 버전 소스를 `forked/<mangled>` 로 |
 | W3-3 | `builder/runner_builder.go:367` | `p.SourceCode` 대신 `RewriteStageImports(...)` 결과 기록. alias 는 fork 디렉토리의 `package` 절에서 읽음 | stage import 를 fork 경로로. 사용자 코드 본문 불변 |
@@ -231,6 +243,6 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 
 ```bash
 git checkout feat/dep-version-coexistence
-cd control-plane && go test ./internal/api/handlers/ -run 'Module' -count=1   # W1 회귀 확인
-mkdir -p internal/dependency                                                   # W2-1 시작
+cd control-plane && go test ./... -count=1        # W1·W2 회귀 확인(전부 통과해야 함)
+# W3-1 시작: models.RunnerVersion 에 ForkedModules 추가 → dependency/rewrite.go, source.go
 ```

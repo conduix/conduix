@@ -161,7 +161,7 @@ export default function NativeStageEditor({
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/lsp/go`
 
-    const client = new LSPClient(wsUrl, sessionIdRef.current)
+    const client = new LSPClient(wsUrl, sessionIdRef.current, pluginName)
     lspClientRef.current = client
 
     client.connect()

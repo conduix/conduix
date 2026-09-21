@@ -11,10 +11,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/conduix/conduix/control-plane/internal/dependency"
 )
 
-// AllowedModuleRef 는 gopls workspace go.mod 에 넣을 허용 모듈(경로+고정버전).
-// lsp 패키지가 models/db 에 의존하지 않도록 최소 형태만 받는다.
+// AllowedModuleRef 는 gopls workspace go.mod 에 넣을 허용 모듈(경로+기본버전).
+// lsp 패키지가 db 에 의존하지 않도록 조회 결과의 최소 형태만 받는다
+// (go.mod 생성 정책 자체는 internal/dependency 가 소유한다).
 type AllowedModuleRef struct {
 	ModulePath string
 	Version    string
@@ -74,8 +77,9 @@ func NewWorkspaceManager(sdkModPath string, modulesFn func() ([]AllowedModuleRef
 	return wm
 }
 
-// GetOrCreate workspace 가져오기 (없으면 생성)
-func (wm *WorkspaceManager) GetOrCreate(sessionID string) (*Workspace, error) {
+// GetOrCreate workspace 가져오기 (없으면 생성).
+// pins 는 이 세션이 편집하는 stage 의 고정 모듈 버전. nil 이면 레지스트리 기본 버전을 쓴다.
+func (wm *WorkspaceManager) GetOrCreate(sessionID string, pins map[string]string) (*Workspace, error) {
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
 
@@ -89,8 +93,8 @@ func (wm *WorkspaceManager) GetOrCreate(sessionID string) (*Workspace, error) {
 		return nil, fmt.Errorf("create workspace dir: %w", err)
 	}
 
-	// go.mod 생성 (plugin-sdk local replace + 허용 모듈 require)
-	goMod := wm.generateGoMod()
+	// go.mod 생성 (plugin-sdk local replace + 이 stage 가 고정한 모듈 버전 require).
+	goMod := wm.generateGoMod(pins)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("write go.mod: %w", err)
@@ -140,8 +144,9 @@ func (wm *WorkspaceManager) downloadModules(dir string) {
 	}
 }
 
-// SyncSource 사용자 코드를 workspace에 동기화
-func (wm *WorkspaceManager) SyncSource(sessionID, sourceCode, goMod string) error {
+// SyncSource 사용자 코드를 workspace에 동기화.
+// pins 는 이 stage 가 고정한 모듈 버전(module_path → version). nil 이면 기본 버전을 쓴다.
+func (wm *WorkspaceManager) SyncSource(sessionID, sourceCode string, pins map[string]string) error {
 	wm.mu.Lock()
 	ws, ok := wm.workspaces[sessionID]
 	wm.mu.Unlock()
@@ -159,11 +164,9 @@ func (wm *WorkspaceManager) SyncSource(sessionID, sourceCode, goMod string) erro
 		}
 	}
 
-	// go.mod 는 사용자 입력(goMod 인자)이 아니라 레지스트리 기반으로 재생성한다.
-	// (D2: 의존성 버전은 레지스트리 단일원천. 사용자 자유입력 go.mod 는 무시.)
-	// goMod 인자는 하위호환으로 남기되 사용하지 않는다.
-	_ = goMod
-	regenerated := wm.generateGoMod()
+	// go.mod 는 사용자 입력이 아니라 stage 고정 버전 + 레지스트리 기본값으로 재생성한다.
+	// (D2/ADR-0005: 자동완성이 보는 버전 = 실제 빌드 버전.)
+	regenerated := wm.generateGoMod(pins)
 	if err := os.WriteFile(filepath.Join(ws.Dir, "go.mod"), []byte(regenerated), 0o644); err != nil {
 		return fmt.Errorf("write go.mod: %w", err)
 	}
@@ -205,29 +208,23 @@ func (wm *WorkspaceManager) cleanupLoop() {
 }
 
 // generateGoMod workspace용 go.mod 생성.
-// plugin-sdk(로컬 replace) + 허용 모듈(레지스트리 고정 버전) require. 사용자 자유입력 go.mod 는
-// 쓰지 않는다 — gopls 자동완성 버전 = 실제 빌드 버전(둘 다 레지스트리) 일치를 보장한다.
-func (wm *WorkspaceManager) generateGoMod() string {
-	var b strings.Builder
-	b.WriteString("module conduix-plugin-workspace\n\ngo 1.26\n\n")
-	b.WriteString("require github.com/conduix/conduix/plugin-sdk v0.0.0\n")
-
+// stage 가 고정한 버전이 있으면 그것을, 없는 모듈은 레지스트리 기본 버전을 쓴다.
+// 사용자 자유입력 go.mod 는 쓰지 않는다 — gopls 자동완성 버전 = 실제 빌드 버전을 보장한다.
+func (wm *WorkspaceManager) generateGoMod(pins map[string]string) string {
+	merged := dependency.Pins{}
 	if wm.modulesFn != nil {
-		if mods, err := wm.modulesFn(); err == nil && len(mods) > 0 {
-			b.WriteString("\nrequire (\n")
+		if mods, err := wm.modulesFn(); err == nil {
 			for _, m := range mods {
-				fmt.Fprintf(&b, "\t%s %s\n", m.ModulePath, m.Version)
+				merged[m.ModulePath] = m.Version
 			}
-			b.WriteString(")\n")
-		} else if err != nil {
+		} else {
 			wm.logger.Warn("allowed modules fetch failed for workspace go.mod", "error", err)
 		}
 	}
-
-	if wm.sdkModPath != "" {
-		fmt.Fprintf(&b, "\nreplace github.com/conduix/conduix/plugin-sdk => %s\n", wm.sdkModPath)
+	for mod, v := range pins {
+		merged[mod] = v
 	}
-	return b.String()
+	return dependency.WorkspaceGoMod(merged, wm.sdkModPath)
 }
 
 // generateDefaultMain 기본 main.go

@@ -18,6 +18,7 @@ import (
 
 	"github.com/conduix/conduix/control-plane/internal/api/middleware"
 	"github.com/conduix/conduix/control-plane/internal/builder"
+	"github.com/conduix/conduix/control-plane/internal/dependency"
 	"github.com/conduix/conduix/control-plane/internal/services"
 	"github.com/conduix/conduix/control-plane/pkg/database"
 	"github.com/conduix/conduix/control-plane/pkg/models"
@@ -205,10 +206,12 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 	// native 는 import 검증 + SourceHash 계산(빌드 판정 키). script(js) 는 검증/빌드 불필요.
 	if req.SourceCode != "" {
 		if pluginType == "native" {
-			if err := validateStageImports(h.db, req.SourceCode); err != nil {
+			depVersions, err := resolveAndEncodePins(h.db, req.SourceCode, "")
+			if err != nil {
 				middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
 				return
 			}
+			plugin.DepVersions = depVersions
 			hash := sha256.Sum256([]byte(req.SourceCode))
 			plugin.SourceHash = fmt.Sprintf("%x", hash)
 		}
@@ -264,10 +267,12 @@ func (h *PluginHandler) updateExistingPlugin(c *gin.Context, existing *models.Pl
 	// 소스 함께 오면 반영(BUG#8: upsert 경로도 소스 무시했었음). native 는 검증+해시.
 	oldSourceHash := existing.SourceHash
 	if req.SourceCode != "" && existing.Type == "native" {
-		if err := validateStageImports(h.db, req.SourceCode); err != nil {
+		depVersions, err := resolveAndEncodePins(h.db, req.SourceCode, existing.DepVersions)
+		if err != nil {
 			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
 			return
 		}
+		existing.DepVersions = depVersions
 		existing.SourceCode = req.SourceCode
 		if req.GoMod != "" {
 			existing.GoMod = req.GoMod
@@ -354,11 +359,13 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 		plugin.Status = req.Status
 	}
 	if req.SourceCode != "" {
-		// D5: import 검증 — 허용 모듈(+표준+conduix 내부) 밖 외부 import 는 거부.
-		if err := validateStageImports(h.db, req.SourceCode); err != nil {
+		// D5: import 검증 + 이 stage 가 쓸 모듈 버전 확정(기존 고정은 유지).
+		depVersions, err := resolveAndEncodePins(h.db, req.SourceCode, plugin.DepVersions)
+		if err != nil {
 			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
 			return
 		}
+		plugin.DepVersions = depVersions
 		plugin.SourceCode = req.SourceCode
 		plugin.Type = "native"
 		hash := sha256.Sum256([]byte(req.SourceCode))
@@ -667,7 +674,20 @@ func (h *PluginHandler) TestNativePlugin(c *gin.Context) {
 
 	// go.mod 작성 — 사용자 자유입력이 아니라 레지스트리(allowed_modules)로 생성(D2).
 	// 에디터 테스트 빌드와 실제 runner 빌드가 같은 의존성 버전을 쓰게 해 불일치를 없앤다.
-	goModContent := buildTestGoMod(h.db)
+	// 기존 stage 의 테스트면 그 stage 가 고정한 버전으로 컴파일해야 "테스트 통과=빌드 통과"
+	// 가 성립한다(ADR-0005). 단일 stage 빌드라 fork 는 불필요 — 원래 경로로 require 한다.
+	pins, err := resolveStagePins(h.db, req.SourceCode, pinsByPluginName(h.db, req.PluginName))
+	if err != nil {
+		resp.Success = false
+		resp.BuildError = err.Error()
+		middleware.SuccessResponse(c, resp)
+		return
+	}
+	sdkPath := os.Getenv("CONDUIX_SDK_PATH")
+	if sdkPath == "" {
+		sdkPath = "/app/plugin-sdk"
+	}
+	goModContent := dependency.TestGoMod(pins, sdkPath)
 	goModPath := filepath.Join(tmpDir, "go.mod")
 	if err := os.WriteFile(goModPath, []byte(goModContent), 0o600); err != nil {
 		resp.Success = false

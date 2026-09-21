@@ -204,7 +204,8 @@ func (r *RunnerResolver) ResolveRunnerVersion(workflow *models.Workflow) (string
 	return latestReady.ID, latestReady.ImageTag, true, nil
 }
 
-// coreChangedSince 는 해당 버전이 빌드된 뒤 코어 소스가 바뀌었는지 본다.
+// coreChangedSince 는 해당 버전이 빌드된 뒤 코어 소스 또는 stage 고정 의존성 버전이
+// 바뀌었는지 본다.
 // 판정은 빌더와 같은 CombinedSourceHash 로 한다 — 두 곳이 다른 식으로 계산하면
 // 빌더는 재빌드하는데 리졸버는 옛 버전을 유효하다고 해서 서로 어긋난다.
 // SourceRoot 를 못 읽는 환경(소스 미포함 이미지)에서는 코어 해시가 빈 문자열이 되므로
@@ -219,7 +220,7 @@ func (r *RunnerResolver) coreChangedSince(version *models.RunnerVersion, plugins
 	for _, p := range plugins {
 		pluginHashes[p.ID] = p.SourceHash
 	}
-	return builder.CombinedSourceHash(pluginHashes, coreHash) != version.SourceHash
+	return builder.CombinedSourceHash(pluginHashes, coreHash, builder.PluginDepFingerprint(plugins)) != version.SourceHash
 }
 
 // findNativePluginsInWorkflow 워크플로우의 파이프라인 설정에서 native plugin stage를 찾아 해당 Plugin 모델을 반환

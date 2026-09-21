@@ -24,13 +24,18 @@ export class LSPClient {
 
   constructor(
     private url: string,
-    private sessionId: string
+    private sessionId: string,
+    /** 기존 stage 면 그 이름 — 서버가 이 stage 의 고정 의존성 버전으로 workspace 를 만든다.
+     *  없으면 레지스트리 기본 버전으로 자동완성한다. */
+    private pluginName?: string
   ) {}
 
   /** WebSocket 연결 + LSP initialize */
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wsUrl = `${this.url}?session_id=${this.sessionId}`
+      const params = new URLSearchParams({ session_id: this.sessionId })
+      if (this.pluginName) params.set('plugin_name', this.pluginName)
+      const wsUrl = `${this.url}?${params.toString()}`
       this.ws = new WebSocket(wsUrl)
 
       this.ws.onopen = async () => {

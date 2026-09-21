@@ -1,120 +1,113 @@
-# Custom Stage Dependency Version Conflict
+# 커스텀 stage 의존성 버전 충돌
 
-[한국어](CUSTOM_STAGE_DEPENDENCY_CONFLICT.ko.md)
+> 상태: **문제 정리 — 해결 방안 미결정**
+> 이 문서는 결론이 아니라 의사결정을 위한 정리다. 아래 "선택지" 는 아직 고르지 않았다.
 
-> Status: **Problem statement — no solution chosen yet.**
-> This document exists to inform a decision, not to announce one. The options below
-> have not been picked.
-
-Custom stages are compiled into a single binary. As a result, **when stages written by
-different organizations at different times require different versions of the same
-library, the build breaks.**
+커스텀 stage 는 하나의 바이너리에 compile-in 된다. 그래서 **서로 다른 회사가 서로 다른
+시점에 만든 stage 들이 같은 라이브러리의 다른 버전을 요구하면 빌드가 깨진다.**
 
 ---
 
-## One-line summary
+## 한 줄 요약
 
 | | |
 |---|---|
-| **What** | Multiple stages requiring different minor/patch versions of the same module |
-| **Why it happens** | Because they were written at different **times**. No one has to be stubborn — the passage of time is enough |
-| **What happens today** | One stage failing to compile **blocks the build for every stage** |
-| **Can it be prevented?** | **No**, as long as compile-in is used. It follows from Go's module rules (MVS) |
+| **무엇이** | 같은 모듈의 서로 다른 마이너/패치 버전을 여러 stage 가 요구하는 상황 |
+| **왜 생기나** | 개발 **시점**이 다르기 때문. 아무도 고집하지 않아도 시간이 흐르면 발생한다 |
+| **지금 어떻게 되나** | 한 stage 의 컴파일 실패가 **전체 stage 빌드를 막는다** |
+| **막을 수 있나** | compile-in 을 유지하는 한 **불가능**. Go 모듈 규칙(MVS)의 결과다 |
 
 ---
 
-## Why this is unavoidable
+## 왜 피할 수 없는가
 
-This is not caused by users making unreasonable demands.
+이것은 사용자가 무리한 요구를 해서 생기는 문제가 아니다.
 
 ```
-2026  A company's developer writes a stage  →  codes against resty 0.8, the latest then
-2027  B company's developer writes a stage  →  codes against resty 1.0, the latest then
+2026년  A사 개발자가 stage 를 만든다  →  그 시점 최신인 resty 0.8 로 코딩
+2027년  B사 개발자가 stage 를 만든다  →  그 시점 최신인 resty 1.0 으로 코딩
 ```
 
-Both simply used "the latest at the time." Neither the conduix developers nor either
-company's developers know about each other, and no one can know what a future author
-will need. **The conflict arises purely because the writing times differ.**
+둘 다 "그때의 최신"을 썼을 뿐이다. conduix 개발자도, 각 회사 개발자도 서로를 모르고,
+미래에 누가 무엇을 쓸지 알 수 없다. **개발 시점이 다르다는 사실만으로 충돌이 발생한다.**
 
-So the question is not "how often does this happen" but
-**"it will happen eventually — what happens then?"**
+그러므로 질문은 "얼마나 자주 일어나는가" 가 아니라
+**"언젠가 반드시 일어나는데 그때 무엇이 일어나는가"** 다.
 
 ---
 
-## Technical basis
+## 기술적 근거
 
-### One binary, one version
+### 하나의 바이너리, 하나의 버전
 
-Every custom stage is imported into a single `package main` and linked into one binary.
+모든 커스텀 stage 는 `package main` 하나에 import 되어 단일 바이너리로 링크된다.
 
 ```go
 // runner_builder.go:642-651 (GenerateRegistryCustom)
 buf.WriteString("package main\n\n")
 for _, p := range plugins {
-    fmt.Fprintf(&buf, "\t%s %q\n", alias, modPath)   // all plugins imported into one main
+    fmt.Fprintf(&buf, "\t%s %q\n", alias, modPath)   // 모든 plugin 을 한 main 에 import
 }
 ```
 
-Go's MVS (Minimal Version Selection) picks **exactly one version per module** for a
-build. The language offers no way to link two copies of the same package into one
-process.
+Go 모듈의 MVS(Minimal Version Selection)는 한 빌드에서 **모듈당 정확히 하나의 버전**을
+고른다. 같은 프로세스에 같은 패키지를 두 벌 링크하는 방법이 언어 차원에 없다.
 
 ```go
 // runner_builder.go:388
-// The allowed modules must also be required by the main module so that go mod tidy
-// resolves the plugin's (locally replaced) external dependencies to a single version.
+// 허용 모듈을 메인 모듈에도 require 해야 plugin(로컬 replace)이 쓰는 외부 의존성을
+// go mod tidy 가 단일 버전으로 해석한다.
 ```
 
-### The registry enforces a single version too
+### 레지스트리도 단일 버전을 강제한다
 
 ```go
 // models.go:645-646
-ModulePath string `gorm:"primaryKey;size:255"`  // PK — one row per module
-Version    string // "single per module — the physical basis for conflict prevention"
+ModulePath string `gorm:"primaryKey;size:255"`  // PK — 모듈당 한 행
+Version    string // "module 당 단일 — 충돌 방지의 물리 근거"
 ```
 
-Because `module_path` is the primary key, `resty 0.8` and `resty 1.0` cannot both be
-registered. POSTing an already-registered module returns 409.
+`module_path` 가 PK 이므로 `resty 0.8` 과 `resty 1.0` 을 동시에 등록할 수 없다.
+이미 등록된 모듈을 다시 POST 하면 409 로 거부된다.
 
 ```
 module already registered: <path> (version <v>). use PUT to update.
 ```
 
-### Exception: major versions do coexist
+### 예외: 메이저 버전은 공존한다
 
-From v2 onward, Go puts the **major version in the module path**. Different paths mean
-different modules, so they coexist.
+Go 는 v2 부터 **모듈 경로에 메이저를 넣는다.** 경로가 다르면 다른 모듈이므로 공존한다.
 
 ```
-github.com/go-resty/resty/v2   v2.16.5   ← can be registered as its own row
-github.com/go-resty/resty/v3   v3.0.0    ← can be registered as its own row
+github.com/go-resty/resty/v2   v2.16.5   ← 별개 행으로 등록 가능
+github.com/go-resty/resty/v3   v3.0.0    ← 별개 행으로 등록 가능
 ```
 
-**But v0 and v1 carry no version in the path.** 0.8 → 1.0 is the same path, so those
-cannot coexist. "Different majors are fine" applies only from v2 up.
+**단 v0/v1 은 경로에 버전이 붙지 않는다.** 0.8 → 1.0 은 같은 경로라 공존 불가다.
+즉 "메이저가 다르면 괜찮다" 는 v2 이상에만 해당한다.
 
 ---
 
-## What actually happens today
+## 지금 실제로 벌어지는 일
 
-When an admin updates a module version (PUT):
+admin 이 모듈 버전을 갱신(PUT)하면:
 
-| Step | Result |
+| 단계 | 결과 |
 |---|---|
-| resty updated 0.8 → 1.0 | Registry reflects it |
-| Next runner build | A company's stage, written against 0.8, **fails to compile** |
-| Build handling | `go build` failure returns immediately — `status=failed` (`runner_builder.go:414`) |
-| Existing executions | **Keep running** (the previous `ready` binary is retained) |
-| Adding new stages, core changes | **All blocked** ← the core of the problem |
+| resty 를 0.8 → 1.0 으로 갱신 | 레지스트리 반영 |
+| 다음 runner 빌드 | 0.8 API 를 쓰던 A사 stage가 **컴파일 실패** |
+| 빌드 처리 | `go build` 실패 시 즉시 중단 — `status=failed` (`runner_builder.go:414`) |
+| 기존 실행 | **계속 동작** (이전 `ready` 바이너리 유지) |
+| 새 stage 추가·코어 변경 | **전부 막힘** ← 문제의 핵심 |
 
-**One company's code holds every other company hostage.** Until A fixes its stage,
-B and C cannot ship a new stage either.
+**한 회사의 코드가 다른 모든 회사를 볼모로 잡는다.**
+A사가 stage 를 고칠 때까지 B사도, C사도 새 stage 를 배포할 수 없다.
 
-The build today is **all-or-nothing**. There is no path that drops the failing stage and
-keeps the rest. (A `skipped` status exists, but it means "identical hash, rebuild
-skipped" — not stage exclusion. See `runner_builder.go:205-214`.)
+현재 빌드는 **전부 아니면 전무**다. 실패한 stage 만 빼고 나머지를 살리는 경로가 없다.
+(`skipped` 상태가 있지만 이는 "동일 해시라 재빌드 생략" 이지 stage 제외가 아니다 —
+`runner_builder.go:205-214`.)
 
-### Users cannot break each other directly
+### 권한 구조상 사용자끼리 직접 충돌하지는 않는다
 
 ```go
 // routes.go:417-419
@@ -123,70 +116,67 @@ modules.PUT    — RoleMiddleware(admin)
 modules.DELETE — RoleMiddleware(admin)
 ```
 
-Registering and updating modules is **admin-only**. A regular user cannot bump a version
-and break someone else's stage. But this only **funnels the conflict into an admin
-decision** — it does not remove it. And today **the admin has no way to know what will
-break** before pressing PUT.
+모듈 등록·갱신은 **admin 전용**이다. 일반 사용자가 임의로 버전을 올려 남의 stage 를
+깨뜨리지는 못한다. 다만 이는 **충돌을 admin 의 결정으로 모았을 뿐**, 없앤 것이 아니다.
+그리고 지금은 **admin 이 PUT 을 누를 때 무엇이 깨지는지 알 방법이 없다.**
 
 ---
 
-## Options
+## 선택지
 
-### ① Mitigate — the conflict remains, but hurts less
+### ① 완화 — 충돌은 남기되 덜 아프게
 
-1. **Record per-stage module usage** — on a successful build, store the versions actually used
-2. **Impact analysis before update** — on PUT, show "3 stages will be affected" first
-3. **Dry-run build** — build against the new version to detect breakage in advance
-4. **Exclude failing stages from the build** — build the rest without the broken one ← **removes the hostage problem**
+1. **stage 별 모듈 사용 기록** — 빌드 성공 시 실제로 쓰인 버전을 stage 에 남긴다
+2. **갱신 전 영향 분석** — PUT 시 "이 stage 3개가 영향받습니다" 를 먼저 보여준다
+3. **드라이런 빌드** — 새 버전으로 임시 빌드해 깨지는 stage 를 사전 탐지
+4. **실패 stage 제외 빌드** — 깨진 stage 만 빼고 나머지는 빌드 ← **볼모 문제 해소**
 
-Item 4 is the key one. It does not remove conflicts, but **no one is blocked by another
-company's code any more.**
+4번이 핵심이다. 충돌을 없애지는 못하지만 **남의 회사 때문에 막히는 상황은 사라진다.**
 
-- Upside: additive, reversible, no performance cost.
-- Limit: **A's stage stays broken.** That company still has to fix its code.
+- 장점: 기능 추가라 되돌릴 수 있다. 성능 영향 없음.
+- 한계: **A사 stage 는 여전히 깨진 채로 남는다.** 그 회사가 코드를 고쳐야 한다.
 
-### ② Process isolation — remove the conflict itself
+### ② 프로세스 분리 — 충돌 자체를 없앰
 
-One process per stage plus gRPC (go-plugin or similar). Each carries its own `go.mod`,
-so versions are fully isolated.
+stage 마다 독립 프로세스 + gRPC(go-plugin 등). 각자 자기 `go.mod` 를 가지므로
+버전이 완전히 격리된다.
 
-- Upside: conflicts disappear at the root. One stage cannot affect another.
-- Cost: **performance and deployment complexity.** But **we do not know the magnitude**
-  (see below). Process/IPC management is added, and it is a redesign that is hard to undo.
+- 장점: 충돌이 원천적으로 사라진다. 한 stage 가 다른 stage 에 영향을 주지 않는다.
+- 비용: **성능 저하와 배포 복잡도.** 다만 **그 크기를 아직 모른다**(아래 참조).
+  프로세스·IPC 관리가 추가되고, 되돌리기 어려운 재설계다.
 
-⚠️ **There is no quantitative basis in this repository for judging this option.**
-conduix previously used gRPC-based plugins (V3, HashiCorp go-plugin) and moved to
-compile-in. Yet [ADR-0003](adr/0003-plugin-architecture-evolution.md) states plainly:
+⚠️ **이 선택지를 판단할 정량 근거가 저장소에 없다.**
+conduix 는 예전에 gRPC 기반 플러그인(V3, HashiCorp go-plugin)을 썼다가 compile-in 으로
+전환한 이력이 있다. 그런데 [ADR-0003](adr/0003-plugin-architecture-evolution.md) 이
+직접 적고 있다:
 
-> "No quantitative basis (benchmarks etc.) was recorded for dropping gRPC. Only the
-> direction stated in the commit message."
+> "gRPC를 버린 정량적 근거(벤치마크 등)는 기록되지 않음. 커밋 메시지의 '제거한다'는
+> 방향성만 있음."
 
-So evaluating ② requires **measuring first.** "We already abandoned it once" is not a
-basis on its own — that decision was made without numbers too.
-
----
-
-## What the decision needs
-
-This document deliberately stops short of a recommendation. The following need answers first.
-
-1. **How many independent parties supply stages?**
-   One organization → ① suffices. Several companies publishing independently → ②'s
-   isolation earns its cost.
-
-2. **How long do stages live?**
-   The longer they live, the more stages accumulate pinned to old versions. ① cannot
-   revive those.
-
-3. **How often are stages invoked — and what does IPC actually cost?**
-   Per-record invocation makes inter-process overhead matter for throughput; rare
-   invocation makes it negligible. **That cost has never been measured here**, so taking
-   ② seriously requires a benchmark first.
+즉 ②를 검토하려면 **먼저 벤치마크를 측정해야 한다.** 과거에 버린 방식이라는 사실만으로는
+판단 근거가 되지 못한다 — 그때도 수치 없이 결정했기 때문이다.
 
 ---
 
-## Related
+## 판단에 필요한 것
 
-- [PIPELINE_ORCHESTRATION.md](PIPELINE_ORCHESTRATION.md) — how pipelines are chained
-- [ARCHITECTURE.md](ARCHITECTURE.md) — execution structure (compile-in binary delivery)
-- [adr/](adr/) — design decision records
+이 문서는 결론을 내지 않는다. 다음이 정해져야 방향을 고를 수 있다.
+
+1. **동시에 운영할 stage 제공 주체가 몇이나 되는가**
+   한 조직이면 ①로 충분하다. 여러 회사가 독립적으로 올린다면 ②의 격리가 값을 한다.
+
+2. **stage 가 얼마나 오래 유지되는가**
+   오래 살수록 "옛 버전에 묶인 stage" 가 쌓인다. ①은 그 stage 를 되살리지 못한다.
+
+3. **stage 호출 빈도 — 그리고 IPC 비용의 실측치**
+   레코드마다 호출된다면 프로세스 간 통신 비용이 처리량에 직결되고,
+   드물게 호출된다면 무시할 만하다. **그 비용이 얼마인지는 아직 측정된 바 없으므로**
+   ②를 진지하게 검토한다면 벤치마크가 선행되어야 한다.
+
+---
+
+## 관련
+
+- [PIPELINE_ORCHESTRATION.ko.md](PIPELINE_ORCHESTRATION.ko.md) — 파이프라인 연결 방식
+- [ARCHITECTURE.md](ARCHITECTURE.md) — 실행 구조(compile-in 바이너리 배포 경로)
+- [adr/](adr/) — 설계 결정 기록

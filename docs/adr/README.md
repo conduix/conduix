@@ -21,6 +21,7 @@ Status 값: `Accepted`(현행) / `Superseded by ADR-N`(대체됨) / `Proposed` /
 | [0002](0002-remove-actor-engine.md) | Actor 실행 엔진 제거, GroupExecutor 단일화 | Accepted | 도달 불가능한 이중 실행 엔진(~4,700 LOC) 제거 |
 | [0003](0003-plugin-architecture-evolution.md) | 플러그인 아키텍처 V2→V3→V4 진화 | Accepted (V4) | Docker→gRPC go-plugin→인프로세스(built-in + JS + native Go) |
 | [0004](0004-cdc-safety.md) | CDC 안전성(backpressure·offset·GTID·DDL) | Accepted | MySQL 변경분 유실 없이 단독 처리. 남은 경계조율·PG·HA는 [plans/cdc-roadmap](../plans/cdc-roadmap.md) |
+| [0005](0005-dependency-version-coexistence.md) | 커스텀 stage 의존성 버전 공존(stage 별 고정 + 비기본 버전 fork 링크) | Proposed | D4(전역 일괄 버전업) 부분 대체. 단일 바이너리 유지. 구현: [plans/CUSTOM_STAGE_DEP_VERSION_COEXIST_PLAN](../plans/CUSTOM_STAGE_DEP_VERSION_COEXIST_PLAN.md) |
 
 ## 관련 문서
 - [EXECUTION_TOPOLOGY_INTENT.md](../EXECUTION_TOPOLOGY_INTENT.md) — 실행 토폴로지 결정(D1~D6). ADR 이전에 작성됐으나 사실상 ADR 역할.

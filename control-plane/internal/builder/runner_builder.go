@@ -94,6 +94,9 @@ type RunnerBuilder struct {
 	config *RunnerBuilderConfig
 	db     *gorm.DB
 	logger *slog.Logger
+	// moduleSource 는 fork 대상 모듈의 소스를 가져오는 경로다. nil 이면 go mod download.
+	// 통합 테스트가 네트워크 없이 로컬 fixture 를 주입하기 위한 이음매다.
+	moduleSource dependency.ModuleSource
 }
 
 // NewRunnerBuilder RunnerBuilder 생성
@@ -363,6 +366,17 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 
 	fmt.Fprintf(logBuf, "  Allowed modules: %d\n", len(resolved.Defaults))
 
+	// 기본과 다른 버전을 고정한 stage 가 있으면 그 모듈을 forked/ 로 복사·재작성한다.
+	// fork 가 없으면 아무 일도 하지 않아 산출물이 이전과 같다(ADR-0005 불변식 2).
+	if err := rb.materializeForks(ctx, batchJobDir, resolved, logBuf); err != nil {
+		return err
+	}
+	if n := len(resolved.Forks); n > 0 {
+		forkedJSON, _ := json.Marshal(resolved.Forks)
+		version.ForkedModules = string(forkedJSON)
+		fmt.Fprintf(logBuf, "  Forked modules: %d\n", n)
+	}
+
 	// 플러그인 소스 배치 (batch-job 모듈 하위 plugins/)
 	for _, p := range plugins {
 		name := sanitizeName(p.Name)
@@ -370,7 +384,11 @@ func (rb *RunnerBuilder) buildInTempDir(ctx context.Context, version *models.Run
 		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 			return fmt.Errorf("create plugin dir: %w", err)
 		}
-		if err := os.WriteFile(filepath.Join(pluginDir, "stage.go"), []byte(p.SourceCode), 0o644); err != nil {
+		stageSource, err := rb.stageSourceFor(batchJobDir, name, p, resolved)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(pluginDir, "stage.go"), []byte(stageSource), 0o644); err != nil {
 			return fmt.Errorf("write plugin source: %w", err)
 		}
 		// plugin go.mod 는 사용자 자유입력(p.GoMod)이 아니라 이 stage 가 고정한 버전으로 생성한다

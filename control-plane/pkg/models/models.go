@@ -709,26 +709,30 @@ func (PluginBuild) TableName() string {
 // RunnerVersion pipeline-runner 이미지 빌드 버전
 // 모든 native stage를 포함하는 Runner 이미지의 빌드 기록
 type RunnerVersion struct {
-	ID           string     `gorm:"primaryKey;size:36" json:"id"`                   // "rv-42"
-	BuildNumber  int        `gorm:"autoIncrement;uniqueIndex" json:"build_number"`  // 자동 증가
-	Status       string     `gorm:"size:20;not null;default:pending" json:"status"` // pending → building → ready | failed
-	ImageTag     string     `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-runner:rv-42"
-	ImageDigest  string     `gorm:"size:100" json:"image_digest,omitempty"`         // sha256:... (이미지 무결성 검증)
-	Binary       []byte     `gorm:"type:longblob" json:"-"`                         // gzip 압축된 pipeline-runner 바이너리. Job initContainer 가 받아 실행(레지스트리 push 없이). json:"-" 로 목록 응답 제외.
-	BinarySize   int        `json:"binary_size,omitempty"`                          // 압축 전 바이너리 크기(참고용)
-	SourceHash   string     `gorm:"size:64;not null" json:"source_hash"`            // 모든 native stage 소스의 결합 해시
-	PluginIDs    string     `gorm:"type:text" json:"plugin_ids,omitempty"`          // JSON: 포함된 native stage ID 목록
-	PluginHashes string     `gorm:"type:text" json:"plugin_hashes,omitempty"`       // JSON: plugin_id → source_hash 스냅샷
-	RevisionSeq  int        `gorm:"default:0" json:"revision_seq"`                  // 빌드 시점 최신 revision seq (여기까지 포함)
-	Trigger      string     `gorm:"size:20;default:manual" json:"trigger"`          // "manual" | "auto" | "rebuild"
-	ParentID     string     `gorm:"size:36" json:"parent_id,omitempty"`             // 재빌드 시 원본 버전 ID
-	BuildLog     string     `gorm:"type:mediumtext" json:"build_log,omitempty"`
-	Error        string     `gorm:"type:text" json:"error,omitempty"`
-	DurationMs   int        `json:"duration_ms,omitempty"`
-	CreatedBy    string     `gorm:"size:36" json:"created_by,omitempty"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID           string `gorm:"primaryKey;size:36" json:"id"`                   // "rv-42"
+	BuildNumber  int    `gorm:"autoIncrement;uniqueIndex" json:"build_number"`  // 자동 증가
+	Status       string `gorm:"size:20;not null;default:pending" json:"status"` // pending → building → ready | failed
+	ImageTag     string `gorm:"size:500" json:"image_tag,omitempty"`            // "ghcr.io/.../pipeline-runner:rv-42"
+	ImageDigest  string `gorm:"size:100" json:"image_digest,omitempty"`         // sha256:... (이미지 무결성 검증)
+	Binary       []byte `gorm:"type:longblob" json:"-"`                         // gzip 압축된 pipeline-runner 바이너리. Job initContainer 가 받아 실행(레지스트리 push 없이). json:"-" 로 목록 응답 제외.
+	BinarySize   int    `json:"binary_size,omitempty"`                          // 압축 전 바이너리 크기(참고용)
+	SourceHash   string `gorm:"size:64;not null" json:"source_hash"`            // 모든 native stage 소스의 결합 해시
+	PluginIDs    string `gorm:"type:text" json:"plugin_ids,omitempty"`          // JSON: 포함된 native stage ID 목록
+	PluginHashes string `gorm:"type:text" json:"plugin_hashes,omitempty"`       // JSON: plugin_id → source_hash 스냅샷
+	// ForkedModules 는 이 빌드에서 기본과 다른 버전이라 forked/ 로 복사·재작성해 링크한
+	// 모듈 목록이다(JSON [{module_path, version, fork_path, dir_name, plugin_ids}]).
+	// 관측용 — 어떤 stage 때문에 어떤 버전이 함께 들어갔는지 사후에 알기 위한 기록(ADR-0005).
+	ForkedModules string     `gorm:"type:text" json:"forked_modules,omitempty"`
+	RevisionSeq   int        `gorm:"default:0" json:"revision_seq"`         // 빌드 시점 최신 revision seq (여기까지 포함)
+	Trigger       string     `gorm:"size:20;default:manual" json:"trigger"` // "manual" | "auto" | "rebuild"
+	ParentID      string     `gorm:"size:36" json:"parent_id,omitempty"`    // 재빌드 시 원본 버전 ID
+	BuildLog      string     `gorm:"type:mediumtext" json:"build_log,omitempty"`
+	Error         string     `gorm:"type:text" json:"error,omitempty"`
+	DurationMs    int        `json:"duration_ms,omitempty"`
+	CreatedBy     string     `gorm:"size:36" json:"created_by,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // StageRevision stage 변경 히스토리 (글로벌 seq 순번)
@@ -759,7 +763,7 @@ type StageRevision struct {
 func RunnerVersionMetaColumns() []string {
 	return []string{
 		"id", "build_number", "status", "image_tag", "image_digest",
-		"binary_size", "source_hash", "plugin_ids", "plugin_hashes",
+		"binary_size", "source_hash", "plugin_ids", "plugin_hashes", "forked_modules",
 		"revision_seq", "trigger", "parent_id", "error", "duration_ms",
 		"created_by", "started_at", "finished_at", "created_at",
 	}

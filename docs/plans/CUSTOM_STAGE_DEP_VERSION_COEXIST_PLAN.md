@@ -3,7 +3,7 @@
 > 작성 2026-09-21. 대상: 이 작업을 이어서 구현할 개발자 / Claude Code.
 > 배경·근거·한계: [../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md](../CUSTOM_STAGE_DEPENDENCY_CONFLICT.md) §5~§7.
 > 결정 기록: [../adr/0005-dependency-version-coexistence.md](../adr/0005-dependency-version-coexistence.md).
-> 상태(2026-09-21): **W0·W1·W2 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W3~W7 미착수.** 인수인계는 §8.
+> 상태(2026-09-21): **W0~W3 완료(커밋됨, 브랜치 `feat/dep-version-coexistence`). W4~W7 미착수.** 인수인계는 §8.
 
 ## 0. 한 문장
 
@@ -215,18 +215,31 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 - go.mod 의 require 목록이 "허용 모듈 전부" 에서 "그 stage 가 실제 import 하는 모듈" 로 좁아졌다. `go mod tidy` 가 어차피 정리하므로 최종 산출물은 같지만, tidy 이전 텍스트는 다르다.
 - 해소 불가한 레거시 stage(retire 된 모듈 import 등)는 **빌드를 세우지 않고** 경고 후 고정 버전 없이 진행한다. stage 하나가 전체 배포를 막지 않게 하기 위함.
 
+### 8.1c W3 완료분 (테스트 통과, lint 0)
+
+| 파일 | 변경 |
+|---|---|
+| 신규 `dependency/rewrite.go` | `RewriteModuleTree`(복사본 자기참조 import + go.mod module 줄), `RewriteStageImports`(stage import → fork 경로 + alias 자동), `PackageNameInDir`. 치환은 go/parser 위치 기반 바이트 교체라 **파일 서식이 보존**된다 |
+| 신규 `dependency/source.go` | `ModuleSource` 인터페이스 + `GoModDownloadSource`(`go mod download -json` 의 Dir) |
+| `models.go` | `RunnerVersion.ForkedModules`(JSON) + `RunnerVersionMetaColumns` 에 등록(가벼운 컬럼이라 목록 조회 포함) |
+| `builder/deps.go` | `materializeForks`(캐시 Dir → copyDir → `makeTreeWritable` → `RewriteModuleTree`), `stageSourceFor`(stage import 재작성), `resolveDeps` 에 `SingleVersionOnly` fork 거부 |
+| `builder/runner_builder.go` | `buildInTempDir` 에 fork 단계 삽입(플러그인 소스 배치 직전), `version.ForkedModules` 기록, `RunnerBuilder.moduleSource` 이음매 추가 |
+| `builder/testdata/foo_v1,foo_v2` + `fork_integration_test.go` | `//go:build integration`. 두 버전을 fork 로 함께 링크해 **실제 go build + 실행**, 출력이 `old\|new` 인지 확인 |
+
+**W3 에서 확인한 것**
+- 통합 테스트는 진짜로 함정을 잡는다: `RewriteModuleTree` 호출을 빼고 돌리면 실패한다(검증함).
+- `go mod download <path>@<ver>` 는 모듈 컨텍스트 안에서 실행해도 그 go.mod 를 수정하지 않는다(실측). 그래서 fork 단계를 require 추가·tidy **앞**에 둘 수 있다.
+- `-x` 플래그는 뺐다. `runCommand` 가 stdout/stderr 를 한 버퍼에 합치는데 `-x` 는 `#` 로 시작하는 줄을 대량으로 내보내 JSON 파싱을 불필요하게 위태롭게 한다.
+- fork 디렉토리 이름은 `dependency.ForkDirName` 이 유일하게 만든다(빌더·재작성·go.mod 세 곳이 같은 함수를 부른다).
+
+**실행 검증은 아직 안 했다** — 단위·통합 테스트까지다. 로컬 K8s e2e(§5)는 W4 이후.
+
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
 아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.
 
 | 순서 | 파일 / 신규 | 할 일 | 목적 |
 |---|---|---|---|
-| W3-1 | `models.go` `RunnerVersion` | `ForkedModules string`(JSON) 추가 + AutoMigrate 는 자동 | 어떤 fork 가 링크됐는지 관측 |
-| W3-2 | `builder/runner_builder.go:352~367` | fork 단계 삽입: 비기본 (module,version) 수집 → `SingleVersionOnly` 면 실패 → `ModuleSource.Dir()`(go mod download -json) → `copyDir` → 0644 → `RewriteModuleTree` | 비기본 버전 소스를 `forked/<mangled>` 로 |
-| W3-3 | `builder/runner_builder.go:367` | `p.SourceCode` 대신 `RewriteStageImports(...)` 결과 기록. alias 는 fork 디렉토리의 `package` 절에서 읽음 | stage import 를 fork 경로로. 사용자 코드 본문 불변 |
-| W3-4 | `dependency/gomod.go` `MainRequireBlock` | fork 마다 `require <forkPath> v0.0.0` + `replace <forkPath> => ./forked/<mangled>` | 메인 go.mod 연결 |
-| W3-5 | `builder/runner_builder.go:574` `CombinedSourceHash` | pins(정렬된 `module@version`) 를 해시에 포함 | stage 가 버전을 올리면 재빌드. 리졸버 `coreChangedSince` 는 같은 함수라 자동 정합 |
-| W3-6 | `builder/testdata/` + 통합 테스트(`//go:build integration`) | 다중 패키지 모듈 두 벌 fixture 로 실제 `go build`, 두 stage 출력이 갈리는지 | CONFLICT.md §5 실험 2~5 자동화. **자기참조 import 미재작성 시 조용히 섞이는 함정** 회귀 방지 |
 | W4-1 | `pipeline-runner/cmd/runner/main.go:23` | `CONDUIX_INIT_CHECK=1` 이면 init 후 즉시 exit 0 | init 중복 등록 panic 을 빌드 단계에서 검출 |
 | W4-2 | `builder/runner_builder.go:414` 이후 | fork 가 있을 때만 바이너리를 `CONDUIX_INIT_CHECK=1` 로 실행. 플랫폼 불일치 시 호스트 타깃 재빌드. `RunnerBuilderConfig.InitCheck` 로 끄기 | `database/sql` 드라이버류 두 벌 링크 panic 을 빌드 실패로 전환, 메시지에 fork 목록 |
 | W5-1 | `handlers/plugin_handler.go` 신규 `UpgradeDeps` (POST /plugins/:id/upgrade-deps) | 기본 버전 pins 로 `TestNativePlugin` 의 임시 빌드(컴파일만) → 성공 시 `DepVersions` 갱신 + `createRevision` | stage 소유자의 명시적 수렴 경로 |
@@ -243,6 +256,7 @@ ForkedModules string `gorm:"type:text" json:"forked_modules,omitempty"` // JSON 
 
 ```bash
 git checkout feat/dep-version-coexistence
-cd control-plane && go test ./... -count=1        # W1·W2 회귀 확인(전부 통과해야 함)
-# W3-1 시작: models.RunnerVersion 에 ForkedModules 추가 → dependency/rewrite.go, source.go
+cd control-plane && go test ./... -count=1                          # W1~W3 회귀
+go test -tags integration -run TestForkedModules ./internal/builder/  # fork 실동작
+# W4-1 시작: pipeline-runner/cmd/runner/main.go 에 CONDUIX_INIT_CHECK
 ```

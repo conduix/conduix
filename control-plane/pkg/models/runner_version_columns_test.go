@@ -35,26 +35,27 @@ func TestRunnerVersionMetaColumns_KeepsBinarySize(t *testing.T) {
 func TestRunnerVersionMetaColumns_CoversModelFields(t *testing.T) {
 	// 필드명 → 실제 컬럼명. 의도적 제외는 빈 문자열.
 	want := map[string]string{
-		"ID":           "id",
-		"BuildNumber":  "build_number",
-		"Status":       "status",
-		"ImageTag":     "image_tag",
-		"ImageDigest":  "image_digest",
-		"Binary":       "", // 32MB급 — DownloadBinary 에서만 읽는다
-		"BinarySize":   "binary_size",
-		"SourceHash":   "source_hash",
-		"PluginIDs":    "plugin_ids",
-		"PluginHashes": "plugin_hashes",
-		"RevisionSeq":  "revision_seq",
-		"Trigger":      "trigger",
-		"ParentID":     "parent_id",
-		"BuildLog":     "", // mediumtext — 단건 조회에서만 읽는다
-		"Error":        "error",
-		"DurationMs":   "duration_ms",
-		"CreatedBy":    "created_by",
-		"StartedAt":    "started_at",
-		"FinishedAt":   "finished_at",
-		"CreatedAt":    "created_at",
+		"ID":            "id",
+		"BuildNumber":   "build_number",
+		"Status":        "status",
+		"ImageTag":      "image_tag",
+		"ImageDigest":   "image_digest",
+		"Binary":        "", // 32MB급 — DownloadBinary 에서만 읽는다
+		"BinarySize":    "binary_size",
+		"SourceHash":    "source_hash",
+		"PluginIDs":     "plugin_ids",
+		"PluginHashes":  "plugin_hashes",
+		"ForkedModules": "forked_modules", // 모듈 몇 개의 JSON — 가볍고 목록에서 fork 여부를 보여준다
+		"RevisionSeq":   "revision_seq",
+		"Trigger":       "trigger",
+		"ParentID":      "parent_id",
+		"BuildLog":      "", // mediumtext — 단건 조회에서만 읽는다
+		"Error":         "error",
+		"DurationMs":    "duration_ms",
+		"CreatedBy":     "created_by",
+		"StartedAt":     "started_at",
+		"FinishedAt":    "finished_at",
+		"CreatedAt":     "created_at",
 	}
 
 	cols := RunnerVersionMetaColumns()

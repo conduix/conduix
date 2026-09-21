@@ -2,8 +2,12 @@ package builder
 
 import (
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/conduix/conduix/control-plane/internal/dependency"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -176,5 +180,71 @@ func TestResolveDeps_UnresolvableLegacyStageDoesNotFailTheBuild(t *testing.T) {
 	}
 	if got := resolved.Pins["ok"]["github.com/google/uuid"]; got != "v1.6.0" {
 		t.Fatalf("the healthy stage must still resolve, got %q", got)
+	}
+}
+
+// stage 소스 재작성은 fork 디렉토리의 실제 package 절을 읽어 alias 를 붙인다.
+// 디렉토리가 없으면(= fork 를 아직 안 만듦) 에러로 드러나야 한다 — 조용히 원본을 쓰면
+// 그 stage 만 기본 버전으로 빌드돼 고정이 무시된다.
+func TestStageSourceFor_RewritesUsingForkPackageName(t *testing.T) {
+	rb := depsTestBuilder(t, []models.AllowedModule{
+		{ModulePath: "github.com/google/uuid", Version: "v1.6.0"},
+	})
+	work := t.TempDir()
+	forkDir := filepath.Join(work, forkedDirRoot, dependency.ForkDirName("github.com/google/uuid", "v1.3.0"))
+	if err := os.MkdirAll(forkDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(forkDir, "uuid.go"), []byte("package uuid\n\nfunc NewString() string { return \"\" }\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	resolved := &resolvedDeps{
+		Names:    []string{"tag"},
+		Pins:     map[string]dependency.Pins{"tag": {"github.com/google/uuid": "v1.3.0"}},
+		Defaults: map[string]string{"github.com/google/uuid": "v1.6.0"},
+		Forks:    []dependency.Fork{{ModulePath: "github.com/google/uuid", Version: "v1.3.0"}},
+	}
+	out, err := rb.stageSourceFor(work, "tag", models.Plugin{Name: "tag", SourceCode: uuidStageSource}, resolved)
+	if err != nil {
+		t.Fatalf("stageSourceFor: %v", err)
+	}
+	if !strings.Contains(out, `uuid "`+dependency.ForkPath("github.com/google/uuid", "v1.3.0")+`"`) {
+		t.Fatalf("expected the import rewritten with an alias:\n%s", out)
+	}
+	if !strings.Contains(out, "uuid.NewString()") {
+		t.Fatalf("user code body must be untouched:\n%s", out)
+	}
+}
+
+// fork 가 없으면 소스는 원본 그대로여야 한다(불변식 2).
+func TestStageSourceFor_NoForksReturnsSourceUnchanged(t *testing.T) {
+	rb := depsTestBuilder(t, nil)
+	resolved := &resolvedDeps{
+		Names:    []string{"tag"},
+		Pins:     map[string]dependency.Pins{"tag": {"github.com/google/uuid": "v1.6.0"}},
+		Defaults: map[string]string{"github.com/google/uuid": "v1.6.0"},
+	}
+	out, err := rb.stageSourceFor(t.TempDir(), "tag", models.Plugin{Name: "tag", SourceCode: uuidStageSource}, resolved)
+	if err != nil {
+		t.Fatalf("stageSourceFor: %v", err)
+	}
+	if out != uuidStageSource {
+		t.Fatalf("source must be byte-identical when nothing is forked")
+	}
+}
+
+// single_version_only 모듈을 비기본 버전으로 고정한 stage 가 있으면 빌드를 세운다 —
+// 두 벌이 링크되면 init() 중복 등록으로 런타임 panic 이 나므로, 빌드 실패가 낫다.
+func TestResolveDeps_RejectsForkOfSingleVersionOnlyModule(t *testing.T) {
+	rb := depsTestBuilder(t, []models.AllowedModule{
+		{ModulePath: "github.com/google/uuid", Version: "v1.6.0", SingleVersionOnly: true},
+	})
+	plugins := []models.Plugin{
+		{ID: "p1", Name: "a", SourceCode: uuidStageSource, DepVersions: `{"github.com/google/uuid":"v1.3.0"}`},
+	}
+	_, err := rb.resolveDeps(plugins)
+	if err == nil || !strings.Contains(err.Error(), "단일 버전") {
+		t.Fatalf("expected a single_version_only rejection, got %v", err)
 	}
 }

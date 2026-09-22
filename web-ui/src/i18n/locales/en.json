@@ -1427,7 +1427,25 @@
       "behindHint": "{{count}} module(s) differ from the default. Use the button on each row to raise them — the server compiles first and applies only on success.",
       "defaultVersion": "default",
       "thisStage": "this stage",
-      "tryDefault": "Use default"
+      "tryDefault": "Use default",
+      "usedTitle": "External modules imported by this stage",
+      "usedNone": "No external imports (standard library and plugin-sdk only).",
+      "unregistered": "unregistered",
+      "registerFromImport": "Add to registry",
+      "resolving": "Resolving module path…",
+      "heuristicNote": "Could not confirm via GOPROXY; module path guessed from the prefix",
+      "allRegistryTitle": "Entire registry ({{count}})",
+      "noPermission": "Only operators and admins can add modules. Copy the list and ask them.",
+      "quickFix": "Add to registry: {{module}}"
+    },
+    "missing": {
+      "title": "Some imported modules are not in the registry",
+      "helpCanAdd": "Add the modules below to the registry (pinned to the latest version at registration) and retry the save.",
+      "helpNoPerm": "You cannot add modules. Copy the list and ask an operator or admin to register them.",
+      "module": "module",
+      "copy": "Copy list",
+      "addAndSave": "Add and save",
+      "saveFailedOther": "Save failed: {{message}}"
     }
   },
   "modules": {

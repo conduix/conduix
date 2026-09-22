@@ -1,7 +1,16 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/conduix/conduix/control-plane/internal/api/middleware"
+	"github.com/conduix/conduix/shared/types"
 
 	"github.com/conduix/conduix/control-plane/internal/dependency"
 	"github.com/conduix/conduix/control-plane/pkg/database"
@@ -100,4 +109,25 @@ func pinsByPluginName(db *database.DB, pluginName string) dependency.Pins {
 		return nil
 	}
 	return dependency.ParsePins(p.DepVersions)
+}
+
+// suggestModulesTimeout 은 미등록 import 의 모듈 경로 제안에 쓰는 GOPROXY 조회 상한이다.
+const suggestModulesTimeout = 5 * time.Second
+
+// respondPinsError 는 stage 저장 시 의존성 해소 실패를 응답으로 바꾼다.
+// 미등록 import 면 400 + BUSINESS_MISSING_MODULES 와 함께 Details 에 {import 경로: 제안 모듈 경로} 를
+// 실어, UI 가 "추가하고 저장" 을 원클릭으로 제공할 수 있게 한다. 그 외(파싱 실패, DB 오류,
+// single_version_only 위반)는 종전처럼 검증 실패 문자열이다.
+func (h *PluginHandler) respondPinsError(c *gin.Context, err error) {
+	var missing *dependency.MissingModulesError
+	if errors.As(err, &missing) {
+		// 제안은 부가 정보다 — GOPROXY 가 느리거나 죽어도 저장 거부 응답 자체는 빨리 나가야 한다.
+		// 시간 안에 못 풀면 휴리스틱 경로로 채워진다.
+		ctx, cancel := context.WithTimeout(c.Request.Context(), suggestModulesTimeout)
+		defer cancel()
+		details := suggestModulePaths(ctx, h.moduleResolver, missing.Imports)
+		middleware.ErrorResponseWithDetails(c, http.StatusBadRequest, types.ErrCodeMissingModules, err.Error(), details)
+		return
+	}
+	middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
 }

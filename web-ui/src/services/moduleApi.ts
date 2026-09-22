@@ -98,3 +98,21 @@ export async function upgradeAllStages(
 export async function deleteModule(modulePath: string): Promise<void> {
   await api.delete(`/modules/${modulePath}`)
 }
+
+// import 경로 → 모듈 경로 해소(조회 전용). 서브패키지를 import 했을 때 사용자가 모듈 루트를
+// 추측하지 않게 서버가 GOPROXY 접두사를 짚어 준다. heuristic 이면 프록시 해소에 실패해 추측한 값.
+export interface ResolveModuleResponse {
+  import_path: string
+  module_path: string
+  latest_version?: string
+  registered: boolean
+  heuristic: boolean
+  error?: string
+}
+
+export async function resolveModulePath(importPath: string): Promise<ResolveModuleResponse> {
+  const resp = await api.post<{ success: boolean; data: ResolveModuleResponse }>('/modules/resolve', {
+    import_path: importPath,
+  })
+  return resp.data.data
+}

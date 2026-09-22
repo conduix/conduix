@@ -19,6 +19,18 @@ import (
 // Pins 는 stage 하나가 고정한 모듈 버전이다(module_path → version).
 type Pins map[string]string
 
+// MissingModulesError 는 소스가 레지스트리에 없는 외부 모듈을 import 할 때의 에러다.
+// 문자열이 아니라 타입으로 돌려주는 이유: 핸들러가 import 목록을 구조화해 내려줘야
+// UI 가 "추가하고 저장" 원클릭을 만들 수 있다. 문자열만 있으면 사용자가 탭을 옮겨 다시 타이핑한다.
+type MissingModulesError struct {
+	Imports []string // 정렬된 미등록 import 경로
+}
+
+func (e *MissingModulesError) Error() string {
+	return fmt.Sprintf("허용되지 않은 외부 모듈 import: %s — 먼저 모듈 레지스트리에 추가하세요(POST /api/v1/modules)",
+		strings.Join(e.Imports, ", "))
+}
+
 // InternalModulePrefixes 는 stage 가 레지스트리 등록 없이 import 할 수 있는 conduix 내부 모듈.
 var InternalModulePrefixes = []string{
 	"github.com/conduix/conduix/plugin-sdk",
@@ -107,8 +119,7 @@ func ResolvePins(imports []string, existing Pins, allowed []models.AllowedModule
 
 	if len(disallowed) > 0 {
 		sort.Strings(disallowed)
-		return nil, fmt.Errorf("허용되지 않은 외부 모듈 import: %s — 먼저 모듈 레지스트리에 추가하세요(POST /api/v1/modules)",
-			strings.Join(disallowed, ", "))
+		return nil, &MissingModulesError{Imports: disallowed}
 	}
 	return pins, nil
 }

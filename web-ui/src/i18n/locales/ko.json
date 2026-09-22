@@ -1430,7 +1430,25 @@
       "behindHint": "{{count}}개 모듈이 기본 버전과 다릅니다. 올리려면 각 항목의 버튼을 누르세요 — 서버가 먼저 컴파일해 보고 성공할 때만 적용합니다.",
       "defaultVersion": "기본",
       "thisStage": "이 stage",
-      "tryDefault": "기본 버전으로"
+      "tryDefault": "기본 버전으로",
+      "usedTitle": "이 stage 가 import 하는 외부 모듈",
+      "usedNone": "외부 모듈 import 가 없습니다(표준 라이브러리·plugin-sdk 만 사용).",
+      "unregistered": "미등록",
+      "registerFromImport": "레지스트리에 추가",
+      "resolving": "모듈 경로 확인 중…",
+      "heuristicNote": "GOPROXY 에서 확인하지 못해 접두사로 추측한 경로입니다",
+      "allRegistryTitle": "레지스트리 전체 ({{count}}개)",
+      "noPermission": "모듈 추가는 operator 이상만 가능합니다. 목록을 복사해 요청하세요.",
+      "quickFix": "레지스트리에 추가: {{module}}"
+    },
+    "missing": {
+      "title": "레지스트리에 없는 모듈이 있습니다",
+      "helpCanAdd": "아래 모듈을 레지스트리에 추가(등록 시점 최신 버전 고정)하고 저장을 다시 시도합니다.",
+      "helpNoPerm": "모듈 추가 권한이 없습니다. 목록을 복사해 operator 또는 admin 에게 등록을 요청하세요.",
+      "module": "모듈",
+      "copy": "목록 복사",
+      "addAndSave": "추가하고 저장",
+      "saveFailedOther": "저장 실패: {{message}}"
     }
   },
   "modules": {

@@ -413,10 +413,14 @@ func (s *Server) setupRoutes() {
 
 			// 허용 의존성 모듈 레지스트리 (custom stage 가 import 가능한 외부 모듈).
 			// module path 에 슬래시가 있어 *module 와일드카드 사용.
+			// 권한(D3/ADR-0005): 모듈·버전 "추가" 는 stage 를 만드는 operator 도 가능. 기본 버전 변경·
+			// 삭제·폐기·single_version_only 처럼 다른 stage 에 영향이 가는 조작만 admin.
 			modules := authenticated.Group("/modules")
 			{
 				modules.GET("", s.moduleHandler.ListModules)
-				modules.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.CreateModule)
+				modules.POST("", middleware.RoleMiddleware(string(types.UserRoleOperator), string(types.UserRoleAdmin)), s.moduleHandler.CreateModule)
+				// import 경로 → 모듈 경로 해소(조회 전용). POST 트리에서 "" 와 "/resolve" 는 정적 경로라 충돌 없음.
+				modules.POST("/resolve", s.moduleHandler.ResolveModulePath)
 				modules.PUT("/*module", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.UpdateModule)
 				modules.DELETE("/*module", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.DeleteModule)
 			}
@@ -425,7 +429,7 @@ func (s *Server) setupRoutes() {
 			// 별도 그룹으로 두고 module_path 는 body/query 로 받는다.
 			moduleVersions := authenticated.Group("/module-versions")
 			{
-				moduleVersions.POST("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.AddModuleVersion)
+				moduleVersions.POST("", middleware.RoleMiddleware(string(types.UserRoleOperator), string(types.UserRoleAdmin)), s.moduleHandler.AddModuleVersion)
 				moduleVersions.DELETE("", middleware.RoleMiddleware(string(types.UserRoleAdmin)), s.moduleHandler.RetireModuleVersion)
 				// 그 모듈을 비기본 버전으로 고정한 stage 들을 일괄로 기본 버전에 수렴시킨다.
 				// stage 별 컴파일 검증이 필요해 PluginHandler 가 처리한다.

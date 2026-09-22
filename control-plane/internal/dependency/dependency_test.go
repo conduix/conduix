@@ -1,6 +1,7 @@
 package dependency
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -262,5 +263,20 @@ func TestOwningModule(t *testing.T) {
 	// prefix 유사(다른 모듈)는 커버 안 됨.
 	if _, ok := OwningModule("github.com/google/uuidx", allowed); ok {
 		t.Error("uuidx must not match uuid")
+	}
+}
+
+// 미등록 import 는 문자열이 아니라 타입 있는 에러여야 핸들러가 import 목록을 구조화해 내려줄 수 있다.
+func TestResolvePins_MissingModulesErrorIsTyped(t *testing.T) {
+	_, err := ResolvePins([]string{"fmt", "github.com/not/registered/sub", "github.com/other/x"}, nil, nil)
+	var missing *MissingModulesError
+	if !errors.As(err, &missing) {
+		t.Fatalf("expected *MissingModulesError, got %T: %v", err, err)
+	}
+	if len(missing.Imports) != 2 || missing.Imports[0] != "github.com/not/registered/sub" || missing.Imports[1] != "github.com/other/x" {
+		t.Fatalf("imports must be the sorted unregistered set, got %v", missing.Imports)
+	}
+	if !strings.Contains(err.Error(), "github.com/not/registered/sub") {
+		t.Fatalf("message must still name the imports, got %q", err.Error())
 	}
 }

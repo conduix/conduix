@@ -48,6 +48,9 @@ import type { RunnerStatusResponse, RunnerVersion } from '../services/pluginApi'
 import NativeStageEditor from '../components/NativeStageEditor/NativeStageEditor'
 import JSScriptStageEditor from '../components/JSScriptStageEditor/JSScriptStageEditor'
 import ModuleRegistryDialog from '../components/ModuleRegistry/ModuleRegistryDialog'
+import MissingModulesDialog from '../components/ModuleRegistry/MissingModulesDialog'
+import { canManageModules, missingModulesFromError } from '../components/NativeStageEditor/depsImportUI'
+import { useAuthStore } from '../store/auth'
 
 type StageMode = 'script' | 'native'
 
@@ -105,6 +108,9 @@ export default function PluginsPage() {
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [moduleRegistryOpen, setModuleRegistryOpen] = useState(false)
+  // 저장이 "레지스트리 미등록 모듈" 로 거부됐을 때 서버가 준 {import: 제안 모듈}. null 이면 닫힘.
+  const [missingModules, setMissingModules] = useState<Record<string, string> | null>(null)
+  const role = useAuthStore((s) => s.user?.role)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null)
   const [formData, setFormData] = useState<PluginFormData>(initialFormData)
@@ -250,7 +256,13 @@ export default function PluginsPage() {
       if (formData.stageMode === 'native') {
         setTimeout(loadRunnerStatus, 1000)
       }
-    } catch {
+    } catch (e) {
+      // 미등록 import 거부는 일반 실패가 아니라 "여기서 추가하고 다시 저장" 할 수 있는 상태다.
+      const missing = missingModulesFromError(e)
+      if (missing) {
+        setMissingModules(missing)
+        return
+      }
       showError(selectedPlugin ? t('plugin.updateError') : t('plugin.createError'))
     }
   }
@@ -449,6 +461,16 @@ export default function PluginsPage() {
         </Stack>
       </Box>
       <ModuleRegistryDialog open={moduleRegistryOpen} onClose={() => setModuleRegistryOpen(false)} />
+      <MissingModulesDialog
+        open={missingModules !== null}
+        details={missingModules ?? {}}
+        canAdd={canManageModules(role)}
+        onClose={() => setMissingModules(null)}
+        onRegistered={async () => {
+          setMissingModules(null)
+          await handleSubmit()
+        }}
+      />
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid
           size={{

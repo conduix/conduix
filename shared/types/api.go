@@ -37,6 +37,9 @@ const (
 	ErrCodeWorkflowNotRunning ErrorCode = "BUSINESS_WORKFLOW_NOT_RUNNING"
 	ErrCodeHasChildren        ErrorCode = "BUSINESS_HAS_CHILDREN"
 	ErrCodeInvalidState       ErrorCode = "BUSINESS_INVALID_STATE"
+	// ErrCodeMissingModules native stage 소스가 레지스트리에 없는 외부 모듈을 import 한다.
+	// Details 에 import 경로 → 제안 모듈 경로가 실려 UI 가 원클릭 등록을 제공할 수 있다.
+	ErrCodeMissingModules ErrorCode = "BUSINESS_MISSING_MODULES"
 )
 
 // APIError 구조화된 에러

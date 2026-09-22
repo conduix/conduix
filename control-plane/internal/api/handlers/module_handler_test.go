@@ -269,3 +269,61 @@ func TestUpdateModule_RejectsSingleVersionOnlyWithPinnedStages(t *testing.T) {
 	w = doJSON(r, http.MethodPut, "/modules/example.com/ok", `{"version":"v2.0.0"}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
+
+// GOPROXY 대역: 모듈 루트 집합에만 @latest 200, 그 외(서브패키지·상위 접두사)는 404.
+func fakeGoProxyWithModules(t *testing.T, modules map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/@latest")
+		v, ok := modules[path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"Version": v})
+	}))
+}
+
+// import 경로에서 모듈 루트를 찾는다 — 서브패키지를 import 했을 때 사용자가 모듈 경로를 추측하지 않게.
+func TestResolveModulePath_FindsModuleRootFromSubpackage(t *testing.T) {
+	h, db := newModuleTestHandler(t, "unused")
+	proxy := fakeGoProxyWithModules(t, map[string]string{
+		"github.com/aws/aws-sdk-go-v2": "v1.30.0",
+		"gopkg.in/yaml.v3":             "v3.0.1",
+	})
+	t.Cleanup(proxy.Close)
+	h.goProxy, h.httpClient = proxy.URL, proxy.Client()
+	require.NoError(t, db.Create(&models.AllowedModule{ModulePath: "gopkg.in/yaml.v3", Version: "v3.0.1", Status: "active"}).Error)
+
+	r := gin.New()
+	r.POST("/modules/resolve", h.ResolveModulePath)
+
+	w := doJSON(r, http.MethodPost, "/modules/resolve", `{"import_path":"github.com/aws/aws-sdk-go-v2/service/s3/types"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct{ Data ResolveModuleResponse }
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "github.com/aws/aws-sdk-go-v2", resp.Data.ModulePath)
+	require.Equal(t, "v1.30.0", resp.Data.LatestVersion)
+	require.False(t, resp.Data.Registered)
+	require.False(t, resp.Data.Heuristic)
+
+	w = doJSON(r, http.MethodPost, "/modules/resolve", `{"import_path":"gopkg.in/yaml.v3"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.True(t, resp.Data.Registered)
+
+	// 프록시가 모르는 경로: 휴리스틱(github 3세그먼트)으로 채우고 heuristic=true
+	w = doJSON(r, http.MethodPost, "/modules/resolve", `{"import_path":"github.com/nobody/private/internal/x"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "github.com/nobody/private", resp.Data.ModulePath)
+	require.True(t, resp.Data.Heuristic)
+	require.NotEmpty(t, resp.Data.Error)
+}
+
+func TestModulePathCandidates_AndHeuristic(t *testing.T) {
+	require.Equal(t, []string{"a.com/b/c/d", "a.com/b/c", "a.com/b"}, modulePathCandidates("a.com/b/c/d"))
+	require.Equal(t, "github.com/o/r", heuristicModulePath("github.com/o/r/pkg/sub"))
+	require.Equal(t, "golang.org/x/net", heuristicModulePath("golang.org/x/net/html"))
+	require.Equal(t, "example.org/lib/v2", heuristicModulePath("example.org/lib/v2"), "모르는 호스트는 원문 유지")
+}

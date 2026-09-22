@@ -30,6 +30,9 @@ type PluginHandler struct {
 	revisionService *services.RevisionService
 	runnerBuilder   *builder.RunnerBuilder
 	logger          *slog.Logger
+	// moduleResolver 는 미등록 import 를 거부할 때 "어느 모듈을 등록하면 되는지" 를 제안하는 데 쓴다.
+	// nil 이면 GOPROXY 없이 접두사 휴리스틱만 쓴다(테스트).
+	moduleResolver *goProxyResolver
 }
 
 // NewPluginHandler 플러그인 핸들러 생성
@@ -39,6 +42,7 @@ func NewPluginHandler(db *database.DB) *PluginHandler {
 		revisionService: services.NewRevisionService(db.DB),
 		runnerBuilder:   builder.NewRunnerBuilder(db.DB, nil),
 		logger:          slog.Default(),
+		moduleResolver:  newGoProxyResolver("", nil),
 	}
 }
 
@@ -209,7 +213,7 @@ func (h *PluginHandler) CreatePlugin(c *gin.Context) {
 		if pluginType == "native" {
 			depVersions, err := resolveAndEncodePins(h.db, req.SourceCode, "")
 			if err != nil {
-				middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+				h.respondPinsError(c, err)
 				return
 			}
 			plugin.DepVersions = depVersions
@@ -270,7 +274,7 @@ func (h *PluginHandler) updateExistingPlugin(c *gin.Context, existing *models.Pl
 	if req.SourceCode != "" && existing.Type == "native" {
 		depVersions, err := resolveAndEncodePins(h.db, req.SourceCode, existing.DepVersions)
 		if err != nil {
-			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+			h.respondPinsError(c, err)
 			return
 		}
 		existing.DepVersions = depVersions
@@ -363,7 +367,7 @@ func (h *PluginHandler) UpdatePlugin(c *gin.Context) {
 		// D5: import 검증 + 이 stage 가 쓸 모듈 버전 확정(기존 고정은 유지).
 		depVersions, err := resolveAndEncodePins(h.db, req.SourceCode, plugin.DepVersions)
 		if err != nil {
-			middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+			h.respondPinsError(c, err)
 			return
 		}
 		plugin.DepVersions = depVersions

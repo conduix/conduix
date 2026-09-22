@@ -5,7 +5,7 @@
  * 서버 사이드 go build + 실행 테스트, 테스트 성공 시에만 Save 활성화
  * gopls LSP 연동: 자동완성, hover, 진단 (WebSocket 연결 가능 시)
  */
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   Box,
   Stack,
@@ -27,18 +27,29 @@ import WarningIcon from '@mui/icons-material/Warning'
 import BuildIcon from '@mui/icons-material/Build'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
 import Editor, { type OnMount, type Monaco } from '@monaco-editor/react'
-import type { editor as monacoEditor, IDisposable, IPosition } from 'monaco-editor'
+import type { editor as monacoEditor, IDisposable, IPosition, languages as monacoLanguages, Range as MonacoRange } from 'monaco-editor'
 import { useTranslation } from 'react-i18next'
 import { testNativePlugin } from '../../services/pluginApi'
 import type { TestNativePluginResponse } from '../../types/plugin'
 import { LSPClient, lspKindToMonaco, lspSeverityToMonaco } from '../../services/lspClient'
 import type { LSPDiagnostic } from '../../services/lspClient'
-import { listModules, addModule } from '../../services/moduleApi'
+import { listModules, addModule, resolveModulePath } from '../../services/moduleApi'
 import type { ModuleView } from '../../services/moduleApi'
 import { getPlugin, upgradeStageDeps } from '../../services/pluginApi'
 import type { PinnedBehind } from '../../types/plugin'
-import { List, ListItem, ListItemText } from '@mui/material'
+import { List, ListItem, ListItemText, Collapse, Tooltip } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
+import { useAuthStore } from '../../store/auth'
+import {
+  canManageModules,
+  classifyImports,
+  friendlyGoplsMessage,
+  parseGoImports,
+  UNREGISTERED_IMPORT_PREFIX,
+} from './depsImportUI'
+
+// Monaco 빠른 수정(code action)이 호출하는 커맨드 ID. 미등록 import 마커에 "레지스트리에 추가" 를 단다.
+const REGISTER_MODULE_COMMAND = 'conduix.registerModuleFromImport'
 
 // pluginNameToStructName converts plugin name (e.g. "ip-filter") to PascalCase struct name (e.g. "IpFilterStage")
 function pluginNameToStructName(name?: string): string {
@@ -126,6 +137,22 @@ export default function NativeStageEditor({
   const [upgrading, setUpgrading] = useState<string | null>(null)
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
 
+  // 모듈 추가 권한(서버 라우트와 동일: operator, admin). 없으면 버튼 대신 안내만 보인다.
+  const role = useAuthStore((s) => s.user?.role)
+  const canAdd = canManageModules(role) && !disabled
+
+  // 소스의 import 에서 파생한 "이 stage 가 쓰는 외부 모듈" — 의존성 입력을 두 번 하지 않게
+  // import 문을 단일 입력원으로 삼는다. 레지스트리 전체 목록은 접힌 섹션으로 내린다.
+  const usedImports = useMemo(
+    () => classifyImports(parseGoImports(sourceCode), modules.map((m) => m.module_path)),
+    [sourceCode, modules],
+  )
+  const unregisteredCount = usedImports.filter((u) => !u.modulePath).length
+  const [showAllModules, setShowAllModules] = useState(false)
+  const [addingImport, setAddingImport] = useState<string | null>(null)
+  // 마커 위치(줄 번호) → 미등록 import 경로. code action 이 마커에서 경로를 찾는 데 쓴다.
+  const unregisteredByLineRef = useRef<Map<number, string>>(new Map())
+
   const loadModules = useCallback(async () => {
     try {
       setModules(await listModules())
@@ -189,6 +216,33 @@ export default function NativeStageEditor({
       setModuleBusy(false)
     }
   }, [newModulePath, loadModules])
+
+  // import 경로 하나를 레지스트리에 등록한다. 서브패키지를 import 했을 수 있으므로 서버에
+  // 모듈 루트를 먼저 물어(GOPROXY 접두사 탐색) 그 경로로 추가한다.
+  const handleAddImport = useCallback(async (importPath: string) => {
+    if (!canAdd) return
+    setAddingImport(importPath)
+    setModuleError(null)
+    try {
+      const resolved = await resolveModulePath(importPath)
+      if (!resolved.registered) {
+        await addModule(resolved.module_path)
+      }
+      await loadModules()
+      if (resolved.heuristic) {
+        setModuleError(`${resolved.module_path}: ${t('plugins.deps.heuristicNote', 'GOPROXY 에서 확인하지 못해 접두사로 추측한 경로입니다')}`)
+      }
+    } catch (e) {
+      setModuleError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAddingImport(null)
+    }
+  }, [canAdd, loadModules, t])
+  // Monaco 커맨드는 마운트 시 한 번 등록되므로 최신 콜백을 ref 로 넘긴다(stale closure 방지).
+  const addImportRef = useRef(handleAddImport)
+  useEffect(() => {
+    addImportRef.current = handleAddImport
+  }, [handleAddImport])
   const [lspConnected, setLspConnected] = useState(false)
   const lspClientRef = useRef<LSPClient | null>(null)
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor | null>(null)
@@ -306,6 +360,31 @@ export default function NativeStageEditor({
     })
     disposablesRef.current.push(hoverDisposable)
 
+    // 미등록 import 마커에 "레지스트리에 추가" 빠른 수정을 단다. 마커 메시지는 아래 진단 핸들러가
+    // 우리 문구(UNREGISTERED_IMPORT_PREFIX)로 바꿔 두므로 그 접두로 식별한다.
+    const commandDisposable = monaco.editor.registerCommand(REGISTER_MODULE_COMMAND, (_accessor: unknown, importPath: string) => {
+      void addImportRef.current(importPath)
+    })
+    disposablesRef.current.push(commandDisposable)
+    const codeActionDisposable = monaco.languages.registerCodeActionProvider('go', {
+      provideCodeActions: (_model: monacoEditor.ITextModel, _range: MonacoRange, context: monacoLanguages.CodeActionContext) => {
+        const actions: monacoLanguages.CodeAction[] = []
+        for (const m of context.markers) {
+          if (!m.message.startsWith(UNREGISTERED_IMPORT_PREFIX)) continue
+          const importPath = unregisteredByLineRef.current.get(m.startLineNumber)
+          if (!importPath) continue
+          actions.push({
+            title: t('plugins.deps.quickFix', '레지스트리에 추가: {{module}}', { module: importPath }),
+            kind: 'quickfix',
+            diagnostics: [m],
+            command: { id: REGISTER_MODULE_COMMAND, title: 'register module', arguments: [importPath] },
+          })
+        }
+        return { actions, dispose: () => {} }
+      },
+    })
+    disposablesRef.current.push(codeActionDisposable)
+
     // Diagnostics 핸들러 등록
     const client = lspClientRef.current
     if (client) {
@@ -313,19 +392,28 @@ export default function NativeStageEditor({
         const model = editor.getModel()
         if (!model) return
 
-        const markers = diagnostics.map((d) => ({
-          severity: lspSeverityToMonaco(d.severity),
-          startLineNumber: d.range.start.line + 1,
-          startColumn: d.range.start.character + 1,
-          endLineNumber: d.range.end.line + 1,
-          endColumn: d.range.end.character + 1,
-          message: d.message,
-          source: d.source || 'gopls',
-        }))
+        // gopls 의 "no required module provides package" 는 "레지스트리에 없다" 는 뜻인데 원문으로는
+        // 사용자가 알 수 없다. 우리 문구로 바꾸고, 빠른 수정이 쓸 import 경로를 줄 번호로 기억한다.
+        const byLine = new Map<number, string>()
+        const markers = diagnostics.map((d) => {
+          const line = d.range.start.line + 1
+          const friendly = friendlyGoplsMessage(d.message)
+          if (friendly) byLine.set(line, friendly.importPath)
+          return {
+            severity: lspSeverityToMonaco(d.severity),
+            startLineNumber: line,
+            startColumn: d.range.start.character + 1,
+            endLineNumber: d.range.end.line + 1,
+            endColumn: d.range.end.character + 1,
+            message: friendly ? friendly.message : d.message,
+            source: d.source || 'gopls',
+          }
+        })
+        unregisteredByLineRef.current = byLine
         monaco.editor.setModelMarkers(model, 'gopls', markers)
       })
     }
-  }, [])
+  }, [t])
 
   const handleCodeChange = useCallback(
     (value: string | undefined) => {
@@ -447,6 +535,75 @@ export default function NativeStageEditor({
                 {t('plugins.deps.behindHint', '{{count}}개 모듈이 기본 버전과 다릅니다. 올리려면 각 항목의 버튼을 누르세요 — 서버가 먼저 컴파일해 보고 성공할 때만 적용합니다.', { count: pinnedBehind.length })}
               </Alert>
             )}
+            {/* 이 stage 가 import 하는 외부 모듈 — import 문에서 파생. 미등록이면 바로 추가 버튼. */}
+            <Typography variant="subtitle2" sx={{ mt: 1 }}>
+              {t('plugins.deps.usedTitle', '이 stage 가 import 하는 외부 모듈')}
+              {unregisteredCount > 0 && (
+                <Chip size="small" color="error" sx={{ ml: 1 }} label={`${t('plugins.deps.unregistered', '미등록')} ${unregisteredCount}`} />
+              )}
+            </Typography>
+            {!canManageModules(role) && unregisteredCount > 0 && (
+              <Alert severity="warning" sx={{ my: 1 }}>
+                {t('plugins.deps.noPermission', '모듈 추가는 operator 이상만 가능합니다. 목록을 복사해 요청하세요.')}
+              </Alert>
+            )}
+            <List dense sx={{ mb: 1, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+              {usedImports.length === 0 && (
+                <ListItem>
+                  <ListItemText>
+                    <Typography variant="body2" color="text.secondary">
+                      {t('plugins.deps.usedNone', '외부 모듈 import 가 없습니다(표준 라이브러리·plugin-sdk 만 사용).')}
+                    </Typography>
+                  </ListItemText>
+                </ListItem>
+              )}
+              {usedImports.map((u) => {
+                const mod = u.modulePath ? modules.find((m) => m.module_path === u.modulePath) : undefined
+                const pinned = mod ? stagePins[mod.module_path] : undefined
+                return (
+                  <ListItem key={u.importPath} secondaryAction={
+                    mod ? (
+                      <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+                        <Chip label={`${t('plugins.deps.defaultVersion', '기본')} ${mod.version}`} size="small" variant="outlined" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }} />
+                        {pinned !== undefined && pinned !== mod.version && (
+                          <Chip label={`${t('plugins.deps.thisStage', '이 stage')} ${pinned}`} size="small" color="warning" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }} />
+                        )}
+                      </Stack>
+                    ) : (
+                      <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+                        <Chip label={t('plugins.deps.unregistered', '미등록')} size="small" color="error" />
+                        {canAdd && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={addingImport !== null}
+                            onClick={() => void handleAddImport(u.importPath)}
+                            startIcon={addingImport === u.importPath ? <CircularProgress size={14} /> : <AddIcon />}
+                          >
+                            {addingImport === u.importPath
+                              ? t('plugins.deps.resolving', '모듈 경로 확인 중…')
+                              : t('plugins.deps.registerFromImport', '레지스트리에 추가')}
+                          </Button>
+                        )}
+                      </Stack>
+                    )
+                  }>
+                    <ListItemText
+                      primary={<Typography variant="body2" sx={{ fontFamily: 'monospace' }}>{u.importPath}</Typography>}
+                      secondary={mod && mod.module_path !== u.importPath ? mod.module_path : undefined}
+                    />
+                  </ListItem>
+                )
+              })}
+            </List>
+            {moduleError && <Alert severity="error" sx={{ mb: 1 }} onClose={() => setModuleError(null)}>{moduleError}</Alert>}
+
+            {/* 레지스트리 전체 — 직접 경로 입력 추가 + 목록. 기본은 접어 둔다. */}
+            <Button size="small" onClick={() => setShowAllModules((v) => !v)} sx={{ mb: 0.5 }}>
+              {(showAllModules ? '▾ ' : '▸ ') + t('plugins.deps.allRegistryTitle', '레지스트리 전체 ({{count}}개)', { count: modules.length })}
+            </Button>
+            <Collapse in={showAllModules}>
+            {canAdd && (
             <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
               <TextField
                 size="small"
@@ -455,20 +612,24 @@ export default function NativeStageEditor({
                 value={newModulePath}
                 onChange={(e) => setNewModulePath(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleAddModule() } }}
-                disabled={disabled || moduleBusy}
+                disabled={moduleBusy}
                 sx={{ '& input': { fontFamily: 'monospace', fontSize: 13 } }}
               />
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={moduleBusy ? <CircularProgress size={14} /> : <AddIcon />}
-                onClick={() => void handleAddModule()}
-                disabled={disabled || moduleBusy || !newModulePath.trim()}
-              >
-                {t('common.add', '추가')}
-              </Button>
+              <Tooltip title={t('plugins.deps.registerFromImport', '레지스트리에 추가')}>
+                <span>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={moduleBusy ? <CircularProgress size={14} /> : <AddIcon />}
+                    onClick={() => void handleAddModule()}
+                    disabled={moduleBusy || !newModulePath.trim()}
+                  >
+                    {t('common.add', '추가')}
+                  </Button>
+                </span>
+              </Tooltip>
             </Stack>
-            {moduleError && <Alert severity="error" sx={{ mb: 1 }}>{moduleError}</Alert>}
+            )}
             <List dense sx={{ maxHeight: 180, overflow: 'auto', bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1 }}>
               {modules.length === 0 && (
                 <ListItem>
@@ -520,6 +681,7 @@ export default function NativeStageEditor({
                 )
               })}
             </List>
+            </Collapse>
             {upgradeError && (
               <Alert severity="error" sx={{ mt: 1, whiteSpace: 'pre-wrap' }} onClose={() => setUpgradeError(null)}>
                 {upgradeError}

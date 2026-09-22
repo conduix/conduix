@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -409,32 +408,59 @@ func userIDFrom(c *gin.Context) string {
 	return ""
 }
 
+// resolver 는 이 핸들러의 GOPROXY 설정으로 만든 해소기다(테스트가 goProxy/httpClient 를 바꿔 끼운다).
+func (h *ModuleHandler) resolver() *goProxyResolver {
+	return newGoProxyResolver(h.goProxy, h.httpClient)
+}
+
 // latestVersion 은 GOPROXY 의 {module}/@latest 를 조회해 최신 버전 문자열을 반환한다.
-// module path 는 GOPROXY 규약상 대문자를 !소문자로 인코딩해야 하나, 흔한 모듈은 소문자라
-// 우선 그대로 질의하고 실패 시 에러를 그대로 노출한다(대문자 인코딩은 후속).
 func (h *ModuleHandler) latestVersion(c *gin.Context, modulePath string) (string, error) {
-	url := fmt.Sprintf("%s/%s/@latest", strings.TrimRight(h.goProxy, "/"), modulePath)
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
+	return h.resolver().latest(c.Request.Context(), modulePath)
+}
+
+// ResolveModuleRequest 는 import 경로 하나를 모듈 경로로 해소하는 요청이다.
+type ResolveModuleRequest struct {
+	ImportPath string `json:"import_path" binding:"required"`
+}
+
+// ResolveModuleResponse 는 해소 결과다. Registered 는 그 모듈이 레지스트리에 이미 있는지.
+type ResolveModuleResponse struct {
+	ImportPath    string `json:"import_path"`
+	ModulePath    string `json:"module_path"`
+	LatestVersion string `json:"latest_version,omitempty"`
+	Registered    bool   `json:"registered"`
+	// Heuristic 은 GOPROXY 해소에 실패해 접두사 추측으로 채웠다는 표시 — UI 가 "확인 필요" 를 붙인다.
+	Heuristic bool   `json:"heuristic"`
+	Error     string `json:"error,omitempty"`
+}
+
+// ResolveModulePath POST /api/v1/modules/resolve — 소스의 import 경로가 어느 모듈에 속하는지 알려준다.
+// 사용자가 서브패키지(github.com/aws/aws-sdk-go-v2/service/s3)를 import 했을 때 모듈 루트를
+// 스스로 판단하지 않게 한다. 인증된 사용자 누구나 조회 가능(등록은 별도 권한).
+func (h *ModuleHandler) ResolveModulePath(c *gin.Context) {
+	var req ResolveModuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, err.Error())
+		return
+	}
+	importPath := strings.Trim(strings.TrimSpace(req.ImportPath), "/")
+	if importPath == "" {
+		middleware.ErrorResponseWithCode(c, http.StatusBadRequest, types.ErrCodeValidationFailed, "import_path is required")
+		return
+	}
+
+	resp := ResolveModuleResponse{ImportPath: importPath}
+	mod, version, err := h.resolver().resolveImport(c.Request.Context(), importPath)
+	resp.ModulePath = mod
 	if err != nil {
-		return "", err
+		resp.Heuristic = true
+		resp.Error = err.Error()
+	} else {
+		resp.LatestVersion = version
 	}
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return "", err
+	var existing models.AllowedModule
+	if err := h.db.First(&existing, "module_path = ?", mod).Error; err == nil {
+		resp.Registered = true
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("goproxy %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var info struct {
-		Version string `json:"Version"`
-	}
-	if err := json.Unmarshal(body, &info); err != nil {
-		return "", fmt.Errorf("parse goproxy response: %w", err)
-	}
-	if info.Version == "" {
-		return "", fmt.Errorf("empty version from goproxy")
-	}
-	return info.Version, nil
+	c.JSON(http.StatusOK, types.APIResponse[ResolveModuleResponse]{Success: true, Data: resp})
 }

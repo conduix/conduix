@@ -304,6 +304,20 @@ kubectl patch deploy -n conduix conduix-web-ui -p '{"spec":{"template":{"spec":{
 | `runner_builder.go` `Build` | 레거시 백필을 빌드 성공 후 저장 → 빌더 해시(빈 지문)와 리졸버 해시(저장 지문) 불일치 → 성공 직후 core_changed 재빌드 + 실행 차단 창 | `resolveDeps` 를 해시 계산 앞으로, 백필 즉시 저장 + 메모리 반영(`applyBackfill`) |
 | `runner_resolver.go` | 의존성 버전만 바뀐 stale 을 core_changed 로 안내 | `RunnerVersion.DepsFingerprint` 추가, `staleReason` 이 deps_changed / core_changed 구분 |
 
+### 8.1c import ↔ 레지스트리 UX 연계 (2026-09-22)
+
+사용자가 소스의 import 와 의존성 탭에 같은 정보를 두 번 입력하던 것을, **import 를 단일 입력원**으로 삼아 없앴다.
+레지스트리의 정책 역할(허용 목록·버전 고정)은 그대로다 — 자동화된 것은 타이핑과 탭 이동이지 승인이 아니다.
+
+| 지점 | 변경 |
+|---|---|
+| `dependency.ResolvePins` | 미등록 import 를 `*MissingModulesError{Imports}` 타입으로 반환 |
+| `handlers/stage_import_validation.go` `respondPinsError` | 400 + `BUSINESS_MISSING_MODULES`, `Details` = {import 경로: 제안 모듈 경로}(GOPROXY 접두사 탐색, 5초 상한, 실패 시 휴리스틱) |
+| `handlers/module_resolve.go` | `goProxyResolver.resolveImport` — 긴 접두사부터 `@latest` 질의(최대 4회). `POST /modules/resolve` |
+| `routes.go` | 모듈·버전 **추가**는 operator 이상, 기본 변경·삭제·폐기·upgrade-all 은 admin(D3 정합) |
+| `web-ui NativeStageEditor` | 의존성 탭을 "이 stage 가 import 하는 외부 모듈" 중심으로(등록/미등록·기본/고정 버전, 미등록은 원클릭 추가). 레지스트리 전체는 접힘. gopls "no required module" 진단을 우리 문구로 바꾸고 code action "레지스트리에 추가" 제공. 추가 UI 는 역할로 게이트 |
+| `web-ui Plugins.tsx` + `MissingModulesDialog` | 저장 거부 시 서버 제안 목록을 보여주고 "추가하고 저장" 원클릭(권한 없으면 목록 복사) |
+
 ### 8.2 남은 작업 — 무엇을 왜 고치는가
 
 아래는 §3·§4 의 요약이다. 상세 지점(파일:라인)은 해당 절을 본다.

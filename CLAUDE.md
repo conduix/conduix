@@ -309,3 +309,45 @@ kubectl top nodes
 # Scale down if CPU/memory issues
 kubectl scale deployment <name> -n conduix --replicas=1
 ```
+
+#### ArgoCD admin 로그인 실패
+
+`argocd-initial-admin-secret` 의 값으로 로그인이 안 되면, 그 시크릿이 **현재 비밀번호와
+어긋난 것**이다. 아래로 바로 확인한다(실패하면 어긋난 상태):
+
+```bash
+PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)
+curl -sk -X POST https://localhost:30443/api/v1/session \
+  -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}"
+```
+
+언제 바뀌었는지는 `admin.passwordMtime` 으로 본다. 그 시각이 `argocd-server` 파드 생성
+시각과 일치하면 아래의 자동 재생성이 원인이다.
+
+```bash
+kubectl -n argocd get secret argocd-secret -o jsonpath='{.data.admin\.passwordMtime}' | base64 -d
+kubectl -n argocd get pods -l app.kubernetes.io/name=argocd-server \
+  -o jsonpath='{.items[0].metadata.creationTimestamp}'
+```
+
+**왜 어긋나는가** (2026-09-07 실제 발생): ArgoCD 공식 `install.yaml` 의 `argocd-secret` 은
+`data` 가 빈 Secret 이다. 이것을 `kubectl apply` 로 재적용하면 이전에 apply 가 관리하던
+`admin.password` 가 삭제되고, ArgoCD 가 기동하며 비밀번호를 **새로 자동 생성**한다.
+그런데 `argocd-initial-admin-secret` 은 **이미 존재하면 덮어쓰지 않으므로** 옛 값이 남는다.
+비밀번호는 bcrypt 해시로만 저장돼 평문 복구가 불가능하다.
+
+**복구**(되돌릴 수 있게 백업 먼저):
+
+```bash
+kubectl -n argocd get secret argocd-secret -o yaml > /tmp/argocd-secret-backup.yaml
+NEWPW='<원하는 비밀번호>'
+HASH=$(htpasswd -nbBC 10 '' "$NEWPW" | tr -d ':\n' | sed 's/$2y/$2a/')
+kubectl -n argocd patch secret argocd-secret \
+  -p "{\"stringData\":{\"admin.password\":\"$HASH\",\"admin.passwordMtime\":\"$(date -u +%FT%TZ)\"}}"
+# 문서의 조회 명령이 계속 맞는 값을 주도록 초기 시크릿도 함께 맞춘다 (이 단계를 빼면 같은 혼란이 반복된다)
+kubectl -n argocd patch secret argocd-initial-admin-secret -p "{\"stringData\":{\"password\":\"$NEWPW\"}}"
+kubectl -n argocd rollout restart deploy/argocd-server
+```
+
+`kubectl patch` 로 쓴 필드는 apply 의 삭제 대상이 아니므로, 이렇게 설정해 두면 이후
+`install.yaml` 을 재적용해도 비밀번호가 날아가지 않는다(빈 manifest 재적용으로 실측 확인).

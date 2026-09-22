@@ -310,6 +310,32 @@ kubectl top nodes
 kubectl scale deployment <name> -n conduix --replicas=1
 ```
 
+#### ArgoCD "Failed to load target state ... 8081 connection refused"
+
+Application 이 `SYNC STATUS=Unknown` 이고 UI 에 아래가 뜨면 `argocd-repo-server`(manifest
+생성 담당, 8081)가 죽은 것이다.
+
+```
+Failed to load target state: failed to generate manifest for source 1 of 1:
+rpc error: ... dial tcp <IP>:8081: connect: connection refused
+```
+
+```bash
+kubectl -n argocd logs -l app.kubernetes.io/name=argocd-repo-server -c copyutil --tail=20
+```
+
+`/bin/ln: Already exists` 가 보이면 `copyutil` initContainer 문제다. 그 명령은
+`cp --update=none ... && ln -s ...` 인데 **`ln -s` 에 `-f` 가 없어** 링크가 이미 있으면
+실패한다. `var-files` 는 `emptyDir` 이라 **파드를 새로 만들어야** 비워진다 — 컨테이너만
+재시작되면 계속 실패한다.
+
+```bash
+kubectl -n argocd delete pod -l app.kubernetes.io/name=argocd-repo-server
+```
+
+복구되면 GitOps 가 다시 동작하므로 **`kubectl set image` 등으로 수동 배포해 둔 것은 git
+기준으로 되돌아간다**. 로컬 검증 이미지를 유지하려면 Application 을 멈추거나 git 을 바꾼다.
+
 #### ArgoCD admin 로그인 실패
 
 `argocd-initial-admin-secret` 의 값으로 로그인이 안 되면, 그 시크릿이 **현재 비밀번호와
